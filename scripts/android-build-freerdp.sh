@@ -26,6 +26,13 @@ SCRIPT_PATH=$(dirname "${BASH_SOURCE[0]}")
 source $SCRIPT_PATH/android-build-common.sh
 source $SCRIPT_PATH/android-build.conf
 
+export PATH="$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+export CC=clang
+export CXX=clang++
+export AR=llvm-ar
+export LD=ld.lld
+export STRIP=llvm-strip
+
 # Parse arguments.
 REMAINING=""
 while [[ $# > 0 ]]; do
