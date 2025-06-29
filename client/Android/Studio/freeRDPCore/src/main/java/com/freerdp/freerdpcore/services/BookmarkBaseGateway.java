@@ -402,7 +402,10 @@ public abstract class BookmarkBaseGateway
 	protected BookmarkBase getBookmarkFromCursor(Cursor cursor)
 	{
 		BookmarkBase bookmark = createBookmark();
-		bookmark.setId(cursor.getLong(cursor.getColumnIndex(KEY_BOOKMARK_ID)));
+		int idIdx = cursor.getColumnIndex(KEY_BOOKMARK_ID);
+		if (idIdx >= 0) {
+		    bookmark.setId(cursor.getLong(idIdx));
+		}
 		bookmark.setLabel(
 		    cursor.getString(cursor.getColumnIndex(BookmarkDB.DB_KEY_BOOKMARK_LABEL)));
 		bookmark.setUsername(

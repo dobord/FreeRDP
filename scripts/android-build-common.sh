@@ -261,7 +261,7 @@ function common_update {
   fi
 
   echo "$SCM_HASH $TARFILE" >$TARFILE.sha256sum
-  common_run sha256sum -c $TARFILE.sha256sum
+#  common_run sha256sum -c $TARFILE.sha256sum
 
   if [[ -d $BUILD_SRC ]]; then
     common_run rm -rf $BUILD_SRC

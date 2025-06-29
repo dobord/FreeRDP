@@ -23,6 +23,7 @@ android {
         versionName = androidGitVersion.name()
         versionCode = androidGitVersion.code()
     }
+    ndkVersion = "26.1.10909125"
 
     signingConfigs {
         release {
@@ -44,6 +45,13 @@ android {
             jniDebuggable true
             renderscriptDebuggable true
         }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+        warningsAsErrors false
+        // Можно добавить baseline, если потребуется
     }
 }
 

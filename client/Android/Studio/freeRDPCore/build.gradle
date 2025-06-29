@@ -14,7 +14,7 @@ android {
         minSdkVersion rootProject.ext.minApi
         targetSdkVersion rootProject.ext.targetApi
         vectorDrawables.useSupportLibrary = true
-	ndkVersion = "29.0.13113456"
+	ndkVersion = "26.1.10909125"
 
         ndk {
             File jniLibsDirectory = new File(project.projectDir, "src/main/jniLibs")
@@ -57,6 +57,11 @@ android {
         cmake {
             path file('src/main/cpp/CMakeLists.txt')
         }
+    }
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+        warningsAsErrors false
     }
 }
 

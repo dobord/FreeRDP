@@ -6,22 +6,22 @@ if (file.canRead()) {
 }
    
 if (!hasProperty('RELEASE_STORE_FILE')) {
-    RELEASE_STORE_FILE=releaseProperties.get('RELEASE_STORE_FILE', '~/.android/debug.keystore')
+    ext.RELEASE_STORE_FILE = releaseProperties.get('RELEASE_STORE_FILE', System.getProperty('user.home') + '/.android/debug.keystore')
 }
 if (!hasProperty('RELEASE_KEY_ALIAS')) {
-    RELEASE_KEY_ALIAS=releaseProperties.get('RELEASE_KEY_ALIAS', 'androiddebugkey')
+    ext.RELEASE_KEY_ALIAS = releaseProperties.get('RELEASE_KEY_ALIAS', 'androiddebugkey')
 }
 if (!hasProperty('RELEASE_KEY_PASSWORD')) {
-    RELEASE_KEY_PASSWORD=releaseProperties.get('RELEASE_KEY_PASSWORD', 'android')
+    ext.RELEASE_KEY_PASSWORD = releaseProperties.get('RELEASE_KEY_PASSWORD', 'android')
 }
 if (!hasProperty('RELEASE_STORE_PASSWORD')) {
-    RELEASE_STORE_PASSWORD=releaseProperties.get('RELEASE_STORE_PASSWORD', 'android')
+    ext.RELEASE_STORE_PASSWORD = releaseProperties.get('RELEASE_STORE_PASSWORD', 'android')
 }
 
 ext {
     compileApi = releaseProperties.get('COMPILE_API', 35)
     targetApi = releaseProperties.get('TARGET_API', 35)
-    minApi = releaseProperties.get('MIN_API', 23)
+    minApi = releaseProperties.get('MIN_API', 26)
     toolsVersion = releaseProperties.get('TOOLS_VERSION', '35.0.0')
 
     println '----------------- Project configuration -------------------'
@@ -43,7 +43,7 @@ buildscript {
         }
     }
     dependencies {
-       classpath 'com.android.tools.build:gradle:8.9.2'
+       classpath 'com.android.tools.build:gradle:8.10.1'
     }
 }
 
