@@ -8,6 +8,8 @@ FFMPEG_TAG=n7.1
 FFMPEG_HASH=7ddad2d992bd250a6c56053c26029f7e728bebf0f37f80cf3f8a0e6ec706431a
 CJSON_TAG=v1.7.18
 CJSON_HASH=3aa806844a03442c00769b83e99970be70fbef03735ff898f4811dd03b9f5ee5
+AOM_TAG=v3.9.1
+AOM_HASH=d89daa160a0ea1409c4193be5b17c9591024c4f5a0e545dcb9d197535c66836e
 
 WITH_OPENH264=0
 WITH_OPENSSL=0
@@ -154,9 +156,29 @@ for ARCH in $BUILD_ARCH; do
   else
     CMAKE_CMD_ARGS="$CMAKE_CMD_ARGS -DWITH_MEDIACODEC=OFF"
   fi
+  
+  if [ $BUILD_DEPS -ne 0 ]; then
+    common_run bash $SCRIPT_PATH/android-build-aom.sh \
+      --src $BUILD_SRC/aom --dst $BUILD_DST \
+      --sdk "$ANDROID_SDK" \
+      --ndk "$ANDROID_NDK" \
+      --arch $ARCH \
+      --target $NDK_TARGET \
+      --tag $AOM_TAG \
+      --hash $AOM_HASH
+    # Копируем публичные заголовки aom из исходников в include/aom для корректной работы pkg-config и FFmpeg
+    mkdir -p $BUILD_DST/$ARCH/include/aom
+    cp $BUILD_SRC/aom/aom/*.h $BUILD_DST/$ARCH/include/aom/
+    # Исправляем пути в aom.pc для корректной работы pkg-config
+    sed -i "s|^prefix=.*|prefix=$BUILD_DST/$ARCH|; s|^includedir=.*|includedir=$BUILD_DST/$ARCH/include|; s|^libdir=.*|libdir=$BUILD_DST/$ARCH|" $BUILD_SRC/aom/build-$ARCH/aom.pc
+    # Копируем aom.pc в нужный путь для pkg-config
+    common_run mkdir -p $BUILD_DST/$ARCH/lib/pkgconfig
+    common_run cp $BUILD_SRC/aom/build-$ARCH/aom.pc $BUILD_DST/$ARCH/lib/pkgconfig/aom.pc
+  fi
 
   if [ $WITH_FFMPEG -ne 0 ]; then
     if [ $BUILD_DEPS -ne 0 ]; then
+      export PKG_CONFIG_PATH="$BUILD_DST/$ARCH/lib/pkgconfig"
       common_run bash $SCRIPT_PATH/android-build-ffmpeg.sh \
         --src $BUILD_SRC/ffmpeg --dst $BUILD_DST \
         --sdk "$ANDROID_SDK" \

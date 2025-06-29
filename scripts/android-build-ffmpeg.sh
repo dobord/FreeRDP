@@ -130,6 +130,7 @@ function build {
     --enable-jni \
     --enable-mediacodec \
     --enable-shared \
+    --enable-libaom \
     --disable-vulkan \
     --disable-stripping \
     --disable-programs \
@@ -185,28 +186,33 @@ if [ -z ${HOST_PKG_CONFIG_PATH} ]; then
 fi
 
 for ARCH in $BUILD_ARCH; do
+  export PKG_CONFIG_PATH="$BUILD_DST/$ARCH/lib/pkgconfig"
+  echo "[INFO] PKG_CONFIG_PATH set to $PKG_CONFIG_PATH"
+  echo "[INFO] Checking pkg-config aom version:"
+  pkg-config --modversion aom || echo "[ERROR] pkg-config cannot find aom for $ARCH"
+
   case ${ARCH} in
   armeabi-v7a)
     TARGET_CPU="armv7-a"
     TARGET_ARCH="armv7-a"
-    ARCH_OPTIONS="	--enable-neon --enable-asm --enable-inline-asm"
+    ARCH_OPTIONS="  --enable-neon --enable-asm --enable-inline-asm"
     ;;
   arm64-v8a)
     TARGET_CPU="armv8-a"
     TARGET_ARCH="aarch64"
-    ARCH_OPTIONS="	--enable-neon --enable-asm --enable-inline-asm"
+    ARCH_OPTIONS="  --enable-neon --enable-asm --enable-inline-asm"
     ;;
   x86)
     TARGET_CPU="i686"
     TARGET_ARCH="i686"
 
     # asm disabled due to this ticker https://trac.ffmpeg.org/ticket/4928
-    ARCH_OPTIONS="	--disable-neon --disable-asm --disable-inline-asm"
+    ARCH_OPTIONS="  --disable-neon --disable-asm --disable-inline-asm"
     ;;
   x86_64)
     TARGET_CPU="x86_64"
     TARGET_ARCH="x86_64"
-    ARCH_OPTIONS="	--disable-neon --enable-asm --enable-inline-asm"
+    ARCH_OPTIONS="  --disable-neon --enable-asm --enable-inline-asm"
     ;;
   esac
 
@@ -214,4 +220,5 @@ for ARCH in $BUILD_ARCH; do
   common_run cp -L $BUILD_DST/$ARCH/lib/*.so $BUILD_DST/$ARCH/
 
   common_run export PATH=$OLD_PATH
+
 done

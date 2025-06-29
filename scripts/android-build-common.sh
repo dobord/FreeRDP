@@ -273,6 +273,25 @@ function common_update {
 
 }
 
+function common_update_git {
+  local url=$1
+  local tag=$2
+  local dir=$3
+  local hash=$4
+
+  if [ ! -d "$dir/.git" ]; then
+    rm -rf "$dir"
+    git clone --recursive "$url" "$dir"
+  fi
+  cd "$dir"
+  git fetch --all --tags
+  git checkout "$tag"
+  if [ -n "$hash" ]; then
+    git reset --hard "$hash"
+  fi
+  cd - >/dev/null
+}
+
 function common_clean {
   if [ $CLEAN_BUILD_DIR -ne 1 ]; then
     return
