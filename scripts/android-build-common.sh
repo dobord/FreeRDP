@@ -21,7 +21,7 @@ if [ -z $BUILD_ARCH ]; then
 fi
 
 if [ -z $NDK_TARGET ]; then
-  NDK_TARGET=21
+  NDK_TARGET=29
 fi
 
 if [ -z $CMAKE_PROGRAM ]; then
