@@ -35,7 +35,7 @@ for ARCH in $BUILD_ARCH; do
     -B . \
     -S $BUILD_SRC
   echo $(pwd)
-  common_run $CMAKE_PROGRAM --build . --target install
+  common_run $CMAKE_PROGRAM --build . --target install -- -j$(nproc)
 done
 
 echo "Successfully build library for architectures $BUILD_ARCH"

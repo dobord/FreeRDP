@@ -1,5 +1,4 @@
-#!/bin/bash -x
-
+#!/bin/bash
 SCRIPT_NAME="${BASH_SOURCE[0]}"
 SCRIPT_PATH=$(dirname "${BASH_SOURCE[0]}")
 SCRIPT_PATH=$(realpath "$SCRIPT_PATH")
@@ -21,7 +20,7 @@ if [ -z $BUILD_ARCH ]; then
 fi
 
 if [ -z $NDK_TARGET ]; then
-  NDK_TARGET=29
+  NDK_TARGET=21
 fi
 
 if [ -z $CMAKE_PROGRAM ]; then
@@ -261,7 +260,7 @@ function common_update {
   fi
 
   echo "$SCM_HASH $TARFILE" >$TARFILE.sha256sum
-#  common_run sha256sum -c $TARFILE.sha256sum
+  common_run sha256sum -c $TARFILE.sha256sum
 
   if [[ -d $BUILD_SRC ]]; then
     common_run rm -rf $BUILD_SRC
@@ -279,17 +278,18 @@ function common_update_git {
   local dir=$3
   local hash=$4
 
-  if [ ! -d "$dir/.git" ]; then
-    rm -rf "$dir"
-    git clone --recursive "$url" "$dir"
+  CACHE=$(realpath $SCRIPT_PATH/../cache)
+  common_run mkdir -p $CACHE
+  CACHE_GIT="$CACHE/$SCM_TAG"
+
+  if [ ! -d "$CACHE_GIT/.git" ]; then
+    common_run git clone --recursive -b "$tag" --single-branch "$url" "$CACHE_GIT"
+  else
+    if [[ -d $dir ]]; then
+      common_run rm -rf $dir
+    fi
+    common_run cp -rf "$CACHE_GIT" "$dir"
   fi
-  cd "$dir"
-  git fetch --all --tags
-  git checkout "$tag"
-  if [ -n "$hash" ]; then
-    git reset --hard "$hash"
-  fi
-  cd - >/dev/null
 }
 
 function common_clean {

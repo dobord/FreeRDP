@@ -14,7 +14,7 @@ android {
         minSdkVersion rootProject.ext.minApi
         targetSdkVersion rootProject.ext.targetApi
         vectorDrawables.useSupportLibrary = true
-        ndkVersion = "29.0.13113456"
+        ndkVersion = "21.3.6528147"
 
         ndk {
             File jniLibsDirectory = new File(project.projectDir, "src/main/jniLibs")
@@ -47,6 +47,7 @@ android {
         debug {
             jniDebuggable true
             renderscriptDebuggable true
+            minifyEnabled false
         }
     }
     compileOptions {
@@ -63,7 +64,7 @@ android {
         checkReleaseBuilds false
         warningsAsErrors false
     }
-    ndkVersion '29.0.13113456 rc1'
+    ndkVersion '21.3.6528147'
 }
 
 dependencies {

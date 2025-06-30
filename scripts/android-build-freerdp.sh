@@ -124,7 +124,7 @@ CMAKE_CMD_ARGS="-DANDROID_NDK=$ANDROID_NDK \
 	-DCMAKE_MODULE_LINKER_FLAGS=\"-fuse-ld=lld\" \
 	-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
 	-DENABLE_LTO=OFF \
-	-DFREERDP_ENABLE_LTO=OFF" # <- добавлено отключение LTO
+	-DFREERDP_ENABLE_LTO=OFF" # <- LTO disabled
 
 BASE=$(pwd)
 for ARCH in $BUILD_ARCH; do
@@ -166,19 +166,10 @@ for ARCH in $BUILD_ARCH; do
       --target $NDK_TARGET \
       --tag $AOM_TAG \
       --hash $AOM_HASH
-    # Копируем публичные заголовки aom из исходников в include/aom для корректной работы pkg-config и FFmpeg
-    mkdir -p $BUILD_DST/$ARCH/include/aom
-    cp $BUILD_SRC/aom/aom/*.h $BUILD_DST/$ARCH/include/aom/
-    # Исправляем пути в aom.pc для корректной работы pkg-config
-    sed -i "s|^prefix=.*|prefix=$BUILD_DST/$ARCH|; s|^includedir=.*|includedir=$BUILD_DST/$ARCH/include|; s|^libdir=.*|libdir=$BUILD_DST/$ARCH|" $BUILD_SRC/aom/build-$ARCH/aom.pc
-    # Копируем aom.pc в нужный путь для pkg-config
-    common_run mkdir -p $BUILD_DST/$ARCH/lib/pkgconfig
-    common_run cp $BUILD_SRC/aom/build-$ARCH/aom.pc $BUILD_DST/$ARCH/lib/pkgconfig/aom.pc
   fi
 
   if [ $WITH_FFMPEG -ne 0 ]; then
     if [ $BUILD_DEPS -ne 0 ]; then
-      export PKG_CONFIG_PATH="$BUILD_DST/$ARCH/lib/pkgconfig"
       common_run bash $SCRIPT_PATH/android-build-ffmpeg.sh \
         --src $BUILD_SRC/ffmpeg --dst $BUILD_DST \
         --sdk "$ANDROID_SDK" \
@@ -233,6 +224,7 @@ for ARCH in $BUILD_ARCH; do
       -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
       -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=lld" \
       -DcJSON_DIR=$BUILD_DST/$ARCH/cmake/cJSON \
+      -DEXPORT_ALL_SYMBOLS=ON \
       $SRC_DIR
     echo $(pwd)
     common_run $CMAKE_PROGRAM --build . --target install

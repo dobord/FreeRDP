@@ -1,6 +1,4 @@
 #!/bin/bash
-set -x
-
 SCM_URL=https://aomedia.googlesource.com/aom
 SCM_TAG=v3.9.1
 SCM_HASH=d89daa160a0ea1409c4193be5b17c9591024c4f5a0e545dcb9d197535c66836e
@@ -32,37 +30,45 @@ function build {
   DST_DIR=$BUILD_DST/$DST_PREFIX
   common_run cd $BUILD_SRC
 
-  # Создаём отдельный build-каталог для out-of-source сборки
+  # Create a separate build directory for out-of-source build
   BUILD_DIR=build-$DST_PREFIX
   common_run rm -rf $BUILD_DIR
   common_run mkdir $BUILD_DIR
   common_run cd $BUILD_DIR
 
-  # Конфигурируем cmake для нужной архитектуры
+  # Configure cmake for the required architecture
   common_run cmake .. -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK}/build/cmake/android.toolchain.cmake \
     -DANDROID_ABI=$CONFIG \
     -DANDROID_PLATFORM=android-$NDK_TARGET \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=$BUILD_DST/$ARCH \
+    -DCMAKE_INSTALL_LIBDIR=. \
+    -DBUILD_SHARED_LIBS=ON \
     -DENABLE_TESTS=OFF \
     -DENABLE_EXAMPLES=OFF
 
-  common_run make -j$(nproc)
+  common_run $CMAKE_PROGRAM --build . --target install -- -j$(nproc)
 
   if [ ! -d $DST_DIR ]; then
     common_run mkdir -p $DST_DIR
   fi
 
-  # Копируем собранные библиотеки
+  # Copy built static libraries
   common_run cp *.a $DST_DIR/ 2>/dev/null || true
+  # Copy built shared library
+  common_run cp libaom.so $DST_DIR/ 2>/dev/null || true
+  # Fix aom.pc: add -lm to Libs if not present
+  AOM_PC="$DST_DIR/pkgconfig/aom.pc"
+  if [ -f "$AOM_PC" ]; then
+    sed -i 's/^Libs: \(.*\)-laom\(.*\)$/Libs: \1-laom -lm\2/' "$AOM_PC"
+  fi
   common_run cd $BASE
 }
 
 # Run the main program.
 common_parse_arguments $@
 
-SCM_MOD_TAG=$SCM_TAG
-
-common_update_git $SCM_URL $SCM_MOD_TAG $BUILD_SRC $SCM_HASH
+common_update_git $SCM_URL $SCM_TAG $BUILD_SRC $SCM_HASH
 
 ORG_PATH=$PATH
 for ARCH in $BUILD_ARCH; do
@@ -85,14 +91,4 @@ for ARCH in $BUILD_ARCH; do
     continue
     ;;
   esac
-
-  # Перемещаем создание include-директории и копирование заголовков внутрь цикла
-  if [ ! -d $BUILD_DST/$ARCH/include ]; then
-    common_run mkdir -p $BUILD_DST/$ARCH/include
-  fi
-  if [ -d $BUILD_SRC/include/aom ]; then
-    common_run cp -L -R $BUILD_SRC/include/aom $BUILD_DST/$ARCH/include/
-  else
-    echo "[WARNING] $BUILD_SRC/include/aom not found, headers not copied for $ARCH"
-  fi
 done

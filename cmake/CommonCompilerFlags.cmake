@@ -35,9 +35,8 @@ list(APPEND COMMON_COMPILER_FLAGS -fno-omit-frame-pointer -Wredundant-decls)
 include(ExportAllSymbols)
 include(CompilerSanitizerOptions)
 
-if(CMAKE_C_COMPILER_ID MATCHES ".*Clang.*" OR (CMAKE_C_COMPILER_ID MATCHES "GNU" AND CMAKE_C_COMPILER_VERSION
-                                                                                     VERSION_GREATER_EQUAL 10)
-)
+if((CMAKE_C_COMPILER_ID MATCHES ".*Clang.*" AND CMAKE_C_COMPILER_VERSION VERSION_GREATER 9)
+   OR (CMAKE_C_COMPILER_ID MATCHES "GNU" AND CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL 10))
   add_compile_options($<$<NOT:$<CONFIG:Debug>>:-fdebug-prefix-map=${CMAKE_SOURCE_DIR}=.>)
   add_compile_options($<$<NOT:$<CONFIG:Debug>>:-fmacro-prefix-map=${CMAKE_SOURCE_DIR}=.>)
   add_compile_options($<$<NOT:$<CONFIG:Debug>>:-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.>)

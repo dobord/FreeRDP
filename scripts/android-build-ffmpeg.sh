@@ -108,6 +108,8 @@ function build {
     CARCH="x86-64"
   fi
   PATH=$ANDROID_NDK:$PATH
+  export PKG_CONFIG_PATH="$BUILD_DST/$ARCH/pkgconfig"
+  export PKG_CONFIG_LIBDIR=$PKG_CONFIG_PATH
   common_run ./configure \
     --cross-prefix="${BUILD_HOST}-" \
     --sysroot="${ANDROID_NDK}/toolchains/llvm/prebuilt/${TOOLCHAIN}/sysroot" \
@@ -186,7 +188,8 @@ if [ -z ${HOST_PKG_CONFIG_PATH} ]; then
 fi
 
 for ARCH in $BUILD_ARCH; do
-  export PKG_CONFIG_PATH="$BUILD_DST/$ARCH/lib/pkgconfig"
+  export PKG_CONFIG_PATH="$BUILD_DST/$ARCH/pkgconfig"
+  export PKG_CONFIG_LIBDIR=$PKG_CONFIG_PATH
   echo "[INFO] PKG_CONFIG_PATH set to $PKG_CONFIG_PATH"
   echo "[INFO] Checking pkg-config aom version:"
   pkg-config --modversion aom || echo "[ERROR] pkg-config cannot find aom for $ARCH"
