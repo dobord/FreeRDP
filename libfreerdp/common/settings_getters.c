@@ -2395,6 +2395,9 @@ const char* freerdp_settings_get_string(const rdpSettings* settings, size_t id)
 		case FreeRDP_TargetNetAddress:
 			return settings->TargetNetAddress;
 
+		case FreeRDP_TlsSecretsFile:
+			return settings->TlsSecretsFile;
+
 		case FreeRDP_Username:
 			return settings->Username;
 
@@ -2800,6 +2803,12 @@ BOOL freerdp_settings_set_string_(rdpSettings* settings, size_t id, const char* 
 				free(settings->TargetNetAddress);
 			settings->TargetNetAddress = (val ? _strdup(val) : NULL);
 			return (!val || settings->TargetNetAddress != NULL);
+
+		case FreeRDP_TlsSecretsFile:
+			if (cleanup)
+				free(settings->TlsSecretsFile);
+			settings->TlsSecretsFile = (val ? _strdup(val) : NULL);
+			return (!val || settings->TlsSecretsFile != NULL);
 
 		case FreeRDP_Username:
 			if (cleanup)

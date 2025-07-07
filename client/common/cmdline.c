@@ -2921,6 +2921,14 @@ int freerdp_client_settings_parse_command_line_arguments(rdpSettings* settings, 
 
 			settings->TlsSecLevel = (UINT32)val;
 		}
+		CommandLineSwitchCase(arg, "tls-secrets-file")
+		{
+			if (!arg->Value)
+				return COMMAND_LINE_ERROR_UNEXPECTED_VALUE;
+
+			if (!freerdp_settings_set_string(settings, FreeRDP_TlsSecretsFile, arg->Value))
+				return COMMAND_LINE_ERROR_MEMORY;
+		}
 		CommandLineSwitchCase(arg, "enforce-tlsv1_2")
 		{
 			if (!(freerdp_settings_set_uint16(settings, FreeRDP_TLSMinVersion, TLS1_2_VERSION) &&

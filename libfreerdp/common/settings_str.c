@@ -364,6 +364,7 @@ static const struct settings_str_entry settings_map[] = {
 	{ FreeRDP_ServerHostname, 7, "FreeRDP_ServerHostname" },
 	{ FreeRDP_ShellWorkingDirectory, 7, "FreeRDP_ShellWorkingDirectory" },
 	{ FreeRDP_TargetNetAddress, 7, "FreeRDP_TargetNetAddress" },
+	{ FreeRDP_TlsSecretsFile, 7, "FreeRDP_TlsSecretsFile" },
 	{ FreeRDP_Username, 7, "FreeRDP_Username" },
 	{ FreeRDP_WindowTitle, 7, "FreeRDP_WindowTitle" },
 	{ FreeRDP_WmClass, 7, "FreeRDP_WmClass" },
