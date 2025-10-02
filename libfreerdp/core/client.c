@@ -1499,8 +1499,11 @@ int freerdp_channels_client_load_ex(rdpChannels* channels, WINPR_ATTR_UNUSED rdp
 int freerdp_channels_load_plugin(rdpChannels* channels, rdpSettings* settings, const char* name,
                                  void* data)
 {
-	PVIRTUALCHANNELENTRY entry =
-	    freerdp_load_channel_addin_entry(name, NULL, NULL, FREERDP_ADDIN_CHANNEL_STATIC);
+	DWORD flags = FREERDP_ADDIN_CHANNEL_STATIC | FREERDP_ADDIN_CHANNEL_ENTRYEX;
+	PVIRTUALCHANNELENTRY entry = freerdp_load_channel_addin_entry(name, NULL, NULL, flags);
+
+	if (!entry)
+		entry = freerdp_load_channel_addin_entry(name, NULL, NULL, FREERDP_ADDIN_CHANNEL_STATIC);
 
 	if (!entry)
 		return 1;

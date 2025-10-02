@@ -218,9 +218,16 @@ UINT devman_load_device_service(DEVMAN* devman, RDPDR_DEVICE* device, rdpContext
 	else
 		WLog_INFO(TAG, "Loading device service %s (static)", ServiceName);
 
+	const DWORD flags = FREERDP_ADDIN_CHANNEL_STATIC | FREERDP_ADDIN_CHANNEL_ENTRYEX;
 	PVIRTUALCHANNELENTRY pvce =
-	    freerdp_load_channel_addin_entry(ServiceName, NULL, "DeviceServiceEntry", 0);
+	    freerdp_load_channel_addin_entry(ServiceName, NULL, "DeviceServiceEntry", flags);
 	PDEVICE_SERVICE_ENTRY entry = WINPR_FUNC_PTR_CAST(pvce, PDEVICE_SERVICE_ENTRY);
+
+	if (!entry)
+	{
+		pvce = freerdp_load_channel_addin_entry(ServiceName, NULL, "DeviceServiceEntry", 0);
+		entry = WINPR_FUNC_PTR_CAST(pvce, PDEVICE_SERVICE_ENTRY);
+	}
 
 	if (!entry)
 	{
