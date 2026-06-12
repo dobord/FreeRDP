@@ -19,6 +19,7 @@
 option(WITH_SHADOW "Compile with shadow server" ON)
 option(WITH_PROXY "Compile with proxy server" ON)
 option(WITH_PLATFORM_SERVER "Compile with platform server" ON)
+option(WITH_FRDPD "Compile experimental FreeRDP PAM/SSSD RDP daemon prototype" OFF)
 
 add_subdirectory(common)
 if(WITH_SHADOW)
@@ -30,6 +31,10 @@ if(WITH_SHADOW)
 endif()
 if(WITH_PROXY)
   add_subdirectory(proxy)
+endif()
+
+if(WITH_FRDPD)
+  add_subdirectory(frdpd)
 endif()
 
 if(WITH_SAMPLE)
