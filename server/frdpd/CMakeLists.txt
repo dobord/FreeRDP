@@ -6,7 +6,7 @@ set(MODULE_PREFIX "FREERDP_SERVER_FRDPD")
 
 find_package(PAM REQUIRED)
 
-set(SRCS frdpd.c frdpd_pam.c frdpd_pam.h)
+set(SRCS frdpd.c frdpd_auth.c frdpd_auth.h frdpd_pam.c frdpd_pam.h)
 
 addtargetwithresourcefile(${MODULE_NAME} TRUE "${FREERDP_VERSION}" SRCS)
 
