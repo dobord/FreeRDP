@@ -15,6 +15,7 @@
 | [06-implementation-plan.md](06-implementation-plan.md) | Step-by-step implementation plan, milestones, risks, and acceptance criteria. |
 | [07-configuration-and-ops.md](07-configuration-and-ops.md) | Configuration examples, systemd, PAM, SSSD, operations, and audit. |
 | [08-sources.md](08-sources.md) | Sources and documentation links. |
+| [09-implementation-issues.md](09-implementation-issues.md) | Current implementation issues with severity and confidence ratings. |
 
 ## Main recommendation
 
