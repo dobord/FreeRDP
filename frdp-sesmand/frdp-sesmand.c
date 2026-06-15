@@ -19,20 +19,28 @@
 #include <uuid/uuid.h>
 #include <time.h>
 #include <signal.h>
+#include <grp.h>
 
-/* Session registry entry. */
+/* Session registry entry.  Each session retains its PAM handle and the
+ * process group of the launched agent/backend so that cleanup can terminate
+ * all descendants.  A per-session display number is allocated for headless
+ * X servers. */
 typedef struct {
     char user[64];
     uuid_t id;
     pid_t agent_pid;
+    pid_t pgid;
     time_t start_time;
+    pam_handle_t *pamh;
+    int display_number;
 } session;
 
 #define MAX_SESSIONS 64
 static session sessions[MAX_SESSIONS];
 static int session_count = 0;
+static int next_display = 100;
 
-/* Non-interactive PAM conversation.  frdp-sesmand should not prompt. */
+/* Non-interactive PAM conversation. */
 static int pam_conv_fn(int num_msg, const struct pam_message **msg,
                        struct pam_response **resp, void *appdata_ptr)
 {
@@ -45,9 +53,8 @@ static int pam_conv_fn(int num_msg, const struct pam_message **msg,
     return PAM_SUCCESS;
 }
 
-/* Open a session for the specified user.  This starts a PAM session and
- * launches the per-user session agent under the same UID/GID as the user.
- */
+/* Open a session for the specified user.  This starts a PAM session, forks
+ * a child to run the per-user agent and returns 0 on success. */
 static int open_session(const char *user)
 {
     if (session_count >= MAX_SESSIONS)
@@ -58,36 +65,58 @@ static int open_session(const char *user)
     if (ret != PAM_SUCCESS)
         return -1;
     ret = pam_open_session(pamh, 0);
-    pam_end(pamh, ret);
-    if (ret != PAM_SUCCESS)
+    if (ret != PAM_SUCCESS) {
+        pam_end(pamh, ret);
         return -1;
+    }
 
-    /* Lookup user information and set supplementary groups. */
+    /* Allocate display number and build display string */
+    int display = next_display++;
+    char display_str[16];
+    snprintf(display_str, sizeof display_str, ":%d", display);
+
+    /* Retrieve user information for UID/GID drop. */
     struct passwd *pwd = getpwnam(user);
-    if (!pwd)
+    if (!pwd) {
+        pam_close_session(pamh, 0);
+        pam_end(pamh, PAM_USER_UNKNOWN);
         return -1;
-    if (initgroups(user, pwd->pw_gid) != 0)
-        return -1;
+    }
 
-    /* Fork and exec the session agent.  The child switches UID/GID to the
-     * session user before executing. */
     pid_t pid = fork();
-    if (pid < 0)
+    if (pid < 0) {
+        pam_close_session(pamh, 0);
+        pam_end(pamh, PAM_SUCCESS);
         return -1;
+    }
     if (pid == 0) {
-        /* Drop privileges to the target user. */
+        /* Child: create a new process group for the session and drop privileges. */
+        setpgid(0, 0);
+        /* Set environment variables for the display */
+        setenv("DISPLAY", display_str, 1);
+        setenv("FRDP_DISPLAY", display_str, 1);
+        /* Set groups and UID/GID */
+        if (initgroups(user, pwd->pw_gid) != 0) {
+            _exit(127);
+        }
         if (setgid(pwd->pw_gid) != 0 || setuid(pwd->pw_uid) != 0) {
             _exit(127);
         }
         execlp("frdp-session-agent", "frdp-session-agent", (char *)NULL);
+        /* If exec fails, exit with error. */
         _exit(127);
     }
+
+    /* Parent: record session metadata. */
     session *s = &sessions[session_count++];
     strncpy(s->user, user, sizeof(s->user) - 1);
     s->user[sizeof(s->user) - 1] = '\0';
     uuid_generate(s->id);
     s->agent_pid = pid;
+    s->pgid = pid; /* child's pgid equals pid since setpgid called with 0 */
     s->start_time = time(NULL);
+    s->pamh = pamh;
+    s->display_number = display;
     return 0;
 }
 
@@ -95,15 +124,17 @@ static int open_session(const char *user)
 static void cleanup_session(int idx)
 {
     session *s = &sessions[idx];
-    if (s->agent_pid > 0) {
-        kill(s->agent_pid, SIGTERM);
+    /* Terminate the entire process group (agent + display backend). */
+    if (s->pgid > 0) {
+        kill(-s->pgid, SIGTERM);
+        /* Wait for the agent PID to exit */
         waitpid(s->agent_pid, NULL, 0);
     }
-    struct pam_conv conv = {pam_conv_fn, NULL};
-    pam_handle_t *pamh = NULL;
-    pam_start("frdpd", s->user, &conv, &pamh);
-    pam_close_session(pamh, 0);
-    pam_end(pamh, PAM_SUCCESS);
+    /* Close PAM session and end handle. */
+    if (s->pamh) {
+        pam_close_session(s->pamh, 0);
+        pam_end(s->pamh, PAM_SUCCESS);
+    }
     if (idx < session_count - 1) {
         sessions[idx] = sessions[session_count - 1];
     }
@@ -117,16 +148,14 @@ int main(int argc, char **argv)
     openlog("frdp-sesmand", LOG_PID, LOG_DAEMON);
     printf("frdp-sesmand: session manager starting\n");
 
-    /* Demonstration: create a test session for the nobody account.  In a real
-     * server sessions would be created upon successful authentication by
-     * frdp-authd. */
+    /* Demonstration: create a test session for the nobody account. */
     if (open_session("nobody") == 0) {
         syslog(LOG_INFO, "created test session");
     } else {
         syslog(LOG_ERR, "failed to create test session");
     }
 
-    /* Monitor for child exits and clean up sessions accordingly. */
+    /* Monitor for agent exits and clean up sessions accordingly. */
     while (session_count > 0) {
         pid_t pid = wait(NULL);
         for (int i = 0; i < session_count; i++) {
