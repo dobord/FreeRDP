@@ -24,6 +24,11 @@
 #include <sys/types.h>
 #include <errno.h>
 
+/* IPC definitions */
+#include "../ipc/frdp-ipc.h"
+#include <sys/socket.h>
+#include <sys/un.h>
+
 /*
  * The authentication broker is responsible for validating a user via PAM/SSSD
  * and preparing the process environment for further session handling.  In
@@ -118,9 +123,69 @@ int authenticate_user(const char *user, const char *password)
     return (ret == PAM_SUCCESS) ? 0 : -1;
 }
 
+/* Run in IPC server mode listening on a UNIX domain socket and handling auth requests */
+static int run_ipc_server(const char *socket_path)
+{
+    /* Ensure no leftover socket */
+    unlink(socket_path);
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        perror("socket");
+        return -1;
+    }
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        close(fd);
+        return -1;
+    }
+    if (listen(fd, 5) < 0) {
+        perror("listen");
+        close(fd);
+        return -1;
+    }
+    printf("frdp-authd IPC server listening on %s\n", socket_path);
+    while (1) {
+        int cfd = accept(fd, NULL, NULL);
+        if (cfd < 0) {
+            perror("accept");
+            continue;
+        }
+        frdpIpcHeader hdr;
+        if (frdp_ipc_recv(cfd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+            close(cfd);
+            continue;
+        }
+        if (hdr.type == FRDP_IPC_AUTH_REQUEST && hdr.payload_len == sizeof(frdpAuthRequest)) {
+            frdpAuthRequest req;
+            if (frdp_ipc_recv(cfd, &req, sizeof(req)) == (int)sizeof(req)) {
+                frdpAuthResponse resp;
+                resp.success = (authenticate_user(req.user, req.password) == 0);
+                resp.error[0] = '\0';
+                frdpIpcHeader rhdr;
+                rhdr.type = FRDP_IPC_AUTH_RESPONSE;
+                rhdr.payload_len = sizeof(resp);
+                frdp_ipc_send(cfd, &rhdr, sizeof(rhdr));
+                frdp_ipc_send(cfd, &resp, sizeof(resp));
+            }
+        }
+        close(cfd);
+    }
+    close(fd);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     set_no_core();
+    /* If invoked with --socket <path>, run as IPC server */
+    if (argc == 3 && strcmp(argv[1], "--socket") == 0) {
+        const char *sock = argv[2];
+        return run_ipc_server(sock);
+    }
     const char *user = NULL;
     const char *pass = NULL;
     /* Accept username and password as positional arguments for development only. */
@@ -129,7 +194,7 @@ int main(int argc, char **argv)
         pass = argv[2];
     }
     if (!user || !pass) {
-        fprintf(stderr, "Usage: %s <username> <password>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--socket <path>] | <username> <password>\n", argv[0]);
         fprintf(stderr, "In production this service must be invoked via a secure IPC protocol.\n");
         return 1;
     }
