@@ -12,7 +12,7 @@ This document describes how to enable Kerberos-first authentication for the Free
    
    Use the host FQDN and ensure the short SPN alias is also mapped.
 2. Generate a Kerberos keytab containing the service principal’s credentials and install it on the server at `/etc/frdpd/frdpd.keytab`. Use `ktutil` or `ktpass` to export the keytab.
-3. Restrict file permissions on the keytab (`chmod 600`) and configure `frdpd` to load it via the `keytab` option in `frdpd.toml`.
+3. Restrict file permissions on the keytab (`chmod 600`). The current `frdpd.toml` parser rejects `keytab` until the integrated daemon can enforce the Kerberos acceptor policy; keep keytab wiring in the Kerberos milestone implementation rather than in current production config.
 
 ## GSSAPI acceptor path
 
@@ -24,7 +24,7 @@ The `frdp-krb-authd` component (see `frdp-krb-authd/frdp-krb-authd.c`) demonstra
 - Maps the principal to a POSIX account (`getpwnam()`).
 - Optionally opens a PAM session for the user (reusing the logic from `frdp-authd`).
 
-In a production server, the RDP daemon must decode the SPNEGO token from the CredSSP handshake, invoke the GSSAPI acceptor to obtain the client’s principal, and use that identity for PAM/SSSD account checks. NTLM fallback should be disabled via configuration (`ntlm_fallback = false`) to enforce Kerberos-only mode.
+In a production server, the RDP daemon must decode the SPNEGO token from the CredSSP handshake, invoke the GSSAPI acceptor to obtain the client’s principal, and use that identity for PAM/SSSD account checks. NTLM fallback must be disabled by an enforced daemon policy. The current parser rejects `ntlm_fallback` until that policy is implemented, so do not add it to `frdpd.toml` yet.
 
 ## Principal to POSIX mapping
 

@@ -8,35 +8,16 @@ listen = "0.0.0.0:3389"
 security = "nla"
 tls_cert = "/etc/frdpd/tls.crt"
 tls_key = "/etc/frdpd/tls.key"
-max_connections = 200
+# max_connections is omitted until the daemon enforces connection caps.
 
 [auth]
 mode = "pam-sssd"
 pam_service = "frdpd"
-kerberos = "preferred"
-ntlm_fallback = false
-keytab = "/etc/frdpd/frdpd.keytab"
-accepted_spn = ["TERMSRV/rdp01.example.com", "TERMSRV/rdp01"]
+# Kerberos-first fields are intentionally omitted until the daemon enforces them.
+# Do not configure kerberos, ntlm_fallback, keytab, or accepted_spn in the current parser.
 
-[session]
-backend = "xorg"
-default_desktop = "xfce"
-idle_timeout = "60m"
-absolute_timeout = "12h"
-reconnect = true
-
-[channels]
-default = "deny"
-clipboard_text = "allow"
-audio_output = "allow"
-drive = "deny"
-printer = "deny"
-smartcard = "deny"
-usb = "deny"
-
-[audit]
-structured = true
-correlation_id = true
+# Session, channel, and audit sections are omitted until the daemon enforces them.
+# The current parser rejects [session], [channels], and [audit] instead of silently ignoring policy.
 ```
 
 ## PAM

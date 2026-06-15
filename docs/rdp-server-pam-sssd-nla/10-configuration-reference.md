@@ -5,39 +5,24 @@ This document describes the configuration options available in `frdpd.toml` (see
 ## [server]
 
 - `listen` (string): IP address and port to bind. Default `0.0.0.0:3389`.
-- `security` (string): Acceptable security layers. Allowed values: `nla` (CredSSP/Kerberos), `tls` (TLS only). Default `nla`.
+- `security` (string): Acceptable security layer. Currently implemented value: `nla` (CredSSP/Kerberos). Default `nla`. TLS fallback remains a separate compatibility path and must not be treated as the production default.
 - `tls_cert`, `tls_key` (path): Paths to the TLS certificate and private key.
-- `max_connections` (int): Maximum concurrent connections.
+- `max_connections`: planned connection-limit field. The current parser rejects it until the daemon enforces connection caps.
 
 ## [auth]
 
-- `mode` (string): Authentication backend. Allowed values: `pam-sssd`, `pam-krb5`. Default `pam-sssd`.
+- `mode` (string): Authentication backend. Currently implemented value: `pam-sssd`. Default `pam-sssd`.
 - `pam_service` (string): Name of PAM service file. Default `frdpd`.
-- `kerberos` (string): Kerberos usage policy: `required`, `preferred`, or `disabled`. Default `preferred`.
-- `ntlm_fallback` (bool): Whether to fall back to NTLM if Kerberos fails. Default `false`.
-- `keytab` (path): Path to the server’s keytab for Kerberos.
-- `accepted_spn` (list of strings): SPN aliases accepted for incoming Kerberos logins.
+- `kerberos`, `ntlm_fallback`, `keytab`, `accepted_spn`: planned Kerberos-first production fields. The current parser rejects them until the daemon can enforce the corresponding policy.
 
 ## [session]
 
-- `backend` (string): Desktop backend. Allowed: `xorg`, `xvfb`, `wayland`. Default `xorg`.
-- `default_desktop` (string): Default desktop environment, e.g. `xfce`.
-- `idle_timeout` (duration): Session idle timeout. Default `60m`.
-- `absolute_timeout` (duration): Maximum session lifetime. Default `12h`.
-- `reconnect` (bool): Allow reconnecting to existing sessions.
+Planned session lifecycle fields. The current parser rejects `[session]` until the session manager enforces these settings.
 
 ## [channels]
 
-Each key controls policy for a virtual channel. Values: `allow`, `deny`. Unknown channels are denied by default. Example:
-
-```toml
-[channels]
-clipboard_text = "allow"
-audio_output = "allow"
-drive = "deny"
-```
+Planned channel policy fields. The current parser rejects `[channels]` until channel policy is enforced in the daemon and channel-open path.
 
 ## [audit]
 
-- `structured` (bool): Emit structured log events.
-- `correlation_id` (bool): Include a unique identifier per connection to correlate audit events across components.
+Planned audit fields. The current parser rejects `[audit]` until structured audit and correlation-id propagation are implemented.

@@ -8,12 +8,8 @@ typedef struct {
     char security[16];
     char tls_cert[256];
     char tls_key[256];
-    int max_connections;
     char auth_mode[32];
     char pam_service[64];
-    char kerberos_policy[16];
-    int ntlm_fallback;
-    char keytab[256];
 } frdpConfig;
 
 /* Load configuration from a TOML file into the provided struct. Returns 0 on success. */

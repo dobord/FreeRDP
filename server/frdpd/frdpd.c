@@ -31,6 +31,7 @@
 #include <freerdp/crypto/certificate.h>
 #include <freerdp/crypto/privatekey.h>
 
+#include "../../config/frdp-config.h"
 #include "frdpd.h"
 #include "frdpd_auth.h"
 
@@ -39,6 +40,9 @@
 typedef struct
 {
 	frdpdServerConfig server;
+	frdpConfig file_config;
+	char config_bind_address[64];
+	const char* config_path;
 	BOOL domain_mode_set;
 	BOOL show_help;
 	BOOL pam_auth_test;
@@ -474,6 +478,7 @@ static void frdpd_print_usage(const char* app)
 	(void)fprintf(stderr, "  --port=<port>                 TCP port, default 3389\n");
 	(void)fprintf(stderr, "  --cert=<path>                 TLS certificate, default server.crt\n");
 	(void)fprintf(stderr, "  --key=<path>                  TLS private key, default server.key\n");
+	(void)fprintf(stderr, "  --config=<path>               Load frdpd.toml before CLI overrides\n");
 	(void)fprintf(stderr, "  --pam-service=<name>          PAM service name, default frdpd\n");
 	(void)fprintf(stderr, "  --service <name>              PAM service alias for auth test\n");
 	(void)fprintf(stderr, "  --domain-mode=plain|downlevel|upn|auto\n");
@@ -497,6 +502,104 @@ static BOOL frdpd_parse_port(const char* value, UINT16* port)
 		return FALSE;
 
 	*port = (UINT16)tmp;
+	return TRUE;
+}
+
+static BOOL frdpd_string_is_empty(const char* value)
+{
+	return !value || (value[0] == '\0');
+}
+
+static BOOL frdpd_apply_listen_config(frdpdOptions* options, const char* listen)
+{
+	char buffer[sizeof(options->config_bind_address) + 8] = { 0 };
+	char* colon = NULL;
+
+	WINPR_ASSERT(options);
+	if (frdpd_string_is_empty(listen))
+		return TRUE;
+	if (strlen(listen) >= sizeof(buffer))
+		return FALSE;
+
+	(void)strcpy(buffer, listen);
+	colon = strrchr(buffer, ':');
+	if (!colon)
+	{
+		(void)strcpy(options->config_bind_address, buffer);
+		options->server.bind_address = options->config_bind_address;
+		return TRUE;
+	}
+
+	*colon = '\0';
+	if (!frdpd_parse_port(colon + 1, &options->server.port))
+		return FALSE;
+
+	if (buffer[0] != '\0')
+	{
+		if (strlen(buffer) >= sizeof(options->config_bind_address))
+			return FALSE;
+		(void)strcpy(options->config_bind_address, buffer);
+		options->server.bind_address = options->config_bind_address;
+	}
+	return TRUE;
+}
+
+static BOOL frdpd_apply_file_config(frdpdOptions* options)
+{
+	const frdpConfig* config = NULL;
+
+	WINPR_ASSERT(options);
+	config = &options->file_config;
+
+	if (!frdpd_apply_listen_config(options, config->listen))
+		return FALSE;
+	if (_stricmp(config->auth_mode, "pam-sssd") != 0)
+		return FALSE;
+	if (!frdpd_string_is_empty(config->tls_cert))
+		options->server.cert_path = config->tls_cert;
+	if (!frdpd_string_is_empty(config->tls_key))
+		options->server.key_path = config->tls_key;
+	if (!frdpd_string_is_empty(config->pam_service))
+		options->server.pam_service = config->pam_service;
+
+	if (_stricmp(config->security, "nla") == 0)
+		options->server.allow_tls_fallback = FALSE;
+	else
+		return FALSE;
+
+	return TRUE;
+}
+
+static BOOL frdpd_args_have_help(int argc, char* argv[])
+{
+	WINPR_ASSERT(argv);
+
+	for (int x = 1; x < argc; x++)
+	{
+		if ((strcmp(argv[x], "--help") == 0) || (strcmp(argv[x], "-h") == 0))
+			return TRUE;
+	}
+	return FALSE;
+}
+
+static BOOL frdpd_find_config_arg(int argc, char* argv[], const char** config_path)
+{
+	WINPR_ASSERT(argv);
+	WINPR_ASSERT(config_path);
+
+	*config_path = NULL;
+	for (int x = 1; x < argc; x++)
+	{
+		const char* arg = argv[x];
+		if (strcmp(arg, "--config") == 0)
+		{
+			if (++x >= argc)
+				return FALSE;
+			*config_path = argv[x];
+		}
+		else if (strncmp(arg, "--config=", 9) == 0)
+			*config_path = &arg[9];
+	}
 	return TRUE;
 }
 
@@ -554,6 +657,13 @@ static BOOL frdpd_parse_args(int argc, char* argv[], frdpdOptions* options)
 			options->server.cert_path = &arg[7];
 		else if (strncmp(arg, "--key=", 6) == 0)
 			options->server.key_path = &arg[6];
+		else if (strcmp(arg, "--config") == 0)
+		{
+			if (!frdpd_set_arg_value(&options->config_path, argc, argv, &x))
+				return FALSE;
+		}
+		else if (strncmp(arg, "--config=", 9) == 0)
+			options->config_path = &arg[9];
 		else if (strncmp(arg, "--pam-service=", 14) == 0)
 			options->server.pam_service = &arg[14];
 		else if (strncmp(arg, "--domain-mode=", 14) == 0)
@@ -675,6 +785,25 @@ int main(int argc, char* argv[])
 	options.server.allow_tls_fallback = FALSE;
 	options.server.open_pam_session = TRUE;
 	options.server.domain_mode = FRDPD_DOMAIN_PLAIN;
+	if (frdpd_args_have_help(argc, argv))
+	{
+		frdpd_print_usage(argv[0]);
+		return 0;
+	}
+	if (!frdpd_find_config_arg(argc, argv, &options.config_path))
+	{
+		frdpd_print_usage(argv[0]);
+		return 2;
+	}
+	if (options.config_path)
+	{
+		if ((frdp_config_load(options.config_path, &options.file_config) != 0) ||
+		    !frdpd_apply_file_config(&options))
+		{
+			(void)fprintf(stderr, "failed to load configuration from %s\n", options.config_path);
+			return 1;
+		}
+	}
 
 	if (!frdpd_parse_args(argc, argv, &options))
 	{

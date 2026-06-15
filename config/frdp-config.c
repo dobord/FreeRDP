@@ -5,6 +5,17 @@
 #include <ctype.h>
 #include <stdlib.h>
 
+static int copy_string(char *dst, size_t dst_size, const char *src)
+{
+    if (!dst || dst_size == 0)
+        return -1;
+
+    if (!src)
+        src = "";
+    int rc = snprintf(dst, dst_size, "%s", src);
+    return (rc >= 0 && (size_t)rc < dst_size) ? 0 : -1;
+}
+
 /* Helper to trim whitespace from both ends of a string */
 static void trim(char *s)
 {
@@ -18,72 +29,243 @@ static void trim(char *s)
         memmove(s, p, strlen(p) + 1);
 }
 
+static int unquote_value(char *value)
+{
+    size_t len = 0;
+
+    if (!value)
+        return -1;
+
+    len = strlen(value);
+    if (len < 2)
+        return -1;
+    if (!((value[0] == '"' && value[len - 1] == '"') ||
+          (value[0] == '\'' && value[len - 1] == '\'')))
+        return -1;
+
+    value[len - 1] = '\0';
+    memmove(value, value + 1, len - 1);
+    return 0;
+}
+
 /* Load key/value pairs from a simple TOML-like file. This parser ignores unknown sections and keys. */
 int frdp_config_load(const char *path, frdpConfig *config)
 {
+    if (!path || !config)
+        return -1;
+
     FILE *f = fopen(path, "r");
     if (!f)
         return -1;
     char line[512];
     char current_section[32] = "";
+    int seen_server_section = 0;
+    int seen_auth_section = 0;
+    int seen_listen = 0;
+    int seen_security = 0;
+    int seen_tls_cert = 0;
+    int seen_tls_key = 0;
+    int seen_auth_mode = 0;
+    int seen_pam_service = 0;
     /* Set defaults */
     memset(config, 0, sizeof(*config));
-    strcpy(config->listen, "0.0.0.0:3389");
-    strcpy(config->security, "nla");
-    strcpy(config->auth_mode, "pam-sssd");
-    strcpy(config->pam_service, "frdpd");
-    strcpy(config->kerberos_policy, "preferred");
-    config->max_connections = 64;
+    if (copy_string(config->listen, sizeof(config->listen), "0.0.0.0:3389") != 0 ||
+        copy_string(config->security, sizeof(config->security), "nla") != 0 ||
+        copy_string(config->auth_mode, sizeof(config->auth_mode), "pam-sssd") != 0 ||
+    copy_string(config->pam_service, sizeof(config->pam_service), "frdpd") != 0) {
+        fclose(f);
+        return -1;
+    }
     while (fgets(line, sizeof(line), f)) {
+        size_t raw_len = strlen(line);
+        if (raw_len > 0 && line[raw_len - 1] != '\n' && !feof(f)) {
+            fclose(f);
+            return -1;
+        }
         trim(line);
         if (line[0] == '#' || line[0] == '\0')
             continue;
         if (line[0] == '[') {
             char *end = strchr(line, ']');
-            if (end) {
-                *end = '\0';
-                strncpy(current_section, line + 1, sizeof(current_section) - 1);
+            char *tail = NULL;
+            if (!end) {
+                fclose(f);
+                return -1;
+            }
+            tail = end + 1;
+            while (*tail && isspace((unsigned char)*tail))
+                tail++;
+            if (*tail != '\0' && *tail != '#') {
+                fclose(f);
+                return -1;
+            }
+            *end = '\0';
+            if (copy_string(current_section, sizeof(current_section), line + 1) != 0) {
+                fclose(f);
+                return -1;
+            }
+            if ((strcmp(current_section, "server") != 0) &&
+                (strcmp(current_section, "auth") != 0)) {
+                fclose(f);
+                return -1;
+            }
+            if (strcmp(current_section, "server") == 0) {
+                if (seen_server_section) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_server_section = 1;
+            } else if (strcmp(current_section, "auth") == 0) {
+                if (seen_auth_section) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_auth_section = 1;
             }
             continue;
         }
         char *eq = strchr(line, '=');
-        if (!eq)
-            continue;
+        if (!eq) {
+            fclose(f);
+            return -1;
+        }
         *eq = '\0';
-        char key[64], val[256];
-        strncpy(key, line, sizeof(key) - 1);
-        strncpy(val, eq + 1, sizeof(val) - 1);
+        char key[64] = {0};
+        char val[256] = {0};
+        if (copy_string(key, sizeof(key), line) != 0 ||
+            copy_string(val, sizeof(val), eq + 1) != 0) {
+            fclose(f);
+            return -1;
+        }
         trim(key);
         trim(val);
-        size_t vlen = strlen(val);
-        if (vlen >= 2 && ((val[0] == '"' && val[vlen - 1] == '"') || (val[0] == '\'' && val[vlen - 1] == '\''))) {
-            val[vlen - 1] = '\0';
-            memmove(val, val + 1, vlen - 1);
+        if (unquote_value(val) != 0) {
+            fclose(f);
+            return -1;
+        }
+        if (val[0] == '\0') {
+            fclose(f);
+            return -1;
         }
         if (strcmp(current_section, "server") == 0) {
             if (strcmp(key, "listen") == 0)
-                strncpy(config->listen, val, sizeof(config->listen) - 1);
+            {
+                if (seen_listen) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_listen = 1;
+                if (copy_string(config->listen, sizeof(config->listen), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
             else if (strcmp(key, "security") == 0)
-                strncpy(config->security, val, sizeof(config->security) - 1);
+            {
+                if (seen_security) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_security = 1;
+                if (copy_string(config->security, sizeof(config->security), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
             else if (strcmp(key, "tls_cert") == 0)
-                strncpy(config->tls_cert, val, sizeof(config->tls_cert) - 1);
+            {
+                if (seen_tls_cert) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_tls_cert = 1;
+                if (copy_string(config->tls_cert, sizeof(config->tls_cert), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
             else if (strcmp(key, "tls_key") == 0)
-                strncpy(config->tls_key, val, sizeof(config->tls_key) - 1);
+            {
+                if (seen_tls_key) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_tls_key = 1;
+                if (copy_string(config->tls_key, sizeof(config->tls_key), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
             else if (strcmp(key, "max_connections") == 0)
-                config->max_connections = atoi(val);
+            {
+                fclose(f);
+                return -1;
+            }
+            else {
+                fclose(f);
+                return -1;
+            }
         } else if (strcmp(current_section, "auth") == 0) {
             if (strcmp(key, "mode") == 0)
-                strncpy(config->auth_mode, val, sizeof(config->auth_mode) - 1);
+            {
+                if (seen_auth_mode) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_auth_mode = 1;
+                if (copy_string(config->auth_mode, sizeof(config->auth_mode), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
             else if (strcmp(key, "pam_service") == 0)
-                strncpy(config->pam_service, val, sizeof(config->pam_service) - 1);
+            {
+                if (seen_pam_service) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_pam_service = 1;
+                if (copy_string(config->pam_service, sizeof(config->pam_service), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
             else if (strcmp(key, "kerberos") == 0)
-                strncpy(config->kerberos_policy, val, sizeof(config->kerberos_policy) - 1);
+            {
+                fclose(f);
+                return -1;
+            }
             else if (strcmp(key, "ntlm_fallback") == 0)
-                config->ntlm_fallback = (val[0] == 't' || val[0] == 'T' || val[0] == '1');
+            {
+                fclose(f);
+                return -1;
+            }
             else if (strcmp(key, "keytab") == 0)
-                strncpy(config->keytab, val, sizeof(config->keytab) - 1);
+            {
+                fclose(f);
+                return -1;
+            }
+            else if (strcmp(key, "accepted_spn") == 0)
+            {
+                fclose(f);
+                return -1;
+            }
+            else {
+                fclose(f);
+                return -1;
+            }
+        } else if ((strcmp(current_section, "session") == 0) ||
+                   (strcmp(current_section, "channels") == 0) ||
+                   (strcmp(current_section, "audit") == 0)) {
+            fclose(f);
+            return -1;
+        } else if (current_section[0] != '\0') {
+            fclose(f);
+            return -1;
+        } else {
+            fclose(f);
+            return -1;
         }
-        /* session and channels sections could be parsed here in future */
     }
     fclose(f);
     return 0;

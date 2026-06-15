@@ -19,6 +19,8 @@ cc -fsyntax-only -Wall -Wextra frdp-sesmand/frdp-sesmand.c
 cc -fsyntax-only -Wall -Wextra frdp-session-agent/frdp-session-agent.c
 cc -fsyntax-only -Wall -Wextra frdp-krb-authd/frdp-krb-authd.c
 cc -fsyntax-only -Wall -Wextra tools/frdpctl/frdpctl.c
+cc -fsyntax-only -Wall -Wextra frdp-authd/frdp-authd.c ipc/frdp-ipc.c
+cc -fsyntax-only -Wall -Wextra config/frdp-config.c server/frdpd/frdpd-ipc-demo.c ipc/frdp-ipc.c
 ```
 
 Implemented in the integrated `server/frdpd` path:
@@ -29,6 +31,7 @@ Implemented in the integrated `server/frdpd` path:
 - FreeRDP `Logon` callback bridged to password-backed PAM authentication/account checks;
 - username/domain normalization for plain, downlevel, UPN, and auto modes;
 - optional PAM session open/close tied to the integrated peer lifecycle;
+- partial `--config` support for implemented `frdpd.toml` fields (`listen`, `security=nla`, `tls_cert`, `tls_key`, `pam_service`), with CLI overrides;
 - `--pam-auth-test` smoke-test mode for the PAM helper path;
 - no-op input/update callbacks that keep protocol plumbing in place but do not provide a desktop.
 
@@ -60,13 +63,13 @@ Exit criteria: a client connects to a stub server, the NLA negotiation path is u
 
 Deliverables:
 
-- [ ] `frdp-authd` prototype integrated into the build and IPC path (standalone syntax-checkable source exists in `/frdp-authd`);
+- [ ] `frdp-authd` prototype integrated into the build and IPC path (standalone syntax-checkable IPC server exists in `/frdp-authd`, but the integrated daemon does not call it);
 - [ ] PAM service `frdpd` installable example;
 - [x] password-backed CredSSP -> PAM flow in `server/frdpd`;
 - [x] PAM auth/account smoke-test CLI in `server/frdpd` (`--pam-auth-test`);
 - [ ] NSS/SSSD uid/gid/groups lookup integrated with the authenticated session path (standalone prototypes perform limited lookup/group setup only);
 - [ ] audit events with correlation id integrated with the authenticated session path (standalone `frdp-authd` emits local audit events only);
-- [ ] secret zeroization and no-core settings across all auth/session processes (partial zeroization in `server/frdpd`; standalone `frdp-authd` disables core dumps but is not integrated).
+- [ ] secret zeroization and no-core settings across all auth/session processes (partial zeroization in `server/frdpd`; standalone `frdp-authd` disables core dumps and hard-fails on `mlock()` failure but is not integrated).
 
 Exit criteria: a domain user can authenticate through NLA/PAM; a denied user receives a clean failure; no desktop resources are allocated before authentication succeeds.
 
@@ -131,7 +134,7 @@ Deliverables:
 
 - [ ] deb/rpm packages (draft packaging files exist, but helper binaries/config/systemd installation are not build-verified);
 - [ ] admin CLI `frdpctl` (standalone stub exists, not integrated with CMake or session IPC);
-- [x] configuration reference and example (`10-configuration-reference.md`, `config/frdpd.toml`);
+- [x] configuration reference, example, and partial parser integration for implemented daemon fields (`10-configuration-reference.md`, `config/frdpd.toml`);
 - [x] runbooks for AD join, keytab rotation, and troubleshooting (`09-runbooks.md`);
 - [ ] dashboards and alert rules;
 - [x] migration/fallback plan to xrdp (basic documented fallback in `09-runbooks.md`; rollback testing remains part of exit criteria);
