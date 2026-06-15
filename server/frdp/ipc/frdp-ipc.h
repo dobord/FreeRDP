@@ -21,6 +21,7 @@ typedef struct {
 /* Authentication request structure */
 typedef struct {
     char user[64];
+    char rhost[128];
     char password[256];
 } frdpAuthRequest;
 

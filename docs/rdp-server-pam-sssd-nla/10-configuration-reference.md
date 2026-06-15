@@ -12,7 +12,8 @@ This document describes the configuration options available in `frdpd.toml` (see
 ## [auth]
 
 - `mode` (string): Authentication backend. Currently implemented value: `pam-sssd`. Default `pam-sssd`.
-- `pam_service` (string): Name of PAM service file. Default `frdpd`.
+- `pam_service` (string): Name of PAM service file for the in-process PAM path. Default `frdpd`. In `auth_socket` mode, the broker-side `frdp-authd --pam-service` setting selects the PAM service.
+- `auth_socket` (path): Optional absolute Unix socket path for the `frdp-authd` IPC broker. Relative paths and unsafe socket locations are rejected. Because session-manager IPC is not wired yet, this auth/account-only path currently requires `--no-pam-session`; when omitted, `frdpd` uses the current in-process PAM path.
 - `kerberos`, `ntlm_fallback`, `keytab`, `accepted_spn`: planned Kerberos-first production fields. The current parser rejects them until the daemon can enforce the corresponding policy.
 
 ## [session]

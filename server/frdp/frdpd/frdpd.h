@@ -24,6 +24,7 @@ extern "C"
 		const char* cert_path;
 		const char* key_path;
 		const char* pam_service;
+		const char* auth_socket;
 		UINT16 port;
 		BOOL allow_tls_fallback;
 		BOOL open_pam_session;

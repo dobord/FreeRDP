@@ -13,6 +13,8 @@ set(SRCS
     frdpd_auth.h
     frdpd_pam.c
     frdpd_pam.h
+    ../ipc/frdp-ipc.c
+    ../ipc/frdp-ipc.h
     ../config/frdp-config.c
     ../config/frdp-config.h)
 

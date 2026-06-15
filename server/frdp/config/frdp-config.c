@@ -67,12 +67,13 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_tls_key = 0;
     int seen_auth_mode = 0;
     int seen_pam_service = 0;
+    int seen_auth_socket = 0;
     /* Set defaults */
     memset(config, 0, sizeof(*config));
     if (copy_string(config->listen, sizeof(config->listen), "0.0.0.0:3389") != 0 ||
         copy_string(config->security, sizeof(config->security), "nla") != 0 ||
         copy_string(config->auth_mode, sizeof(config->auth_mode), "pam-sssd") != 0 ||
-    copy_string(config->pam_service, sizeof(config->pam_service), "frdpd") != 0) {
+        copy_string(config->pam_service, sizeof(config->pam_service), "frdpd") != 0) {
         fclose(f);
         return -1;
     }
@@ -226,6 +227,18 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 }
                 seen_pam_service = 1;
                 if (copy_string(config->pam_service, sizeof(config->pam_service), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "auth_socket") == 0)
+            {
+                if (seen_auth_socket) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_auth_socket = 1;
+                if (copy_string(config->auth_socket, sizeof(config->auth_socket), val) != 0) {
                     fclose(f);
                     return -1;
                 }

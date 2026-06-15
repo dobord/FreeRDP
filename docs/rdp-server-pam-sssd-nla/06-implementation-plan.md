@@ -31,6 +31,7 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - optional PAM session open/close tied to the integrated peer lifecycle;
 - PAM credential establish/delete tied to the integrated authentication/session lifecycle;
 - partial `--config` support for implemented `frdpd.toml` fields (`listen`, `security=nla`, `tls_cert`, `tls_key`, `pam_service`), with CLI overrides;
+- optional `auth_socket` configuration and `--auth-socket=<path>` CLI override for routing password-backed auth/account checks through `frdp-authd` IPC when PAM session opening is disabled;
 - `--pam-auth-test` smoke-test mode for the PAM helper path;
 - process-level core dump disabling before credential handling;
 - no-op input/update callbacks that keep protocol plumbing in place but do not provide a desktop.
@@ -63,7 +64,8 @@ Exit criteria: a client connects to a stub server, the NLA negotiation path is u
 Deliverables:
 
 - [x] `frdp-authd` helper target and local IPC server build under `WITH_FRDPD`;
-- [ ] integrated `server/frdp/frdpd` daemon calls `frdp-authd` over IPC instead of direct in-process PAM;
+- [x] optional integrated `server/frdp/frdpd` authentication/account check through `frdp-authd` IPC via absolute `auth_socket` with `--no-pam-session` until `frdp-sesmand` owns sessions;
+- [ ] make `frdp-authd` the canonical/default auth path and remove in-process PAM auth from the peer worker;
 - [ ] PAM service `frdpd` installable example;
 - [x] password-backed CredSSP -> PAM flow in `server/frdp/frdpd`;
 - [x] PAM auth/account smoke-test CLI in `server/frdp/frdpd` (`--pam-auth-test`);

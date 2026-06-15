@@ -1,14 +1,55 @@
 #include "frdp-ipc.h"
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
+#include <stdio.h>
+
+static int frdp_ipc_validate_socket_path(const char *socket_path)
+{
+    struct stat st;
+    char parent[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
+    char *slash = NULL;
+
+    if (!socket_path || strlen(socket_path) >= sizeof(((struct sockaddr_un *)0)->sun_path))
+        return -1;
+    if (socket_path[0] != '/')
+        return -1;
+
+    snprintf(parent, sizeof(parent), "%s", socket_path);
+    slash = strrchr(parent, '/');
+    if (!slash || slash == parent)
+        return -1;
+    *slash = '\0';
+
+    if (lstat(parent, &st) != 0 || !S_ISDIR(st.st_mode))
+        return -1;
+    if (st.st_uid != 0 && st.st_uid != geteuid())
+        return -1;
+    if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0)
+        return -1;
+
+    if (lstat(socket_path, &st) != 0 || !S_ISSOCK(st.st_mode))
+        return -1;
+    if (st.st_uid != 0 && st.st_uid != geteuid())
+        return -1;
+    if ((st.st_mode & (S_IRWXG | S_IRWXO)) != 0)
+        return -1;
+
+    return 0;
+}
 
 /* Connect to a UNIX domain socket and return a file descriptor */
 int frdp_ipc_connect(const char *socket_path)
 {
+    if (frdp_ipc_validate_socket_path(socket_path) != 0) {
+        errno = EACCES;
+        return -1;
+    }
+
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd == -1)
         return -1;

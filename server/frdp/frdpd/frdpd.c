@@ -147,6 +147,7 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 
 	const frdpdAuthConfig auth = {
 		.pam_service = config->pam_service,
+		.auth_socket = config->auth_socket,
 		.rhost = (client->hostname[0] != '\0') ? client->hostname : NULL,
 		.domain_mode = config->domain_mode,
 		.open_pam_session = config->open_pam_session,
@@ -508,6 +509,8 @@ static void frdpd_print_usage(const char* app)
 	(void)fprintf(stderr, "  --key=<path>                  TLS private key, default server.key\n");
 	(void)fprintf(stderr, "  --config=<path>               Load frdpd.toml before CLI overrides\n");
 	(void)fprintf(stderr, "  --pam-service=<name>          PAM service name, default frdpd\n");
+	(void)fprintf(stderr,
+	              "  --auth-socket=<path>          Auth/account IPC; requires --no-pam-session\n");
 	(void)fprintf(stderr, "  --service <name>              PAM service alias for auth test\n");
 	(void)fprintf(stderr, "  --domain-mode=plain|downlevel|upn|auto\n");
 	(void)fprintf(stderr,
@@ -536,6 +539,11 @@ static BOOL frdpd_parse_port(const char* value, UINT16* port)
 static BOOL frdpd_string_is_empty(const char* value)
 {
 	return !value || (value[0] == '\0');
+}
+
+static BOOL frdpd_socket_path_is_valid(const char* value)
+{
+	return !frdpd_string_is_empty(value) && (value[0] == '/');
 }
 
 static BOOL frdpd_apply_listen_config(frdpdOptions* options, const char* listen)
@@ -589,6 +597,12 @@ static BOOL frdpd_apply_file_config(frdpdOptions* options)
 		options->server.key_path = config->tls_key;
 	if (!frdpd_string_is_empty(config->pam_service))
 		options->server.pam_service = config->pam_service;
+	if (!frdpd_string_is_empty(config->auth_socket))
+	{
+		if (!frdpd_socket_path_is_valid(config->auth_socket))
+			return FALSE;
+		options->server.auth_socket = config->auth_socket;
+	}
 
 	if (_stricmp(config->security, "nla") == 0)
 		options->server.allow_tls_fallback = FALSE;
@@ -694,6 +708,12 @@ static BOOL frdpd_parse_args(int argc, char* argv[], frdpdOptions* options)
 			options->config_path = &arg[9];
 		else if (strncmp(arg, "--pam-service=", 14) == 0)
 			options->server.pam_service = &arg[14];
+		else if (strncmp(arg, "--auth-socket=", 14) == 0)
+		{
+			if (!frdpd_socket_path_is_valid(&arg[14]))
+				return FALSE;
+			options->server.auth_socket = &arg[14];
+		}
 		else if (strncmp(arg, "--domain-mode=", 14) == 0)
 		{
 			BOOL ok = FALSE;

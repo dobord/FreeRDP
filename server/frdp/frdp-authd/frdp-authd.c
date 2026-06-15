@@ -200,9 +200,9 @@ static int set_client_timeouts(int fd)
 }
 
 /* Perform a PAM authentication for the given user and password. */
-int authenticate_user(const char *user, const char *password)
+int authenticate_user(const char *service, const char *rhost, const char *user, const char *password)
 {
-    if (!user || !password)
+    if (!service || !service[0] || !user || !password)
         return -1;
     size_t pwlen = strlen(password);
     /* Allocate a temporary buffer and lock it to prevent swapping. */
@@ -221,9 +221,20 @@ int authenticate_user(const char *user, const char *password)
     struct pam_conv conv = {pam_conversation, buf};
     pam_handle_t *pamh = NULL;
     int credentials_established = 0;
-    int ret = pam_start("frdpd", user, &conv, &pamh);
+    int ret = pam_start(service, user, &conv, &pamh);
     if (ret == PAM_SUCCESS) {
-        ret = pam_authenticate(pamh, 0);
+        if (rhost && rhost[0]) {
+            ret = pam_set_item(pamh, PAM_RHOST, rhost);
+        }
+        if (ret == PAM_SUCCESS) {
+            ret = pam_set_item(pamh, PAM_TTY, "rdp");
+        }
+        if (ret == PAM_SUCCESS) {
+            ret = pam_set_item(pamh, PAM_RUSER, user);
+        }
+        if (ret == PAM_SUCCESS) {
+            ret = pam_authenticate(pamh, 0);
+        }
         if (ret == PAM_SUCCESS) {
             ret = pam_acct_mgmt(pamh, 0);
         }
@@ -256,9 +267,31 @@ int authenticate_user(const char *user, const char *password)
 }
 
 /* Run in IPC server mode listening on a UNIX domain socket and handling auth requests */
-static int run_ipc_server(const char *socket_path)
+static int pam_service_is_valid(const char *service)
+{
+    size_t len = 0;
+
+    if (!service || service[0] == '\0')
+        return 0;
+    for (len = 0; service[len] != '\0'; len++) {
+        unsigned char c = (unsigned char)service[len];
+        if (len >= 63)
+            return 0;
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '-'))
+            return 0;
+    }
+    return 1;
+}
+
+static int run_ipc_server(const char *socket_path, const char *pam_service)
 {
     mode_t old_umask;
+
+    if (!pam_service_is_valid(pam_service)) {
+        fprintf(stderr, "invalid PAM service name\n");
+        return -1;
+    }
 
     if (prepare_socket_path(socket_path) != 0) {
         fprintf(stderr, "refusing unsafe socket path: %s\n", socket_path ? socket_path : "(null)");
@@ -319,12 +352,14 @@ static int run_ipc_server(const char *socket_path)
             frdpAuthRequest req;
             if (frdp_ipc_recv(cfd, &req, sizeof(req)) == (int)sizeof(req)) {
                 char user[sizeof(req.user)] = {0};
+                char rhost[sizeof(req.rhost)] = {0};
                 char password[sizeof(req.password)] = {0};
                 if (copy_ipc_string(user, sizeof(user), req.user, sizeof(req.user)) != 0 ||
+                    copy_ipc_string(rhost, sizeof(rhost), req.rhost, sizeof(req.rhost)) != 0 ||
                     copy_ipc_string(password, sizeof(password), req.password, sizeof(req.password)) != 0) {
                     send_auth_response(cfd, 0, "invalid auth request");
                 } else {
-                    send_auth_response(cfd, authenticate_user(user, password) == 0, NULL);
+                    send_auth_response(cfd, authenticate_user(pam_service, rhost, user, password) == 0, NULL);
                 }
                 clear_secret(password, sizeof(password));
                 clear_secret(req.password, sizeof(req.password));
@@ -341,11 +376,14 @@ static int run_ipc_server(const char *socket_path)
 
 static void usage(const char *argv0)
 {
-    fprintf(stderr, "Usage: %s --socket <absolute-socket-path>\n", argv0);
+    fprintf(stderr, "Usage: %s [--pam-service <name>] --socket <absolute-socket-path>\n", argv0);
 }
 
 int main(int argc, char **argv)
 {
+    const char *pam_service = "frdpd";
+    const char *socket_path = NULL;
+
     if (set_no_core() != 0) {
         fprintf(stderr, "failed to disable core dumps\n");
         return 1;
@@ -354,10 +392,27 @@ int main(int argc, char **argv)
         usage(argv[0]);
         return 0;
     }
-    if (argc == 3 && strcmp(argv[1], "--socket") == 0) {
-        const char *sock = argv[2];
-        return run_ipc_server(sock);
+    for (int x = 1; x < argc; x++) {
+        if (strcmp(argv[x], "--pam-service") == 0) {
+            if (++x >= argc) {
+                usage(argv[0]);
+                return 2;
+            }
+            pam_service = argv[x];
+        } else if (strcmp(argv[x], "--socket") == 0) {
+            if (++x >= argc) {
+                usage(argv[0]);
+                return 2;
+            }
+            socket_path = argv[x];
+        } else {
+            usage(argv[0]);
+            return 2;
+        }
     }
-    usage(argv[0]);
-    return 2;
+    if (!socket_path) {
+        usage(argv[0]);
+        return 2;
+    }
+    return run_ipc_server(socket_path, pam_service);
 }
