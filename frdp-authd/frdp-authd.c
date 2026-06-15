@@ -3,9 +3,9 @@
  *
  * This component performs authentication for the RDP daemon using CredSSP,
  * Kerberos and PAM/SSSD. The code demonstrates secure handling of passwords
- * and integrates PAM.  Note: command-line password parameters are intended
- * only for test builds; in production environments credentials must be
- * supplied via a secure IPC channel or protected file descriptor.
+ * and integrates PAM. In production builds credentials must be supplied via
+ * a secure IPC channel or protected file descriptor; command-line ingress
+ * is provided only for development and testing.
  */
 
 #include <stdio.h>
@@ -82,7 +82,10 @@ int authenticate_user(const char *user, const char *password)
         return -1;
     memcpy(buf, password, pwlen + 1);
     if (mlock(buf, pwlen + 1) != 0) {
-        /* continue anyway but note failure */
+        /* Hard fail if we cannot lock memory to protect secrets */
+        memset(buf, 0, pwlen + 1);
+        munmap(buf, pwlen + 1);
+        return -1;
     }
 
     struct pam_conv conv = {pam_conversation, buf};
@@ -92,6 +95,10 @@ int authenticate_user(const char *user, const char *password)
         ret = pam_authenticate(pamh, 0);
         if (ret == PAM_SUCCESS) {
             ret = pam_acct_mgmt(pamh, 0);
+        }
+        /* Establish credentials for the session */
+        if (ret == PAM_SUCCESS) {
+            ret = pam_setcred(pamh, PAM_ESTABLISH_CRED);
         }
         pam_end(pamh, ret);
     }
@@ -115,18 +122,15 @@ int main(int argc, char **argv)
 {
     set_no_core();
     const char *user = NULL;
-    const char *pwd_env = getenv("FRDP_AUTH_PASSWORD");
-    const char *pass = pwd_env;
-
-    /* Accept username as first argument; password from env or second argument for test harness. */
-    if (argc >= 2) {
+    const char *pass = NULL;
+    /* Accept username and password as positional arguments for development only. */
+    if (argc >= 3) {
         user = argv[1];
-    }
-    if (!pass && argc >= 3) {
         pass = argv[2];
     }
     if (!user || !pass) {
-        fprintf(stderr, "Usage: %s <username> [<password>|$FRDP_AUTH_PASSWORD] (test only)\n", argv[0]);
+        fprintf(stderr, "Usage: %s <username> <password>\n", argv[0]);
+        fprintf(stderr, "In production this service must be invoked via a secure IPC protocol.\n");
         return 1;
     }
     int rc = authenticate_user(user, pass);
