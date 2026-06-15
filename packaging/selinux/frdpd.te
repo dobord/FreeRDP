@@ -1,0 +1,27 @@
+module frdpd 1.0;
+
+require {
+    type unconfined_t;
+    type pam_t;
+    type sssd_t;
+    type user_home_t;
+    type user_t;
+    class tcp_socket { name_bind name_connect listen accept getopt setopt }; 
+    class process { transition }; 
+    class dir { read search }; 
+    class file { read open execute }; 
+}
+
+# Allow frdpd to bind to the RDP port and listen
+allow unconfined_t self:tcp_socket { name_bind listen accept }; 
+
+# Allow frdpd to connect to sssd and pam
+allow unconfined_t sssd_t:tcp_socket name_connect;
+allow unconfined_t pam_t:process transition;
+
+# Allow reading configuration and keytab files
+allow unconfined_t user_home_t:dir search;
+allow unconfined_t user_home_t:file { read open };
+
+# This is a very permissive policy intended as a starting point. In production
+# the frdpd domain should be separated from unconfined_t and confined tightly.
