@@ -62,12 +62,23 @@ static int open_session(const char *user)
     if (ret != PAM_SUCCESS)
         return -1;
 
-    /* Fork and exec the session agent.  In a complete implementation this
-     * would switch UID/GID to the user and preserve environment variables. */
+    /* Lookup user information and set supplementary groups. */
+    struct passwd *pwd = getpwnam(user);
+    if (!pwd)
+        return -1;
+    if (initgroups(user, pwd->pw_gid) != 0)
+        return -1;
+
+    /* Fork and exec the session agent.  The child switches UID/GID to the
+     * session user before executing. */
     pid_t pid = fork();
     if (pid < 0)
         return -1;
     if (pid == 0) {
+        /* Drop privileges to the target user. */
+        if (setgid(pwd->pw_gid) != 0 || setuid(pwd->pw_uid) != 0) {
+            _exit(127);
+        }
         execlp("frdp-session-agent", "frdp-session-agent", (char *)NULL);
         _exit(127);
     }
