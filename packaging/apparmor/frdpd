@@ -1,0 +1,24 @@
+# AppArmor profile for frdpd
+profile frdpd /usr/bin/frdpd {
+  # Include common abstractions
+  #include <abstractions/base>
+
+  # Allow network access on 3389/tcp
+  network inet stream,
+
+  # Allow reading configuration and keytab files
+  /etc/frdpd/** r,
+  /etc/ssl/** r,
+
+  # Allow execution of session manager and agents
+  /usr/bin/frdp-authd ix,
+  /usr/bin/frdp-sesmand ix,
+  /usr/bin/frdp-session-agent ix,
+  /usr/bin/frdp-krb-authd ix,
+
+  # Deny everything else by default
+  deny /** rw,
+}
+
+# This profile is a template and will need to be refined based on actual file locations and
+# capabilities required by frdpd and its helpers.
