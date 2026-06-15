@@ -3,7 +3,7 @@ Description=FreeRDP PAM/SSSD/NLA Server
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/frdpd
+ExecStart=/usr/bin/frdpd --config /etc/frdpd/frdpd.toml
 User=root
 Group=root
 PrivateTmp=true
