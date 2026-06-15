@@ -61,6 +61,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     char current_section[32] = "";
     int seen_server_section = 0;
     int seen_auth_section = 0;
+    int seen_session_section = 0;
     int seen_listen = 0;
     int seen_security = 0;
     int seen_tls_cert = 0;
@@ -68,6 +69,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_auth_mode = 0;
     int seen_pam_service = 0;
     int seen_auth_socket = 0;
+    int seen_session_socket = 0;
     /* Set defaults */
     memset(config, 0, sizeof(*config));
     if (copy_string(config->listen, sizeof(config->listen), "0.0.0.0:3389") != 0 ||
@@ -106,7 +108,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 return -1;
             }
             if ((strcmp(current_section, "server") != 0) &&
-                (strcmp(current_section, "auth") != 0)) {
+                (strcmp(current_section, "auth") != 0) &&
+                (strcmp(current_section, "session") != 0)) {
                 fclose(f);
                 return -1;
             }
@@ -122,6 +125,12 @@ int frdp_config_load(const char *path, frdpConfig *config)
                     return -1;
                 }
                 seen_auth_section = 1;
+            } else if (strcmp(current_section, "session") == 0) {
+                if (seen_session_section) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_session_section = 1;
             }
             continue;
         }
@@ -267,8 +276,24 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 fclose(f);
                 return -1;
             }
-        } else if ((strcmp(current_section, "session") == 0) ||
-                   (strcmp(current_section, "channels") == 0) ||
+        } else if (strcmp(current_section, "session") == 0) {
+            if (strcmp(key, "session_socket") == 0)
+            {
+                if (seen_session_socket) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_session_socket = 1;
+                if (copy_string(config->session_socket, sizeof(config->session_socket), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else {
+                fclose(f);
+                return -1;
+            }
+        } else if ((strcmp(current_section, "channels") == 0) ||
                    (strcmp(current_section, "audit") == 0)) {
             fclose(f);
             return -1;

@@ -11,6 +11,7 @@ typedef struct {
     char auth_mode[32];
     char pam_service[64];
     char auth_socket[108];
+    char session_socket[108];
 } frdpConfig;
 
 /* Load configuration from a TOML file into the provided struct. Returns 0 on success. */

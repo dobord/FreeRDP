@@ -19,8 +19,10 @@ cmake -S . -B /tmp/opencode/freerdp-frdp-install-build -DWITH_FRDPD=ON -DWITH_SE
 cmake --build /tmp/opencode/freerdp-frdp-install-build --target frdpd frdp-authd frdp-sesmand frdp-session-agent frdpctl frdp-krb-authd -j2
 cmake --install /tmp/opencode/freerdp-frdp-install-build --component server --prefix /tmp/opencode/freerdp-install-frdp
 cc -fsyntax-only -Wall -Wextra server/frdp/frdp-authd/frdp-authd.c server/frdp/ipc/frdp-ipc.c
+cc -fsyntax-only -Wall -Wextra server/frdp/frdp-sesmand/frdp-sesmand.c server/frdp/ipc/frdp-ipc.c
 cc -fsyntax-only -Wall -Wextra server/frdp/config/frdp-config.c server/frdp/frdpd/frdpd-ipc-demo.c server/frdp/ipc/frdp-ipc.c
 # frdp-authd IPC negative-path smoke: frdpd-ipc-demo returns Authentication result: failure for invalid credentials.
+# frdp-sesmand IPC startup smoke: --socket creates a 0600 Unix socket in a 0700 runtime directory.
 ```
 
 Implemented in the integrated `server/frdp/frdpd` path:
@@ -34,16 +36,18 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - PAM credential establish/delete tied to the integrated authentication/session lifecycle;
 - partial `--config` support for implemented `frdpd.toml` fields (`listen`, `security=nla`, `tls_cert`, `tls_key`, `pam_service`), with CLI overrides;
 - optional `auth_socket` configuration and `--auth-socket=<path>` CLI override for routing password-backed auth/account checks through `frdp-authd` IPC when PAM session opening is disabled;
+- optional `session_socket` configuration and `--session-socket=<path>` CLI override for opening and closing `frdp-sesmand` sessions over IPC when PAM session opening is disabled;
+- shared IPC client operations use bounded socket send/receive timeouts and suppress `SIGPIPE` on disconnected peers;
 - per-peer correlation ids on integrated `frdpd` accept/auth/logon/activate/disconnect logs, propagated to optional `frdp-authd` auth/account IPC audit events;
 - `--pam-auth-test` smoke-test mode for the PAM helper path;
 - process-level core dump disabling before credential handling;
 - no-op input/update callbacks that keep protocol plumbing in place but do not provide a desktop.
 
-CMake-built helper binaries/prototypes that are not yet wired into the canonical daemon runtime topology:
+CMake-built helper binaries/prototypes that are not yet the default canonical runtime topology:
 
-- `server/frdp/frdp-authd`;
-- `server/frdp/frdp-sesmand`;
-- `server/frdp/frdp-session-agent`;
+- `server/frdp/frdp-authd` (optional auth/account IPC path);
+- `server/frdp/frdp-sesmand` (optional session IPC path);
+- `server/frdp/frdp-session-agent` (launched by optional `frdp-sesmand` session requests, but no RDP desktop data path yet);
 - `server/frdp/frdp-krb-authd` (build-only prototype, not installed by default);
 - `tools/frdpctl`.
 
@@ -67,14 +71,14 @@ Exit criteria: a client connects to a stub server, the NLA negotiation path is u
 Deliverables:
 
 - [x] `frdp-authd` helper target and local IPC server build under `WITH_FRDPD`;
-- [x] optional integrated `server/frdp/frdpd` authentication/account check through `frdp-authd` IPC via absolute `auth_socket` with `--no-pam-session` until `frdp-sesmand` owns sessions;
+- [x] optional integrated `server/frdp/frdpd` authentication/account check through `frdp-authd` IPC via absolute `auth_socket` with `--no-pam-session` when the session path is delegated;
 - [ ] make `frdp-authd` the canonical/default auth path and remove in-process PAM auth from the peer worker;
 - [ ] PAM service `frdpd` installable example;
 - [x] password-backed CredSSP -> PAM flow in `server/frdp/frdpd`;
 - [x] PAM auth/account smoke-test CLI in `server/frdp/frdpd` (`--pam-auth-test`);
 - [x] PAM credential establish/delete lifecycle in the integrated `server/frdp/frdpd` path;
 - [ ] NSS/SSSD uid/gid/groups lookup integrated with the authenticated session path (standalone prototypes perform limited lookup/group setup only);
-- [ ] audit events with correlation id integrated with the authenticated session path (partial: `frdpd` generates per-peer ids and optional auth IPC carries them to `frdp-authd`; `frdp-sesmand`, agents, channels, and structured audit config are not wired yet);
+- [ ] audit events with correlation id integrated with the authenticated session path (partial: `frdpd` generates per-peer ids and optional auth/session IPC carries them to `frdp-authd` and `frdp-sesmand`; agents, channels, and structured audit config are not wired yet);
 - [x] fail-closed core dump/non-dumpable hardening in `server/frdp/frdpd`, `server/frdp/frdp-authd`, and `server/frdp/frdp-sesmand`;
 - [ ] locked secret buffers and brokerized credential handling across the integrated auth/session path (partial locked-buffer handling exists only in standalone `frdp-authd`, which is not integrated).
 
@@ -85,14 +89,14 @@ Exit criteria: a domain user can authenticate through NLA/PAM; a denied user rec
 Deliverables:
 
 - [x] `frdp-sesmand` and `frdp-session-agent` helper targets build under `WITH_FRDPD`;
-- [ ] `frdp-sesmand` process integrated into the daemon topology (`frdpd` does not call it yet);
-- [ ] session registry integrated with authenticated RDP peers (in-memory demo registry exists only in `server/frdp/frdp-sesmand`);
+- [x] optional `frdp-sesmand` process integration through `frdpd --session-socket=<path>` / `[session].session_socket` with `--no-pam-session`;
+- [x] session registry receives authenticated RDP peer open/close requests on the optional `session_socket` IPC path;
 - [x] PAM session lifecycle in the integrated `server/frdp/frdpd` peer path;
 - [x] standalone development `frdp-sesmand --open-session <user>` path performs PAM account, credential, session, process-group, and cleanup handling behind an explicit opt-in guard;
 - [ ] logind/cgroup integration;
-- [ ] headless Xorg/Xvfb launch integrated with `frdpd` sessions (standalone `frdp-session-agent` target launches Xvfb only when run through the explicit development helper path);
+- [x] headless Xvfb launch integrated with optional `frdpd -> frdp-sesmand -> frdp-session-agent` session requests;
 - [ ] simple reconnect by user/session id;
-- [ ] cleanup on disconnect/logout across agent process groups and PAM sessions (process-group cleanup exists in `server/frdp/frdp-sesmand`; canonical `server/frdp/frdpd` only closes PAM state).
+- [ ] cleanup on disconnect across `frdp-sesmand` agent process groups and PAM sessions (partial: optional `session_socket` close requests use bounded IPC and async retry, but durable cleanup after prolonged `frdp-sesmand` outage is not implemented).
 
 Exit criteria: the user receives a desktop session after successful authentication; reconnect works in a controlled scenario; logout cleans processes and runtime state.
 

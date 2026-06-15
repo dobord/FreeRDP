@@ -2,6 +2,7 @@
 
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <string.h>
@@ -42,6 +43,19 @@ static int frdp_ipc_validate_socket_path(const char *socket_path)
     return 0;
 }
 
+static int frdp_ipc_set_timeouts(int fd)
+{
+    struct timeval timeout;
+
+    timeout.tv_sec = 10;
+    timeout.tv_usec = 0;
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0)
+        return -1;
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0)
+        return -1;
+    return 0;
+}
+
 /* Connect to a UNIX domain socket and return a file descriptor */
 int frdp_ipc_connect(const char *socket_path)
 {
@@ -53,6 +67,12 @@ int frdp_ipc_connect(const char *socket_path)
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd == -1)
         return -1;
+    if (frdp_ipc_set_timeouts(fd) != 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
@@ -71,8 +91,13 @@ int frdp_ipc_send(int fd, const void *buf, size_t len)
 {
     const char *p = (const char *)buf;
     size_t total = 0;
+#ifdef MSG_NOSIGNAL
+    const int flags = MSG_NOSIGNAL;
+#else
+    const int flags = 0;
+#endif
     while (total < len) {
-        ssize_t n = send(fd, p + total, len - total, 0);
+        ssize_t n = send(fd, p + total, len - total, flags);
         if (n <= 0)
             return -1;
         total += n;

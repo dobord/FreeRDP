@@ -37,6 +37,7 @@
 #include <freerdp/crypto/privatekey.h>
 
 #include "../config/frdp-config.h"
+#include "../ipc/frdp-ipc.h"
 #include "frdpd.h"
 #include "frdpd_auth.h"
 
@@ -101,14 +102,295 @@ static BOOL frdpd_generate_correlation_id(char* buffer, size_t size)
 	return rc;
 }
 
+static BOOL frdpd_copy_ipc_string(char* dst, size_t dst_size, const char* src)
+{
+	int rc = 0;
+
+	if (!dst || (dst_size == 0))
+		return FALSE;
+	if (!src)
+		src = "";
+	rc = snprintf(dst, dst_size, "%s", src);
+	return (rc >= 0) && ((size_t)rc < dst_size);
+}
+
+static BOOL frdpd_session_ipc_request(const char* socket_path, frdpIpcMessageType type,
+                                      const frdpSessionRequest* request,
+                                      frdpSessionResponse* response)
+{
+	int fd = -1;
+	BOOL ok = FALSE;
+	frdpIpcHeader header = { 0 };
+	frdpIpcHeader response_header = { 0 };
+
+	if (!socket_path || (socket_path[0] == '\0') || !request || !response)
+		return FALSE;
+
+	fd = frdp_ipc_connect(socket_path);
+	if (fd < 0)
+		goto fail;
+
+	header.type = type;
+	header.payload_len = sizeof(*request);
+	if ((frdp_ipc_send(fd, &header, sizeof(header)) < 0) ||
+	    (frdp_ipc_send(fd, request, sizeof(*request)) < 0))
+		goto fail;
+
+	if (frdp_ipc_recv(fd, &response_header, sizeof(response_header)) !=
+	    (int)sizeof(response_header))
+		goto fail;
+	if ((response_header.type != FRDP_IPC_SESSION_RESPONSE) ||
+	    (response_header.payload_len != sizeof(*response)))
+		goto fail;
+	if (frdp_ipc_recv(fd, response, sizeof(*response)) != (int)sizeof(*response))
+		goto fail;
+
+	response->session_id[sizeof(response->session_id) - 1] = '\0';
+	response->display[sizeof(response->display) - 1] = '\0';
+	response->error[sizeof(response->error) - 1] = '\0';
+	ok = response->success ? TRUE : FALSE;
+
+fail:
+	if (fd >= 0)
+		(void)frdp_ipc_close(fd);
+	return ok;
+}
+
+typedef struct
+{
+	char socket_path[108];
+	char correlation_id[64];
+	char session_id[64];
+	char user[64];
+} frdpdSessionCloseRetry;
+
+static DWORD WINAPI frdpd_session_close_retry_thread(LPVOID arg)
+{
+	frdpdSessionCloseRetry* retry = (frdpdSessionCloseRetry*)arg;
+	BOOL closed = FALSE;
+
+	if (!retry)
+		return 0;
+
+	for (int attempt = 0; attempt < 30 && !closed; attempt++)
+	{
+		frdpSessionRequest request = { 0 };
+		frdpSessionResponse response = { 0 };
+
+		(void)frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
+		                            retry->correlation_id);
+		(void)frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id),
+		                            retry->session_id);
+		(void)frdpd_copy_ipc_string(request.user, sizeof(request.user), retry->user);
+		closed = frdpd_session_ipc_request(retry->socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST,
+		                                  &request, &response);
+		if (!closed)
+			Sleep(1000);
+	}
+
+	if (closed)
+		WLog_INFO(TAG, "correlation_id=%s closed managed session_id=%s after retry",
+		          retry->correlation_id, retry->session_id);
+	else
+		WLog_WARN(TAG, "correlation_id=%s exhausted close retries for managed session_id=%s",
+		          retry->correlation_id, retry->session_id);
+
+	free(retry);
+	return 0;
+}
+
+static BOOL frdpd_schedule_session_close_retry(const frdpdServerConfig* config,
+                                               const frdpdPeerContext* context)
+{
+	HANDLE thread = NULL;
+	frdpdSessionCloseRetry* retry = NULL;
+
+	if (!config || !context || !config->session_socket || (config->session_socket[0] == '\0') ||
+	    (context->session_id[0] == '\0'))
+		return FALSE;
+
+	retry = calloc(1, sizeof(*retry));
+	if (!retry)
+		return FALSE;
+	if (!frdpd_copy_ipc_string(retry->socket_path, sizeof(retry->socket_path),
+	                          config->session_socket) ||
+	    !frdpd_copy_ipc_string(retry->correlation_id, sizeof(retry->correlation_id),
+	                          context->correlation_id) ||
+	    !frdpd_copy_ipc_string(retry->session_id, sizeof(retry->session_id), context->session_id) ||
+	    !frdpd_copy_ipc_string(retry->user, sizeof(retry->user), context->pam_user))
+	{
+		free(retry);
+		return FALSE;
+	}
+
+	thread = CreateThread(NULL, 0, frdpd_session_close_retry_thread, retry, 0, NULL);
+	if (!thread)
+	{
+		free(retry);
+		return FALSE;
+	}
+	(void)CloseHandle(thread);
+	return TRUE;
+}
+
+static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerConfig* config,
+                                       frdpdPeerContext* context)
+{
+	rdpSettings* settings = NULL;
+	frdpSessionRequest request = { 0 };
+	frdpSessionResponse response = { 0 };
+
+	if (!config || !context || !config->session_socket || (config->session_socket[0] == '\0'))
+		return TRUE;
+	if (!client || !context->pam_user)
+		return FALSE;
+
+	if (!frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
+	                          context->correlation_id) ||
+	    !frdpd_copy_ipc_string(request.user, sizeof(request.user), context->pam_user) ||
+	    !frdpd_copy_ipc_string(request.rhost, sizeof(request.rhost),
+	                          (client->hostname[0] != '\0') ? client->hostname : NULL))
+		return FALSE;
+
+	settings = client->context ? client->context->settings : NULL;
+	if (settings)
+	{
+		request.desktop_width = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
+		request.desktop_height = freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
+		request.color_depth = freerdp_settings_get_uint32(settings, FreeRDP_ColorDepth);
+	}
+
+	if (!frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_REQUEST, &request,
+	                              &response))
+	{
+		WLog_WARN(TAG, "correlation_id=%s session manager rejected login for %s: %s",
+		          context->correlation_id, context->pam_user,
+		          response.error[0] ? response.error : "IPC failure");
+		return FALSE;
+	}
+
+	if (!frdpd_copy_ipc_string(context->session_id, sizeof(context->session_id),
+	                          response.session_id) ||
+	    !frdpd_copy_ipc_string(context->session_display, sizeof(context->session_display),
+	                          response.display) ||
+	    (context->session_id[0] == '\0'))
+	{
+		if (response.session_id[0] != '\0')
+		{
+			frdpSessionRequest close_request = { 0 };
+			frdpSessionResponse close_response = { 0 };
+			BOOL rollback_closed = FALSE;
+
+			(void)frdpd_copy_ipc_string(close_request.correlation_id,
+			                            sizeof(close_request.correlation_id),
+			                            context->correlation_id);
+			(void)frdpd_copy_ipc_string(close_request.session_id,
+			                            sizeof(close_request.session_id), response.session_id);
+			(void)frdpd_copy_ipc_string(close_request.user, sizeof(close_request.user),
+			                            context->pam_user);
+			rollback_closed = frdpd_session_ipc_request(
+			    config->session_socket, FRDP_IPC_SESSION_CLOSE_REQUEST, &close_request,
+			    &close_response);
+			if (!rollback_closed && (context->session_id[0] != '\0'))
+			{
+				context->managed_session_open = TRUE;
+				(void)frdpd_schedule_session_close_retry(config, context);
+				context->managed_session_open = FALSE;
+				context->session_id[0] = '\0';
+				context->session_display[0] = '\0';
+			}
+		}
+		return FALSE;
+	}
+
+	context->managed_session_open = TRUE;
+	WLog_INFO(TAG, "correlation_id=%s opened managed session_id=%s display=%s user=%s",
+	          context->correlation_id, context->session_id,
+	          context->session_display[0] ? context->session_display : "unknown", context->pam_user);
+	return TRUE;
+}
+
+static void frdpd_auth_result_cleanup(frdpdAuthResult* result)
+{
+	if (!result)
+		return;
+	(void)frdpd_pam_close_session(result->pam_handle, result->pam_user,
+	                              result->pam_credentials_established,
+	                              result->pam_session_open);
+	free(result->pam_user);
+	result->pam_user = NULL;
+	result->pam_handle = NULL;
+	result->pam_credentials_established = FALSE;
+	result->pam_session_open = FALSE;
+}
+
+static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPeerContext* context,
+                                        BOOL async_only)
+{
+	frdpSessionRequest request = { 0 };
+	frdpSessionResponse response = { 0 };
+	BOOL closed = FALSE;
+
+	if (!config || !context || !context->managed_session_open || !config->session_socket ||
+	    (config->session_socket[0] == '\0'))
+		return TRUE;
+
+	if (!frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
+	                          context->correlation_id) ||
+	    !frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id),
+	                          context->session_id) ||
+	    !frdpd_copy_ipc_string(request.user, sizeof(request.user), context->pam_user))
+	{
+		WLog_WARN(TAG, "correlation_id=%s unable to build session close request",
+		          context->correlation_id);
+		return FALSE;
+	}
+
+	if (async_only)
+	{
+		if (!frdpd_schedule_session_close_retry(config, context))
+		{
+			WLog_WARN(TAG, "correlation_id=%s failed to schedule close retry for session_id=%s",
+			          context->correlation_id, context->session_id);
+			return FALSE;
+		}
+		WLog_INFO(TAG, "correlation_id=%s scheduled close retry for managed session_id=%s",
+		          context->correlation_id, context->session_id);
+		context->managed_session_open = FALSE;
+		context->session_id[0] = '\0';
+		context->session_display[0] = '\0';
+		return TRUE;
+	}
+
+	closed = frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_CLOSE_REQUEST,
+	                                  &request, &response);
+
+	if (!closed)
+	{
+		WLog_WARN(TAG, "correlation_id=%s failed to close managed session_id=%s: %s",
+		          context->correlation_id, context->session_id,
+		          response.error[0] ? response.error : "IPC failure");
+		return FALSE;
+	}
+
+	WLog_INFO(TAG, "correlation_id=%s closed managed session_id=%s", context->correlation_id,
+	          context->session_id);
+
+	context->managed_session_open = FALSE;
+	context->session_id[0] = '\0';
+	context->session_display[0] = '\0';
+	return TRUE;
+}
+
 static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 {
 	frdpdPeerContext* context = (frdpdPeerContext*)ctx;
+	const frdpdServerConfig* config = client ? (const frdpdServerConfig*)client->ContextExtra : NULL;
 
-	WINPR_UNUSED(client);
 	if (!context)
 		return;
 
+	(void)frdpd_close_managed_session(config, context, TRUE);
 	(void)frdpd_pam_close_session(context->pam_handle, context->pam_user,
 	                              context->pam_credentials_established,
 	                              context->pam_session_open);
@@ -184,14 +466,29 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	};
 
 	const BOOL ok = frdpd_authenticate_identity(&auth, identity, &result);
+	context->auth_status = result.status;
+	context->pam_status = result.pam_status;
+
+	if (!ok)
+	{
+		frdpd_auth_result_cleanup(&result);
+		WLog_WARN(TAG, "correlation_id=%s PAM rejected RDP login from %s: %s (%d)",
+		          context->correlation_id, client->hostname,
+		          frdpd_pam_auth_status_string(context->auth_status), context->pam_status);
+		return FALSE;
+	}
+
+	if (!frdpd_close_managed_session(config, context, FALSE))
+	{
+		frdpd_auth_result_cleanup(&result);
+		return FALSE;
+	}
 	(void)frdpd_pam_close_session(context->pam_handle, context->pam_user,
 	                              context->pam_credentials_established,
 	                              context->pam_session_open);
 	context->pam_handle = NULL;
 	context->pam_credentials_established = FALSE;
 	context->pam_session_open = FALSE;
-	context->auth_status = result.status;
-	context->pam_status = result.pam_status;
 	free(context->pam_user);
 	context->pam_user = result.pam_user;
 	context->pam_handle = result.pam_handle;
@@ -200,17 +497,11 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	result.pam_user = NULL;
 	result.pam_handle = NULL;
 
-	if (!ok)
-	{
-		WLog_WARN(TAG, "correlation_id=%s PAM rejected RDP login from %s: %s (%d)",
-		          context->correlation_id, client->hostname,
-		          frdpd_pam_auth_status_string(context->auth_status), context->pam_status);
-		return FALSE;
-	}
-
 	WLog_INFO(TAG, "correlation_id=%s PAM accepted RDP login for %s from %s",
 	          context->correlation_id, context->pam_user ? context->pam_user : "unknown",
 	          client->hostname[0] != '\0' ? client->hostname : "unknown");
+	if (!frdpd_open_managed_session(client, config, context))
+		return FALSE;
 	return TRUE;
 }
 
@@ -553,6 +844,8 @@ static void frdpd_print_usage(const char* app)
 	(void)fprintf(stderr, "  --pam-service=<name>          PAM service name, default frdpd\n");
 	(void)fprintf(stderr,
 	              "  --auth-socket=<path>          Auth/account IPC; requires --no-pam-session\n");
+	(void)fprintf(stderr,
+	              "  --session-socket=<path>       Session-manager IPC; requires --no-pam-session\n");
 	(void)fprintf(stderr, "  --service <name>              PAM service alias for auth test\n");
 	(void)fprintf(stderr, "  --domain-mode=plain|downlevel|upn|auto\n");
 	(void)fprintf(stderr,
@@ -644,6 +937,12 @@ static BOOL frdpd_apply_file_config(frdpdOptions* options)
 		if (!frdpd_socket_path_is_valid(config->auth_socket))
 			return FALSE;
 		options->server.auth_socket = config->auth_socket;
+	}
+	if (!frdpd_string_is_empty(config->session_socket))
+	{
+		if (!frdpd_socket_path_is_valid(config->session_socket))
+			return FALSE;
+		options->server.session_socket = config->session_socket;
 	}
 
 	if (_stricmp(config->security, "nla") == 0)
@@ -756,6 +1055,12 @@ static BOOL frdpd_parse_args(int argc, char* argv[], frdpdOptions* options)
 				return FALSE;
 			options->server.auth_socket = &arg[14];
 		}
+		else if (strncmp(arg, "--session-socket=", 17) == 0)
+		{
+			if (!frdpd_socket_path_is_valid(&arg[17]))
+				return FALSE;
+			options->server.session_socket = &arg[17];
+		}
 		else if (strncmp(arg, "--domain-mode=", 14) == 0)
 		{
 			BOOL ok = FALSE;
@@ -819,6 +1124,17 @@ static int frdpd_run_server(const frdpdOptions* options)
 	WSADATA wsaData = { 0 };
 	freerdp_listener* listener = NULL;
 	const frdpdServerConfig* config = &options->server;
+
+	if (config->open_pam_session && config->auth_socket && (config->auth_socket[0] != '\0'))
+	{
+		WLog_ERR(TAG, "Auth IPC requires --no-pam-session until session ownership is delegated");
+		return -1;
+	}
+	if (config->open_pam_session && config->session_socket && (config->session_socket[0] != '\0'))
+	{
+		WLog_ERR(TAG, "Session IPC requires --no-pam-session");
+		return -1;
+	}
 
 	if (!winpr_PathFileExists(config->cert_path) || !winpr_PathFileExists(config->key_path))
 	{

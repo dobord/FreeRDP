@@ -23,7 +23,9 @@ target_link_libraries(frdp-authd PRIVATE ${PAM_LIBRARIES} ${UUID_LIBRARY})
 installwithrpath(TARGETS frdp-authd DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)
 set_property(TARGET frdp-authd PROPERTY FOLDER "Server/frdp")
 
-add_executable(frdp-sesmand frdp-sesmand/frdp-sesmand.c)
+add_executable(frdp-sesmand
+    frdp-sesmand/frdp-sesmand.c
+    $<TARGET_OBJECTS:frdp-ipc>)
 target_include_directories(frdp-sesmand SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
 target_link_libraries(frdp-sesmand PRIVATE ${PAM_LIBRARIES} ${UUID_LIBRARY})
 installwithrpath(TARGETS frdp-sesmand DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)

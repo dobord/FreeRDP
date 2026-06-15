@@ -13,12 +13,13 @@ This document describes the configuration options available in `frdpd.toml` (see
 
 - `mode` (string): Authentication backend. Currently implemented value: `pam-sssd`. Default `pam-sssd`.
 - `pam_service` (string): Name of PAM service file for the in-process PAM path. Default `frdpd`. In `auth_socket` mode, the broker-side `frdp-authd --pam-service` setting selects the PAM service.
-- `auth_socket` (path): Optional absolute Unix socket path for the `frdp-authd` IPC broker. Relative paths and unsafe socket locations are rejected. Because session-manager IPC is not wired yet, this auth/account-only path currently requires `--no-pam-session`; when omitted, `frdpd` uses the current in-process PAM path.
+- `auth_socket` (path): Optional absolute Unix socket path for the `frdp-authd` IPC broker. Relative paths and unsafe socket locations are rejected. This auth/account path requires `--no-pam-session`; pair it with `[session].session_socket` when `frdp-sesmand` owns sessions. When omitted, `frdpd` uses the current in-process PAM auth/account path.
 - `kerberos`, `ntlm_fallback`, `keytab`, `accepted_spn`: planned Kerberos-first production fields. The current parser rejects them until the daemon can enforce the corresponding policy.
 
 ## [session]
 
-Planned session lifecycle fields. The current parser rejects `[session]` until the session manager enforces these settings.
+- `session_socket` (path): Optional absolute Unix socket path for the `frdp-sesmand` IPC service. Relative paths and unsafe socket locations are rejected. This path requires `--no-pam-session`; on successful authentication `frdpd` sends session open and close requests to `frdp-sesmand` and fails the login closed if session creation fails.
+- Other session lifecycle fields remain planned. Unknown `[session]` keys are rejected until the daemon enforces them.
 
 ## [channels]
 

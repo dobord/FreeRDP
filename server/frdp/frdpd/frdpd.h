@@ -25,6 +25,7 @@ extern "C"
 		const char* key_path;
 		const char* pam_service;
 		const char* auth_socket;
+		const char* session_socket;
 		UINT16 port;
 		BOOL allow_tls_fallback;
 		BOOL open_pam_session;
@@ -35,6 +36,9 @@ extern "C"
 	{
 		rdpContext _p;
 		char correlation_id[64];
+		char session_id[64];
+		char session_display[32];
+		BOOL managed_session_open;
 		void* pam_handle;
 		char* pam_user;
 		BOOL pam_credentials_established;

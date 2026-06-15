@@ -13,5 +13,8 @@ pam_service = "frdpd"
 # Kerberos-first fields are intentionally omitted until the daemon enforces them.
 # Do not configure kerberos, ntlm_fallback, keytab, or accepted_spn in the current parser.
 
-# Session, channel, and audit sections are omitted until the daemon enforces them.
-# The current parser rejects [session], [channels], and [audit] instead of silently ignoring policy.
+# [session]
+# session_socket = "/run/frdpd/sesmand.sock"
+
+# Channel and audit sections are omitted until the daemon enforces them.
+# The current parser rejects [channels] and [audit] instead of silently ignoring policy.
