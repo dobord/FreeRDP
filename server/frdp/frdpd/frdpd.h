@@ -34,6 +34,7 @@ extern "C"
 	typedef struct
 	{
 		rdpContext _p;
+		char correlation_id[64];
 		void* pam_handle;
 		char* pam_user;
 		BOOL pam_credentials_established;

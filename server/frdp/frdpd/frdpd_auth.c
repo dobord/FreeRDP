@@ -75,6 +75,8 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 		goto fail;
 
 	if (!frdpd_auth_copy_ipc_string(request.user, sizeof(request.user), pam_user) ||
+	    !frdpd_auth_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
+	                                config->correlation_id) ||
 	    !frdpd_auth_copy_ipc_string(request.rhost, sizeof(request.rhost), config->rhost) ||
 	    !frdpd_auth_copy_ipc_string(request.password, sizeof(request.password), password))
 		goto fail;
@@ -83,7 +85,7 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	if (fd < 0)
 		goto fail;
 
-	header.type = FRDP_IPC_AUTH_REQUEST;
+	header.type = FRDP_IPC_AUTH_REQUEST_V2;
 	header.payload_len = sizeof(request);
 	if ((frdp_ipc_send(fd, &header, sizeof(header)) < 0) ||
 	    (frdp_ipc_send(fd, &request, sizeof(request)) < 0))
@@ -99,7 +101,11 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	if (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))
 		goto fail;
 
-	frdpd_auth_result_set(result, response.success ? FRDPD_PAM_AUTH_OK : FRDPD_PAM_AUTH_DENIED, 0);
+	frdpd_auth_result_set(result,
+	                      response.success ? FRDPD_PAM_AUTH_OK
+	                                       : (response.error[0] ? FRDPD_PAM_AUTH_ERROR
+	                                                            : FRDPD_PAM_AUTH_DENIED),
+	                      0);
 	ok = response.success ? TRUE : FALSE;
 	if (ok && result)
 	{

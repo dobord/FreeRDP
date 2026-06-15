@@ -22,6 +22,7 @@
 #include <winpr/assert.h>
 #include <winpr/crt.h>
 #include <winpr/path.h>
+#include <winpr/rpc.h>
 #include <winpr/ssl.h>
 #include <winpr/synch.h>
 #include <winpr/winsock.h>
@@ -82,6 +83,24 @@ static void frdpd_signal_handler(int signum)
 	g_frdpd_running = 0;
 }
 
+static BOOL frdpd_generate_correlation_id(char* buffer, size_t size)
+{
+	UUID uuid = { 0 };
+	RPC_CSTR uuid_string = NULL;
+	BOOL rc = FALSE;
+
+	if (!buffer || (size == 0))
+		return FALSE;
+	buffer[0] = '\0';
+	if (UuidCreate(&uuid) != RPC_S_OK)
+		return FALSE;
+	if (UuidToStringA(&uuid, &uuid_string) != RPC_S_OK)
+		return FALSE;
+	rc = sprintf_s(buffer, size, "%s", (const char*)uuid_string) > 0;
+	RpcStringFreeA(&uuid_string);
+	return rc;
+}
+
 static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 {
 	frdpdPeerContext* context = (frdpdPeerContext*)ctx;
@@ -102,8 +121,16 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 
 static BOOL frdpd_peer_context_new(freerdp_peer* client, rdpContext* ctx)
 {
+	frdpdPeerContext* context = (frdpdPeerContext*)ctx;
+
 	WINPR_UNUSED(client);
 	WINPR_ASSERT(ctx);
+	if (!frdpd_generate_correlation_id(context->correlation_id,
+	                                  sizeof(context->correlation_id)))
+	{
+		WLog_ERR(TAG, "Failed to generate peer correlation id");
+		return FALSE;
+	}
 	return TRUE;
 }
 
@@ -135,19 +162,22 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 
 	if (!automatic && !config->allow_tls_fallback)
 	{
-		WLog_WARN(TAG, "Rejecting non-NLA login from %s", client->hostname);
+		WLog_WARN(TAG, "correlation_id=%s rejecting non-NLA login from %s",
+		          context->correlation_id, client->hostname);
 		return FALSE;
 	}
 
 	if (!identity)
 	{
-		WLog_WARN(TAG, "Rejecting login from %s without identity", client->hostname);
+		WLog_WARN(TAG, "correlation_id=%s rejecting login from %s without identity",
+		          context->correlation_id, client->hostname);
 		return FALSE;
 	}
 
 	const frdpdAuthConfig auth = {
 		.pam_service = config->pam_service,
 		.auth_socket = config->auth_socket,
+		.correlation_id = context->correlation_id,
 		.rhost = (client->hostname[0] != '\0') ? client->hostname : NULL,
 		.domain_mode = config->domain_mode,
 		.open_pam_session = config->open_pam_session,
@@ -172,13 +202,14 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 
 	if (!ok)
 	{
-		WLog_WARN(TAG, "PAM rejected RDP login from %s: %s (%d)", client->hostname,
+		WLog_WARN(TAG, "correlation_id=%s PAM rejected RDP login from %s: %s (%d)",
+		          context->correlation_id, client->hostname,
 		          frdpd_pam_auth_status_string(context->auth_status), context->pam_status);
 		return FALSE;
 	}
 
-	WLog_INFO(TAG, "PAM accepted RDP login for %s from %s",
-	          context->pam_user ? context->pam_user : "unknown",
+	WLog_INFO(TAG, "correlation_id=%s PAM accepted RDP login for %s from %s",
+	          context->correlation_id, context->pam_user ? context->pam_user : "unknown",
 	          client->hostname[0] != '\0' ? client->hostname : "unknown");
 	return TRUE;
 }
@@ -196,8 +227,11 @@ static BOOL frdpd_peer_post_connect(freerdp_peer* client)
 	WINPR_ASSERT(settings);
 	WINPR_ASSERT(context);
 
-	WLog_INFO(TAG, "Client %s logged in as %s; requested desktop %" PRIu32 "x%" PRIu32 "x%" PRIu32,
-	          client->hostname, context->pam_user ? context->pam_user : "unknown",
+	WLog_INFO(TAG,
+	          "correlation_id=%s client %s logged in as %s; requested desktop %" PRIu32
+	          "x%" PRIu32 "x%" PRIu32,
+	          context->correlation_id, client->hostname,
+	          context->pam_user ? context->pam_user : "unknown",
 	          freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth),
 	          freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight),
 	          freerdp_settings_get_uint32(settings, FreeRDP_ColorDepth));
@@ -206,8 +240,12 @@ static BOOL frdpd_peer_post_connect(freerdp_peer* client)
 
 static BOOL frdpd_peer_activate(freerdp_peer* client)
 {
+	frdpdPeerContext* context = NULL;
+
 	WINPR_ASSERT(client);
-	WLog_INFO(TAG, "Client %s activated", client->hostname);
+	context = (frdpdPeerContext*)client->context;
+	WLog_INFO(TAG, "correlation_id=%s client %s activated",
+	          context ? context->correlation_id : "unknown", client->hostname);
 	return TRUE;
 }
 
@@ -366,6 +404,7 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 {
 	freerdp_peer* client = (freerdp_peer*)arg;
 	frdpdServerConfig* config = NULL;
+	frdpdPeerContext* context = NULL;
 
 	WINPR_ASSERT(client);
 	config = (frdpdServerConfig*)client->ContextExtra;
@@ -373,6 +412,7 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 
 	if (!frdpd_peer_init(client))
 		goto fail;
+	context = (frdpdPeerContext*)client->context;
 	if (!frdpd_configure_security(client, config))
 		goto fail;
 
@@ -382,7 +422,8 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 	if (!client->Initialize(client))
 		goto fail;
 
-	WLog_INFO(TAG, "Accepted client %s", client->local ? "(local)" : client->hostname);
+	WLog_INFO(TAG, "correlation_id=%s accepted client %s", context->correlation_id,
+	          client->local ? "(local)" : client->hostname);
 
 	while (g_frdpd_running)
 	{
@@ -412,7 +453,8 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 			break;
 	}
 
-	WLog_INFO(TAG, "Client %s disconnected", client->hostname);
+	WLog_INFO(TAG, "correlation_id=%s client %s disconnected", context->correlation_id,
+	          client->hostname);
 	WINPR_ASSERT(client->Disconnect);
 	client->Disconnect(client);
 

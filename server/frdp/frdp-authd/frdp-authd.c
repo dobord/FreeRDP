@@ -79,16 +79,47 @@ static int set_no_core(void)
     return 0;
 }
 
+static int is_uuid_hex_char(char c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+static int correlation_id_is_valid(const char *correlation_id)
+{
+    size_t x;
+
+    if (!correlation_id)
+        return 0;
+    for (x = 0; x < 36; x++) {
+        const char c = correlation_id[x];
+
+        if (c == '\0')
+            return 0;
+        if (x == 8 || x == 13 || x == 18 || x == 23) {
+            if (c != '-')
+                return 0;
+        } else if (!is_uuid_hex_char(c)) {
+            return 0;
+        }
+    }
+
+    return correlation_id[36] == '\0';
+}
+
 /* Emit an audit event with a correlation identifier. */
-static void log_audit_event(const char *user, int success)
+static void log_audit_event(const char *user, int success, const char *correlation_id)
 {
     uuid_t id;
     char uuid_str[37];
-    uuid_generate(id);
-    uuid_unparse_lower(id, uuid_str);
+
+    if (!correlation_id_is_valid(correlation_id)) {
+        uuid_generate(id);
+        uuid_unparse_lower(id, uuid_str);
+        correlation_id = uuid_str;
+    }
     openlog("frdp-authd", LOG_PID | LOG_NDELAY, LOG_AUTH);
     syslog(success ? LOG_INFO : LOG_WARNING,
-           "correlation_id=%s user=%s result=%s", uuid_str, user,
+           "correlation_id=%s user=%s result=%s", correlation_id, user,
            success ? "success" : "failure");
     closelog();
 }
@@ -200,7 +231,8 @@ static int set_client_timeouts(int fd)
 }
 
 /* Perform a PAM authentication for the given user and password. */
-int authenticate_user(const char *service, const char *rhost, const char *user, const char *password)
+int authenticate_user(const char *service, const char *rhost, const char *correlation_id,
+                      const char *user, const char *password)
 {
     if (!service || !service[0] || !user || !password)
         return -1;
@@ -262,7 +294,7 @@ int authenticate_user(const char *service, const char *rhost, const char *user, 
     munlock(buf, pwlen + 1);
     munmap(buf, pwlen + 1);
 
-    log_audit_event(user, ret == PAM_SUCCESS);
+    log_audit_event(user, ret == PAM_SUCCESS, correlation_id);
     return (ret == PAM_SUCCESS) ? 0 : -1;
 }
 
@@ -348,18 +380,24 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
             close(cfd);
             continue;
         }
-        if (hdr.type == FRDP_IPC_AUTH_REQUEST && hdr.payload_len == sizeof(frdpAuthRequest)) {
+        if (hdr.type == FRDP_IPC_AUTH_REQUEST_V2 && hdr.payload_len == sizeof(frdpAuthRequest)) {
             frdpAuthRequest req;
             if (frdp_ipc_recv(cfd, &req, sizeof(req)) == (int)sizeof(req)) {
                 char user[sizeof(req.user)] = {0};
+                char correlation_id[sizeof(req.correlation_id)] = {0};
                 char rhost[sizeof(req.rhost)] = {0};
                 char password[sizeof(req.password)] = {0};
                 if (copy_ipc_string(user, sizeof(user), req.user, sizeof(req.user)) != 0 ||
+                    copy_ipc_string(correlation_id, sizeof(correlation_id), req.correlation_id,
+                                    sizeof(req.correlation_id)) != 0 ||
                     copy_ipc_string(rhost, sizeof(rhost), req.rhost, sizeof(req.rhost)) != 0 ||
                     copy_ipc_string(password, sizeof(password), req.password, sizeof(req.password)) != 0) {
                     send_auth_response(cfd, 0, "invalid auth request");
                 } else {
-                    send_auth_response(cfd, authenticate_user(pam_service, rhost, user, password) == 0, NULL);
+                    send_auth_response(cfd,
+                                       authenticate_user(pam_service, rhost, correlation_id, user,
+                                                         password) == 0,
+                                       NULL);
                 }
                 clear_secret(password, sizeof(password));
                 clear_secret(req.password, sizeof(req.password));

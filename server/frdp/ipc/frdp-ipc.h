@@ -9,7 +9,8 @@ typedef enum {
     FRDP_IPC_AUTH_REQUEST = 1,
     FRDP_IPC_AUTH_RESPONSE = 2,
     FRDP_IPC_SESSION_REQUEST = 3,
-    FRDP_IPC_SESSION_RESPONSE = 4
+    FRDP_IPC_SESSION_RESPONSE = 4,
+    FRDP_IPC_AUTH_REQUEST_V2 = 5
 } frdpIpcMessageType;
 
 /* Common header prepended to each IPC message */
@@ -20,6 +21,7 @@ typedef struct {
 
 /* Authentication request structure */
 typedef struct {
+    char correlation_id[64];
     char user[64];
     char rhost[128];
     char password[256];

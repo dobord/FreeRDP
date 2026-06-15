@@ -16,6 +16,7 @@ typedef struct
 {
 	const char* pam_service;
 	const char* auth_socket;
+	const char* correlation_id;
 	const char* rhost;
 	frdpdDomainMode domain_mode;
 	BOOL open_pam_session;

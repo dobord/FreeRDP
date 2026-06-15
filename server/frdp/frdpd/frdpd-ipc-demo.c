@@ -4,7 +4,7 @@
  * This simple program demonstrates how the RDP daemon could authenticate a user
  * via the frdp-authd broker using the IPC protocol defined in frdp-ipc.h.
  * It loads the daemon configuration to obtain defaults and sends an
- * FRDP_IPC_AUTH_REQUEST to the auth daemon.
+ * FRDP_IPC_AUTH_REQUEST_V2 to the auth daemon.
  */
 
 #include <stdio.h>
@@ -35,10 +35,12 @@ int main(int argc, char **argv)
         return 1;
     }
     frdpIpcHeader hdr;
-    hdr.type = FRDP_IPC_AUTH_REQUEST;
+    hdr.type = FRDP_IPC_AUTH_REQUEST_V2;
     hdr.payload_len = sizeof(frdpAuthRequest);
     frdpAuthRequest req;
     memset(&req, 0, sizeof(req));
+    strncpy(req.correlation_id, "11111111-1111-4111-8111-111111111111",
+            sizeof(req.correlation_id) - 1);
     strncpy(req.user, user, sizeof(req.user) - 1);
     strncpy(req.password, pass, sizeof(req.password) - 1);
     if (frdp_ipc_send(fd, &hdr, sizeof(hdr)) < 0 ||
