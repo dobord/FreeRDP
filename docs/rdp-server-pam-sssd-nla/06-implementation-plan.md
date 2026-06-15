@@ -20,6 +20,7 @@ cmake --build /tmp/opencode/freerdp-frdp-install-build --target frdpd frdp-authd
 cmake --install /tmp/opencode/freerdp-frdp-install-build --component server --prefix /tmp/opencode/freerdp-install-frdp
 cc -fsyntax-only -Wall -Wextra server/frdp/frdp-authd/frdp-authd.c server/frdp/ipc/frdp-ipc.c
 cc -fsyntax-only -Wall -Wextra server/frdp/frdp-sesmand/frdp-sesmand.c server/frdp/ipc/frdp-ipc.c
+cc -fsyntax-only -Wall -Wextra server/frdp/frdp-session-agent/frdp-session-agent.c
 cc -fsyntax-only -Wall -Wextra server/frdp/config/frdp-config.c server/frdp/frdpd/frdpd-ipc-demo.c server/frdp/ipc/frdp-ipc.c
 # frdp-authd IPC negative-path smoke: frdpd-ipc-demo returns Authentication result: failure for invalid credentials.
 # frdp-sesmand IPC startup smoke: --socket creates a 0600 Unix socket in a 0700 runtime directory.
@@ -40,6 +41,7 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - shared IPC client operations use bounded socket send/receive timeouts and suppress `SIGPIPE` on disconnected peers;
 - per-peer correlation ids on integrated `frdpd` accept/auth/logon/activate/disconnect logs, propagated to optional `frdp-authd` auth/account IPC audit events;
 - session ids and correlation ids propagated through optional `frdp-sesmand` session IPC into `frdp-session-agent` startup/exit logs;
+- `frdp-session-agent` verifies the Xvfb backend `exec()` with a close-on-exec readiness pipe before reporting backend startup;
 - `--pam-auth-test` smoke-test mode for the PAM helper path;
 - process-level core dump disabling before credential handling;
 - no-op input/update callbacks that keep protocol plumbing in place but do not provide a desktop.
@@ -95,7 +97,7 @@ Deliverables:
 - [x] PAM session lifecycle in the integrated `server/frdp/frdpd` peer path;
 - [x] standalone development `frdp-sesmand --open-session <user>` path performs PAM account, credential, session, process-group, and cleanup handling behind an explicit opt-in guard;
 - [ ] logind/cgroup integration;
-- [x] headless Xvfb launch integrated with optional `frdpd -> frdp-sesmand -> frdp-session-agent` session requests;
+- [x] headless Xvfb launch integrated with optional `frdpd -> frdp-sesmand -> frdp-session-agent` session requests, including fail-closed backend `exec()` readiness checks;
 - [ ] simple reconnect by user/session id;
 - [ ] cleanup on disconnect across `frdp-sesmand` agent process groups and PAM sessions (partial: optional `session_socket` close requests use bounded IPC and async retry, but durable cleanup after prolonged `frdp-sesmand` outage is not implemented).
 

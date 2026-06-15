@@ -121,6 +121,26 @@ static int wait_for_agent_exec(int fd, pid_t pid)
     return -1;
 }
 
+static int wait_for_agent_stable(pid_t pid, pid_t pgid)
+{
+    int status = 0;
+
+    for (int x = 0; x < 10; x++) {
+        const pid_t rc = waitpid(pid, &status, WNOHANG);
+        if (rc == pid || rc < 0) {
+            if (pgid > 0) {
+                kill(-pgid, SIGTERM);
+                usleep(200000);
+                kill(-pgid, SIGKILL);
+            }
+            return -1;
+        }
+        usleep(100000);
+    }
+
+    return 0;
+}
+
 static int process_group_exists(pid_t pgid)
 {
     if (pgid <= 0)
@@ -308,6 +328,12 @@ static int open_session(const char *user, const char *rhost, const char *correla
         return -1;
     }
     close(exec_pipe[0]);
+    if (wait_for_agent_stable(pid, pid) != 0) {
+        pam_close_session(pamh, 0);
+        pam_setcred(pamh, PAM_DELETE_CRED);
+        pam_end(pamh, PAM_SUCCESS);
+        return -1;
+    }
 
     /* Parent: record session metadata. */
     session *s = &sessions[session_count++];

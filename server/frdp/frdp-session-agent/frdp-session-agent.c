@@ -17,6 +17,53 @@
 #include <syslog.h>
 #include <signal.h>
 #include <string.h>
+#include <fcntl.h>
+#include <poll.h>
+
+static void backend_exec_failed(int fd)
+{
+    const char marker = '!';
+
+    if (fd >= 0) {
+        const ssize_t rc = write(fd, &marker, sizeof(marker));
+        (void)rc;
+    }
+    _exit(127);
+}
+
+static int wait_for_backend_exec(int fd, pid_t pid)
+{
+    struct pollfd pfd;
+    char marker = 0;
+    int status = 0;
+
+    memset(&pfd, 0, sizeof(pfd));
+    pfd.fd = fd;
+    pfd.events = POLLIN | POLLHUP;
+    const int poll_status = poll(&pfd, 1, 10000);
+    if (poll_status <= 0) {
+        kill(pid, SIGKILL);
+        for (int x = 0; x < 20; x++) {
+            const pid_t rc = waitpid(pid, &status, WNOHANG);
+            if (rc == pid || rc < 0)
+                break;
+            usleep(100000);
+        }
+        return -1;
+    }
+
+    const ssize_t rc = read(fd, &marker, sizeof(marker));
+    if (rc == 0)
+        return 0;
+
+    for (int x = 0; x < 20; x++) {
+        const pid_t wait_rc = waitpid(pid, &status, WNOHANG);
+        if (wait_rc == pid || wait_rc < 0)
+            break;
+        usleep(100000);
+    }
+    return -1;
+}
 
 int main(int argc, char **argv)
 {
@@ -49,20 +96,52 @@ int main(int argc, char **argv)
     syslog(LOG_INFO, "correlation_id=%s session_id=%s display=%s geometry=%s session agent starting",
            correlation_id, session_id, display, geometry);
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to fork for backend",
+    int exec_pipe[2] = {-1, -1};
+    if (pipe(exec_pipe) != 0) {
+        syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to create backend exec pipe",
                correlation_id, session_id);
         closelog();
         return 1;
     }
+    if (fcntl(exec_pipe[1], F_SETFD, FD_CLOEXEC) != 0) {
+        syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to mark backend exec pipe",
+               correlation_id, session_id);
+        close(exec_pipe[0]);
+        close(exec_pipe[1]);
+        closelog();
+        return 1;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to fork for backend",
+               correlation_id, session_id);
+        close(exec_pipe[0]);
+        close(exec_pipe[1]);
+        closelog();
+        return 1;
+    }
     if (pid == 0) {
+        close(exec_pipe[0]);
         /* Child: execute Xvfb.  Provide display and geometry. */
         execlp("Xvfb", "Xvfb", display, "-screen", "0", geometry, (char *)NULL);
         /* If exec fails, log to stderr and exit. */
         fprintf(stderr, "frdp-session-agent: failed to exec Xvfb\n");
-        _exit(127);
+        backend_exec_failed(exec_pipe[1]);
     }
+
+    close(exec_pipe[1]);
+    if (wait_for_backend_exec(exec_pipe[0], pid) != 0) {
+        close(exec_pipe[0]);
+        syslog(LOG_ERR, "correlation_id=%s session_id=%s backend failed to start",
+               correlation_id, session_id);
+        closelog();
+        return 1;
+    }
+    close(exec_pipe[0]);
+
+    syslog(LOG_INFO, "correlation_id=%s session_id=%s backend started", correlation_id,
+           session_id);
 
     /* TODO: capture framebuffer updates and forward to the client via FreeRDP. */
     /* TODO: process keyboard/mouse events and clipboard/audio channels. */
