@@ -35,6 +35,7 @@ extern "C"
 		rdpContext _p;
 		void* pam_handle;
 		char* pam_user;
+		BOOL pam_credentials_established;
 		BOOL pam_session_open;
 		frdpdPamAuthStatus auth_status;
 		int pam_status;

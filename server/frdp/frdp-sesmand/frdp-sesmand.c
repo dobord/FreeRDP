@@ -13,6 +13,10 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <security/pam_appl.h>
 #include <pwd.h>
 #include <syslog.h>
@@ -32,6 +36,7 @@ typedef struct {
     pid_t pgid;
     time_t start_time;
     pam_handle_t *pamh;
+    int credentials_established;
     int display_number;
 } session;
 
@@ -61,11 +66,24 @@ static int open_session(const char *user)
         return -1;
     struct pam_conv conv = {pam_conv_fn, NULL};
     pam_handle_t *pamh = NULL;
+    int credentials_established = 0;
     int ret = pam_start("frdpd", user, &conv, &pamh);
     if (ret != PAM_SUCCESS)
         return -1;
+    ret = pam_acct_mgmt(pamh, 0);
+    if (ret != PAM_SUCCESS) {
+        pam_end(pamh, ret);
+        return -1;
+    }
+    ret = pam_setcred(pamh, PAM_ESTABLISH_CRED);
+    if (ret != PAM_SUCCESS) {
+        pam_end(pamh, ret);
+        return -1;
+    }
+    credentials_established = 1;
     ret = pam_open_session(pamh, 0);
     if (ret != PAM_SUCCESS) {
+        pam_setcred(pamh, PAM_DELETE_CRED);
         pam_end(pamh, ret);
         return -1;
     }
@@ -79,6 +97,7 @@ static int open_session(const char *user)
     struct passwd *pwd = getpwnam(user);
     if (!pwd) {
         pam_close_session(pamh, 0);
+        pam_setcred(pamh, PAM_DELETE_CRED);
         pam_end(pamh, PAM_USER_UNKNOWN);
         return -1;
     }
@@ -86,6 +105,7 @@ static int open_session(const char *user)
     pid_t pid = fork();
     if (pid < 0) {
         pam_close_session(pamh, 0);
+        pam_setcred(pamh, PAM_DELETE_CRED);
         pam_end(pamh, PAM_SUCCESS);
         return -1;
     }
@@ -116,6 +136,7 @@ static int open_session(const char *user)
     s->pgid = pid; /* child's pgid equals pid since setpgid called with 0 */
     s->start_time = time(NULL);
     s->pamh = pamh;
+    s->credentials_established = credentials_established;
     s->display_number = display;
     return 0;
 }
@@ -132,8 +153,13 @@ static void cleanup_session(int idx)
     }
     /* Close PAM session and end handle. */
     if (s->pamh) {
-        pam_close_session(s->pamh, 0);
-        pam_end(s->pamh, PAM_SUCCESS);
+        int status = pam_close_session(s->pamh, 0);
+        if (s->credentials_established) {
+            int cred_status = pam_setcred(s->pamh, PAM_DELETE_CRED);
+            if (status == PAM_SUCCESS && cred_status != PAM_SUCCESS)
+                status = cred_status;
+        }
+        pam_end(s->pamh, status);
     }
     if (idx < session_count - 1) {
         sessions[idx] = sessions[session_count - 1];
@@ -141,18 +167,66 @@ static void cleanup_session(int idx)
     session_count--;
 }
 
+static void usage(const char *argv0)
+{
+    fprintf(stderr, "Usage: %s --open-session <user>\n", argv0);
+    fprintf(stderr, "Set FRDP_SESMAND_ALLOW_STANDALONE=1 to enable this development path.\n");
+}
+
+static int standalone_open_session_allowed(void)
+{
+    const char *value = getenv("FRDP_SESMAND_ALLOW_STANDALONE");
+
+    return value && strcmp(value, "1") == 0;
+}
+
+static int set_no_core(void)
+{
+    struct rlimit rl = {0};
+
+    if (setrlimit(RLIMIT_CORE, &rl) != 0)
+        return -1;
+#ifdef __linux__
+    if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0)
+        return -1;
+#endif
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
-    (void)argc;
-    (void)argv;
-    openlog("frdp-sesmand", LOG_PID, LOG_DAEMON);
-    printf("frdp-sesmand: session manager starting\n");
+    if (set_no_core() != 0) {
+        fprintf(stderr, "failed to disable core dumps\n");
+        return 1;
+    }
 
-    /* Demonstration: create a test session for the nobody account. */
-    if (open_session("nobody") == 0) {
-        syslog(LOG_INFO, "created test session");
+    openlog("frdp-sesmand", LOG_PID, LOG_DAEMON);
+
+    if (argc == 2 && strcmp(argv[1], "--help") == 0) {
+        usage(argv[0]);
+        closelog();
+        return 0;
+    }
+    if (argc != 3 || strcmp(argv[1], "--open-session") != 0) {
+        usage(argv[0]);
+        closelog();
+        return 2;
+    }
+    if (!standalone_open_session_allowed()) {
+        fprintf(stderr, "standalone session opening is disabled by default\n");
+        syslog(LOG_WARNING, "refused standalone session open without explicit development opt-in");
+        closelog();
+        return 2;
+    }
+
+    printf("frdp-sesmand: opening session for %s\n", argv[2]);
+
+    if (open_session(argv[2]) == 0) {
+        syslog(LOG_INFO, "created session for %s", argv[2]);
     } else {
-        syslog(LOG_ERR, "failed to create test session");
+        syslog(LOG_ERR, "failed to create session for %s", argv[2]);
+        closelog();
+        return 1;
     }
 
     /* Monitor for agent exits and clean up sessions accordingly. */

@@ -13,6 +13,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <unistd.h>
 
 #include <winpr/assert.h>
@@ -53,6 +57,25 @@ typedef struct
 
 static volatile sig_atomic_t g_frdpd_running = 1;
 
+static BOOL frdpd_disable_core_dumps(void)
+{
+	const struct rlimit limit = { 0, 0 };
+
+	if (setrlimit(RLIMIT_CORE, &limit) != 0)
+	{
+		WLog_WARN(TAG, "Unable to disable core dumps for frdpd");
+		return FALSE;
+	}
+#ifdef __linux__
+	if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0)
+	{
+		WLog_WARN(TAG, "Unable to mark frdpd non-dumpable");
+		return FALSE;
+	}
+#endif
+	return TRUE;
+}
+
 static void frdpd_signal_handler(int signum)
 {
 	WINPR_UNUSED(signum);
@@ -68,8 +91,10 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 		return;
 
 	(void)frdpd_pam_close_session(context->pam_handle, context->pam_user,
+	                              context->pam_credentials_established,
 	                              context->pam_session_open);
 	context->pam_handle = NULL;
+	context->pam_credentials_established = FALSE;
 	context->pam_session_open = FALSE;
 	free(context->pam_user);
 	context->pam_user = NULL;
@@ -129,14 +154,17 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 
 	const BOOL ok = frdpd_authenticate_identity(&auth, identity, &result);
 	(void)frdpd_pam_close_session(context->pam_handle, context->pam_user,
+	                              context->pam_credentials_established,
 	                              context->pam_session_open);
 	context->pam_handle = NULL;
+	context->pam_credentials_established = FALSE;
 	context->pam_session_open = FALSE;
 	context->auth_status = result.status;
 	context->pam_status = result.pam_status;
 	free(context->pam_user);
 	context->pam_user = result.pam_user;
 	context->pam_handle = result.pam_handle;
+	context->pam_credentials_established = result.pam_credentials_established;
 	context->pam_session_open = result.pam_session_open;
 	result.pam_user = NULL;
 	result.pam_handle = NULL;
@@ -777,6 +805,9 @@ fail:
 int main(int argc, char* argv[])
 {
 	frdpdOptions options = { 0 };
+
+	if (!frdpd_disable_core_dumps())
+		return 1;
 
 	options.server.port = 3389;
 	options.server.cert_path = "server.crt";

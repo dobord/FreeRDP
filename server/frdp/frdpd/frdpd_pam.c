@@ -136,11 +136,13 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 {
 	pam_handle_t* pamh = NULL;
 	char* normalized_user = NULL;
+	BOOL credentials_established = FALSE;
 
 	if (request)
 	{
 		request->pam_status = PAM_SYSTEM_ERR;
 		request->pam_handle = NULL;
+		request->pam_credentials_established = FALSE;
 		request->pam_session_open = FALSE;
 	}
 
@@ -176,7 +178,17 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 	if (pam_status == PAM_SUCCESS)
 	{
 		pam_status = pam_acct_mgmt(pamh, 0);
-		status = (pam_status == PAM_SUCCESS) ? FRDPD_PAM_AUTH_OK : FRDPD_PAM_AUTH_ACCOUNT_DENIED;
+		if (pam_status == PAM_SUCCESS)
+		{
+			pam_status = pam_setcred(pamh, PAM_ESTABLISH_CRED);
+			if (pam_status == PAM_SUCCESS)
+			{
+				credentials_established = TRUE;
+				status = FRDPD_PAM_AUTH_OK;
+			}
+		}
+		else
+			status = FRDPD_PAM_AUTH_ACCOUNT_DENIED;
 	}
 	else if (pam_status == PAM_AUTH_ERR || pam_status == PAM_USER_UNKNOWN ||
 	         pam_status == PAM_PERM_DENIED || pam_status == PAM_CRED_INSUFFICIENT)
@@ -191,7 +203,9 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 		{
 			(void)pam_set_item(pamh, PAM_AUTHTOK, "");
 			request->pam_handle = pamh;
+			request->pam_credentials_established = credentials_established;
 			request->pam_session_open = TRUE;
+			credentials_established = FALSE;
 			pamh = NULL;
 		}
 		else
@@ -201,6 +215,15 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 	if (pamh)
 	{
 		(void)pam_set_item(pamh, PAM_AUTHTOK, "");
+		if (credentials_established)
+		{
+			const int cred_status = pam_setcred(pamh, PAM_DELETE_CRED);
+			if ((status == FRDPD_PAM_AUTH_OK) && (cred_status != PAM_SUCCESS))
+			{
+				pam_status = cred_status;
+				status = FRDPD_PAM_AUTH_ERROR;
+			}
+		}
 		const int end_status = pam_end(pamh, pam_status);
 		if ((pam_status == PAM_SUCCESS) && (end_status != PAM_SUCCESS))
 		{
@@ -214,10 +237,13 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 	return status;
 }
 
-int frdpd_pam_close_session(void* pam_handle, const char* pam_user, BOOL pam_session_open)
+int frdpd_pam_close_session(void* pam_handle, const char* pam_user,
+                            BOOL pam_credentials_established, BOOL pam_session_open)
 {
 	pam_handle_t* pamh = (pam_handle_t*)pam_handle;
 	int status = PAM_SUCCESS;
+	int cred_status = PAM_SUCCESS;
+	int end_status = PAM_SUCCESS;
 
 	WINPR_UNUSED(pam_user);
 	if (!pamh)
@@ -226,7 +252,15 @@ int frdpd_pam_close_session(void* pam_handle, const char* pam_user, BOOL pam_ses
 	(void)pam_set_item(pamh, PAM_AUTHTOK, "");
 	if (pam_session_open)
 		status = pam_close_session(pamh, 0);
-	(void)pam_end(pamh, status);
+	if (pam_credentials_established)
+	{
+		cred_status = pam_setcred(pamh, PAM_DELETE_CRED);
+		if ((status == PAM_SUCCESS) && (cred_status != PAM_SUCCESS))
+			status = cred_status;
+	}
+	end_status = pam_end(pamh, status);
+	if ((status == PAM_SUCCESS) && (end_status != PAM_SUCCESS))
+		status = end_status;
 	return status;
 }
 

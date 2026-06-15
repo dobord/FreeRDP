@@ -26,6 +26,7 @@ typedef struct
 	int pam_status;
 	char* pam_user;
 	void* pam_handle;
+	BOOL pam_credentials_established;
 	BOOL pam_session_open;
 } frdpdAuthResult;
 

@@ -34,7 +34,7 @@ if(WITH_PROXY)
 endif()
 
 if(WITH_FRDPD)
-  add_subdirectory(frdp/frdpd)
+  add_subdirectory(frdp)
 endif()
 
 if(WITH_SAMPLE)

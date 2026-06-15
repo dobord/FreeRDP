@@ -5,9 +5,8 @@
  *
  * This component performs authentication for the RDP daemon using CredSSP,
  * Kerberos and PAM/SSSD. The code demonstrates secure handling of passwords
- * and integrates PAM. In production builds credentials must be supplied via
- * a secure IPC channel or protected file descriptor; command-line ingress
- * is provided only for development and testing.
+ * and integrates PAM. Credentials must be supplied via the local IPC server;
+ * command-line password ingress is intentionally not supported.
  */
 
 #include <stdio.h>
@@ -19,6 +18,9 @@
 
 /* Additional headers for hardening and account lookups */
 #include <sys/resource.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <pwd.h>
 #include <grp.h>
 #include <syslog.h>
@@ -64,10 +66,17 @@ static int pam_conversation(int num_msg, const struct pam_message **msg,
 }
 
 /* Disable core dumps for the process. */
-static void set_no_core(void)
+static int set_no_core(void)
 {
     struct rlimit rl = {0};
-    setrlimit(RLIMIT_CORE, &rl);
+
+    if (setrlimit(RLIMIT_CORE, &rl) != 0)
+        return -1;
+#ifdef __linux__
+    if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0)
+        return -1;
+#endif
+    return 0;
 }
 
 /* Emit an audit event with a correlation identifier. */
@@ -211,6 +220,7 @@ int authenticate_user(const char *user, const char *password)
 
     struct pam_conv conv = {pam_conversation, buf};
     pam_handle_t *pamh = NULL;
+    int credentials_established = 0;
     int ret = pam_start("frdpd", user, &conv, &pamh);
     if (ret == PAM_SUCCESS) {
         ret = pam_authenticate(pamh, 0);
@@ -220,6 +230,12 @@ int authenticate_user(const char *user, const char *password)
         /* Establish credentials for the session */
         if (ret == PAM_SUCCESS) {
             ret = pam_setcred(pamh, PAM_ESTABLISH_CRED);
+            credentials_established = (ret == PAM_SUCCESS);
+        }
+        if (credentials_established) {
+            int cred_ret = pam_setcred(pamh, PAM_DELETE_CRED);
+            if (ret == PAM_SUCCESS && cred_ret != PAM_SUCCESS)
+                ret = cred_ret;
         }
         pam_end(pamh, ret);
     }
@@ -323,31 +339,25 @@ static int run_ipc_server(const char *socket_path)
     return 0;
 }
 
+static void usage(const char *argv0)
+{
+    fprintf(stderr, "Usage: %s --socket <absolute-socket-path>\n", argv0);
+}
+
 int main(int argc, char **argv)
 {
-    set_no_core();
-    /* If invoked with --socket <path>, run as IPC server */
+    if (set_no_core() != 0) {
+        fprintf(stderr, "failed to disable core dumps\n");
+        return 1;
+    }
+    if (argc == 2 && strcmp(argv[1], "--help") == 0) {
+        usage(argv[0]);
+        return 0;
+    }
     if (argc == 3 && strcmp(argv[1], "--socket") == 0) {
         const char *sock = argv[2];
         return run_ipc_server(sock);
     }
-    const char *user = NULL;
-    const char *pass = NULL;
-    /* Accept username and password as positional arguments for development only. */
-    if (argc >= 3) {
-        user = argv[1];
-        pass = argv[2];
-    }
-    if (!user || !pass) {
-        fprintf(stderr, "Usage: %s [--socket <path>] | <username> <password>\n", argv[0]);
-        fprintf(stderr, "In production this service must be invoked via a secure IPC protocol.\n");
-        return 1;
-    }
-    int rc = authenticate_user(user, pass);
-    if (rc == 0) {
-        printf("Authentication success\n");
-        return 0;
-    }
-    printf("Authentication failed\n");
-    return 1;
+    usage(argv[0]);
+    return 2;
 }

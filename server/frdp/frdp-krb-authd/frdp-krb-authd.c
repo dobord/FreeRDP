@@ -21,6 +21,8 @@ static void display_status(const char *msg, OM_uint32 code, int type)
     do {
         maj_stat = gss_display_status(&min_stat, code, type, GSS_C_NO_OID,
                                       &msg_ctx, &status_string);
+        if (maj_stat != GSS_S_COMPLETE)
+            break;
         fprintf(stderr, "%s: %.*s\n", msg, (int)status_string.length,
                 (char *)status_string.value);
         gss_release_buffer(&min_stat, &status_string);

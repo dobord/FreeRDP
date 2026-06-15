@@ -13,12 +13,10 @@ Verified commands:
 
 ```bash
 cmake -S . -B /tmp/opencode/freerdp-current-build -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SAMPLE=OFF
-cmake --build /tmp/opencode/freerdp-current-build --target frdpd -j2
-cc -fsyntax-only -Wall -Wextra server/frdp/frdp-authd/frdp-authd.c
-cc -fsyntax-only -Wall -Wextra server/frdp/frdp-sesmand/frdp-sesmand.c
-cc -fsyntax-only -Wall -Wextra server/frdp/frdp-session-agent/frdp-session-agent.c
-cc -fsyntax-only -Wall -Wextra server/frdp/frdp-krb-authd/frdp-krb-authd.c
-cc -fsyntax-only -Wall -Wextra tools/frdpctl/frdpctl.c
+cmake --build /tmp/opencode/freerdp-current-build --target frdpd frdp-authd frdp-sesmand frdp-session-agent frdpd-ipc-demo frdpctl frdp-krb-authd -j2
+cmake -S . -B /tmp/opencode/freerdp-frdp-install-build -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SAMPLE=OFF -DWITH_SHADOW=OFF -DWITH_PROXY=OFF
+cmake --build /tmp/opencode/freerdp-frdp-install-build --target frdpd frdp-authd frdp-sesmand frdp-session-agent frdpctl frdp-krb-authd -j2
+cmake --install /tmp/opencode/freerdp-frdp-install-build --component server --prefix /tmp/opencode/freerdp-install-frdp
 cc -fsyntax-only -Wall -Wextra server/frdp/frdp-authd/frdp-authd.c server/frdp/ipc/frdp-ipc.c
 cc -fsyntax-only -Wall -Wextra server/frdp/config/frdp-config.c server/frdp/frdpd/frdpd-ipc-demo.c server/frdp/ipc/frdp-ipc.c
 ```
@@ -31,17 +29,18 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - FreeRDP `Logon` callback bridged to password-backed PAM authentication/account checks;
 - username/domain normalization for plain, downlevel, UPN, and auto modes;
 - optional PAM session open/close tied to the integrated peer lifecycle;
+- PAM credential establish/delete tied to the integrated authentication/session lifecycle;
 - partial `--config` support for implemented `frdpd.toml` fields (`listen`, `security=nla`, `tls_cert`, `tls_key`, `pam_service`), with CLI overrides;
 - `--pam-auth-test` smoke-test mode for the PAM helper path;
+- process-level core dump disabling before credential handling;
 - no-op input/update callbacks that keep protocol plumbing in place but do not provide a desktop.
 
-Standalone prototypes that compile syntactically but are not integrated into CMake, IPC, packaging, or
-the canonical daemon topology:
+CMake-built helper binaries/prototypes that are not yet wired into the canonical daemon runtime topology:
 
 - `server/frdp/frdp-authd`;
 - `server/frdp/frdp-sesmand`;
 - `server/frdp/frdp-session-agent`;
-- `server/frdp/frdp-krb-authd`;
+- `server/frdp/frdp-krb-authd` (build-only prototype, not installed by default);
 - `tools/frdpctl`.
 
 ## Phase 0. Discovery and lab
@@ -63,13 +62,16 @@ Exit criteria: a client connects to a stub server, the NLA negotiation path is u
 
 Deliverables:
 
-- [ ] `frdp-authd` prototype integrated into the build and IPC path (syntax-checkable IPC server exists in `server/frdp/frdp-authd`, but the integrated daemon does not call it);
+- [x] `frdp-authd` helper target and local IPC server build under `WITH_FRDPD`;
+- [ ] integrated `server/frdp/frdpd` daemon calls `frdp-authd` over IPC instead of direct in-process PAM;
 - [ ] PAM service `frdpd` installable example;
 - [x] password-backed CredSSP -> PAM flow in `server/frdp/frdpd`;
 - [x] PAM auth/account smoke-test CLI in `server/frdp/frdpd` (`--pam-auth-test`);
+- [x] PAM credential establish/delete lifecycle in the integrated `server/frdp/frdpd` path;
 - [ ] NSS/SSSD uid/gid/groups lookup integrated with the authenticated session path (standalone prototypes perform limited lookup/group setup only);
 - [ ] audit events with correlation id integrated with the authenticated session path (standalone `frdp-authd` emits local audit events only);
-- [ ] secret zeroization and no-core settings across all auth/session processes (partial zeroization in `server/frdp/frdpd`; `server/frdp/frdp-authd` disables core dumps and hard-fails on `mlock()` failure but is not integrated).
+- [x] fail-closed core dump/non-dumpable hardening in `server/frdp/frdpd`, `server/frdp/frdp-authd`, and `server/frdp/frdp-sesmand`;
+- [ ] locked secret buffers and brokerized credential handling across the integrated auth/session path (partial locked-buffer handling exists only in standalone `frdp-authd`, which is not integrated).
 
 Exit criteria: a domain user can authenticate through NLA/PAM; a denied user receives a clean failure; no desktop resources are allocated before authentication succeeds.
 
@@ -77,11 +79,13 @@ Exit criteria: a domain user can authenticate through NLA/PAM; a denied user rec
 
 Deliverables:
 
-- [ ] `frdp-sesmand` process integrated into the build and daemon topology (syntax-checkable source exists in `server/frdp/frdp-sesmand`);
+- [x] `frdp-sesmand` and `frdp-session-agent` helper targets build under `WITH_FRDPD`;
+- [ ] `frdp-sesmand` process integrated into the daemon topology (`frdpd` does not call it yet);
 - [ ] session registry integrated with authenticated RDP peers (in-memory demo registry exists only in `server/frdp/frdp-sesmand`);
 - [x] PAM session lifecycle in the integrated `server/frdp/frdpd` peer path;
+- [x] standalone development `frdp-sesmand --open-session <user>` path performs PAM account, credential, session, process-group, and cleanup handling behind an explicit opt-in guard;
 - [ ] logind/cgroup integration;
-- [ ] headless Xorg/Xvfb launch integrated with `frdpd` sessions (standalone `frdp-session-agent` launches Xvfb only when run through the standalone demo path);
+- [ ] headless Xorg/Xvfb launch integrated with `frdpd` sessions (standalone `frdp-session-agent` target launches Xvfb only when run through the explicit development helper path);
 - [ ] simple reconnect by user/session id;
 - [ ] cleanup on disconnect/logout across agent process groups and PAM sessions (process-group cleanup exists in `server/frdp/frdp-sesmand`; canonical `server/frdp/frdpd` only closes PAM state).
 
@@ -132,8 +136,10 @@ Exit criteria: the security baseline is accepted; no critical crashes are found 
 
 Deliverables:
 
-- [ ] deb/rpm packages (draft packaging files exist, but helper binaries/config/systemd installation are not build-verified);
-- [ ] admin CLI `frdpctl` (standalone stub exists, not integrated with CMake or session IPC);
+- [x] CMake install rules for FRDP runtime helper binaries and `frdpd.toml` verified with the `server` component in an isolated build;
+- [ ] deb/rpm packages (draft packaging files exist, RPM CMake flags are aligned with `WITH_FRDPD`, but actual package builds are not verified);
+- [x] admin CLI `frdpctl` stub builds and installs under `WITH_FRDPD`;
+- [ ] admin CLI `frdpctl` session IPC operations;
 - [x] configuration reference, example, and partial parser integration for implemented daemon fields (`10-configuration-reference.md`, `server/frdp/config/frdpd.toml`);
 - [x] runbooks for AD join, keytab rotation, and troubleshooting (`09-runbooks.md`);
 - [ ] dashboards and alert rules;

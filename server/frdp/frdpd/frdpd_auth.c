@@ -21,6 +21,7 @@ static void frdpd_auth_result_set(frdpdAuthResult* result, frdpdPamAuthStatus st
 	result->pam_status = pam_status;
 	result->pam_user = NULL;
 	result->pam_handle = NULL;
+	result->pam_credentials_established = FALSE;
 	result->pam_session_open = FALSE;
 }
 
@@ -61,6 +62,7 @@ BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
 	{
 		result->pam_user = pam_user;
 		result->pam_handle = request.pam_handle;
+		result->pam_credentials_established = request.pam_credentials_established;
 		result->pam_session_open = request.pam_session_open;
 		pam_user = NULL;
 		request.pam_handle = NULL;
