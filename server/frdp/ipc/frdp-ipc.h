@@ -11,8 +11,18 @@ typedef enum {
     FRDP_IPC_SESSION_REQUEST = 3,
     FRDP_IPC_SESSION_RESPONSE = 4,
     FRDP_IPC_AUTH_REQUEST_V2 = 5,
-    FRDP_IPC_SESSION_CLOSE_REQUEST = 6
+    FRDP_IPC_SESSION_CLOSE_REQUEST = 6,
+    FRDP_IPC_AGENT_INPUT = 7
 } frdpIpcMessageType;
+
+typedef enum {
+    FRDP_AGENT_INPUT_SYNC = 1,
+    FRDP_AGENT_INPUT_KEYBOARD = 2,
+    FRDP_AGENT_INPUT_UNICODE = 3,
+    FRDP_AGENT_INPUT_MOUSE = 4,
+    FRDP_AGENT_INPUT_REL_MOUSE = 5,
+    FRDP_AGENT_INPUT_EXT_MOUSE = 6
+} frdpAgentInputType;
 
 /* Common header prepended to each IPC message */
 typedef struct {
@@ -50,8 +60,18 @@ typedef struct {
     int success;
     char session_id[64];
     char display[32];
+    char agent_socket[108];
     char error[128];
 } frdpSessionResponse;
+
+typedef struct {
+    char correlation_id[64];
+    char session_id[64];
+    uint32_t event_type;
+    uint32_t flags;
+    int32_t param1;
+    int32_t param2;
+} frdpAgentInputEvent;
 
 /* Connect to a UNIX domain socket at socket_path and return the fd, or -1 on error */
 int frdp_ipc_connect(const char *socket_path);

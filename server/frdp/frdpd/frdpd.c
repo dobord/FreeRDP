@@ -115,8 +115,8 @@ static BOOL frdpd_copy_ipc_string(char* dst, size_t dst_size, const char* src)
 }
 
 static BOOL frdpd_session_ipc_request(const char* socket_path, frdpIpcMessageType type,
-                                      const frdpSessionRequest* request,
-                                      frdpSessionResponse* response)
+                                       const frdpSessionRequest* request,
+                                       frdpSessionResponse* response)
 {
 	int fd = -1;
 	BOOL ok = FALSE;
@@ -147,12 +147,55 @@ static BOOL frdpd_session_ipc_request(const char* socket_path, frdpIpcMessageTyp
 
 	response->session_id[sizeof(response->session_id) - 1] = '\0';
 	response->display[sizeof(response->display) - 1] = '\0';
+	response->agent_socket[sizeof(response->agent_socket) - 1] = '\0';
 	response->error[sizeof(response->error) - 1] = '\0';
 	ok = response->success ? TRUE : FALSE;
 
 fail:
 	if (fd >= 0)
 		(void)frdp_ipc_close(fd);
+	return ok;
+}
+
+static BOOL frdpd_send_agent_input(frdpdPeerContext* context, frdpAgentInputType type,
+                                   UINT32 flags, INT32 param1, INT32 param2)
+{
+	int fd = -1;
+	frdpIpcHeader header = { 0 };
+	frdpAgentInputEvent event = { 0 };
+	BOOL ok = FALSE;
+
+	if (!context || !context->managed_session_open || (context->agent_socket[0] == '\0'))
+		return TRUE;
+
+	(void)frdpd_copy_ipc_string(event.correlation_id, sizeof(event.correlation_id),
+	                          context->correlation_id);
+	(void)frdpd_copy_ipc_string(event.session_id, sizeof(event.session_id), context->session_id);
+	event.event_type = type;
+	event.flags = flags;
+	event.param1 = param1;
+	event.param2 = param2;
+
+	fd = frdp_ipc_connect(context->agent_socket);
+	if (fd < 0)
+		goto fail;
+
+	header.type = FRDP_IPC_AGENT_INPUT;
+	header.payload_len = sizeof(event);
+	if ((frdp_ipc_send(fd, &header, sizeof(header)) < 0) ||
+	    (frdp_ipc_send(fd, &event, sizeof(event)) < 0))
+		goto fail;
+	ok = TRUE;
+
+fail:
+	if (fd >= 0)
+		(void)frdp_ipc_close(fd);
+	if (!ok && !context->agent_input_warned)
+	{
+		WLog_WARN(TAG, "correlation_id=%s failed to forward input to managed session_id=%s",
+		          context->correlation_id, context->session_id);
+		context->agent_input_warned = TRUE;
+	}
 	return ok;
 }
 
@@ -273,7 +316,9 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 	                          response.session_id) ||
 	    !frdpd_copy_ipc_string(context->session_display, sizeof(context->session_display),
 	                          response.display) ||
-	    (context->session_id[0] == '\0'))
+	    !frdpd_copy_ipc_string(context->agent_socket, sizeof(context->agent_socket),
+	                          response.agent_socket) ||
+	    (context->session_id[0] == '\0') || (context->agent_socket[0] == '\0'))
 	{
 		if (response.session_id[0] != '\0')
 		{
@@ -298,15 +343,21 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 				context->managed_session_open = FALSE;
 				context->session_id[0] = '\0';
 				context->session_display[0] = '\0';
+				context->agent_socket[0] = '\0';
 			}
 		}
+		context->session_id[0] = '\0';
+		context->session_display[0] = '\0';
+		context->agent_socket[0] = '\0';
 		return FALSE;
 	}
 
 	context->managed_session_open = TRUE;
-	WLog_INFO(TAG, "correlation_id=%s opened managed session_id=%s display=%s user=%s",
+	context->agent_input_warned = FALSE;
+	WLog_INFO(TAG, "correlation_id=%s opened managed session_id=%s display=%s agent_socket=%s user=%s",
 	          context->correlation_id, context->session_id,
-	          context->session_display[0] ? context->session_display : "unknown", context->pam_user);
+	          context->session_display[0] ? context->session_display : "unknown", context->agent_socket,
+	          context->pam_user);
 	return TRUE;
 }
 
@@ -359,6 +410,7 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 		context->managed_session_open = FALSE;
 		context->session_id[0] = '\0';
 		context->session_display[0] = '\0';
+		context->agent_socket[0] = '\0';
 		return TRUE;
 	}
 
@@ -379,6 +431,7 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 	context->managed_session_open = FALSE;
 	context->session_id[0] = '\0';
 	context->session_display[0] = '\0';
+	context->agent_socket[0] = '\0';
 	return TRUE;
 }
 
@@ -542,52 +595,50 @@ static BOOL frdpd_peer_activate(freerdp_peer* client)
 
 static BOOL frdpd_peer_synchronize_event(rdpInput* input, UINT32 flags)
 {
-	WINPR_UNUSED(input);
-	WINPR_UNUSED(flags);
-	return TRUE;
+	if (!input || !input->context)
+		return FALSE;
+	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_SYNC,
+	                             flags, 0, 0);
 }
 
 static BOOL frdpd_peer_keyboard_event(rdpInput* input, UINT16 flags, UINT8 code)
 {
-	WINPR_UNUSED(input);
-	WINPR_UNUSED(flags);
-	WINPR_UNUSED(code);
-	return TRUE;
+	if (!input || !input->context)
+		return FALSE;
+	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_KEYBOARD,
+	                             flags, code, 0);
 }
 
 static BOOL frdpd_peer_unicode_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code)
 {
-	WINPR_UNUSED(input);
-	WINPR_UNUSED(flags);
-	WINPR_UNUSED(code);
-	return TRUE;
+	if (!input || !input->context)
+		return FALSE;
+	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_UNICODE,
+	                             flags, code, 0);
 }
 
 static BOOL frdpd_peer_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y)
 {
-	WINPR_UNUSED(input);
-	WINPR_UNUSED(flags);
-	WINPR_UNUSED(x);
-	WINPR_UNUSED(y);
-	return TRUE;
+	if (!input || !input->context)
+		return FALSE;
+	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_MOUSE,
+	                             flags, x, y);
 }
 
 static BOOL frdpd_peer_rel_mouse_event(rdpInput* input, UINT16 flags, INT16 xDelta, INT16 yDelta)
 {
-	WINPR_UNUSED(input);
-	WINPR_UNUSED(flags);
-	WINPR_UNUSED(xDelta);
-	WINPR_UNUSED(yDelta);
-	return TRUE;
+	if (!input || !input->context)
+		return FALSE;
+	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_REL_MOUSE,
+	                             flags, xDelta, yDelta);
 }
 
 static BOOL frdpd_peer_extended_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y)
 {
-	WINPR_UNUSED(input);
-	WINPR_UNUSED(flags);
-	WINPR_UNUSED(x);
-	WINPR_UNUSED(y);
-	return TRUE;
+	if (!input || !input->context)
+		return FALSE;
+	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_EXT_MOUSE,
+	                             flags, x, y);
 }
 
 static BOOL frdpd_peer_refresh_rect(rdpContext* context, BYTE count, const RECTANGLE_16* areas)

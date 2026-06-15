@@ -43,15 +43,16 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - per-peer correlation ids on integrated `frdpd` accept/auth/logon/activate/disconnect logs, propagated to optional `frdp-authd` auth/account IPC audit events;
 - session ids and correlation ids propagated through optional `frdp-sesmand` session IPC into `frdp-session-agent` startup/exit logs;
 - `frdp-session-agent` verifies the Xvfb backend `exec()` with a close-on-exec readiness pipe before reporting backend startup;
+- optional `frdp-sesmand` session IPC creates a root-owned per-session agent control socket and returns it to `frdpd` for keyboard/mouse event forwarding;
 - `--pam-auth-test` smoke-test mode for the PAM helper path;
 - process-level core dump disabling before credential handling;
-- no-op input/update callbacks that keep protocol plumbing in place but do not provide a desktop.
+- no-op update callbacks that keep protocol plumbing in place but do not provide framebuffer output yet.
 
 CMake-built helper binaries/prototypes that are not yet the default canonical runtime topology:
 
 - `server/frdp/frdp-authd` (optional auth/account IPC path);
 - `server/frdp/frdp-sesmand` (optional session IPC path);
-- `server/frdp/frdp-session-agent` (launched by optional `frdp-sesmand` session requests, but no RDP desktop data path yet);
+- `server/frdp/frdp-session-agent` (launched by optional `frdp-sesmand` session requests; control input IPC exists, but backend input injection and framebuffer output are not implemented yet);
 - `server/frdp/frdp-krb-authd` (build-only prototype, not installed by default);
 - `tools/frdpctl`.
 
@@ -110,7 +111,7 @@ Deliverables:
 
 - [ ] framebuffer/damage capture;
 - [ ] basic encoder scheduling;
-- [ ] keyboard/mouse input (integrated callbacks are currently no-op placeholders);
+- [ ] keyboard/mouse input (partial: integrated callbacks forward input over optional agent control IPC; backend injection is not implemented yet);
 - [ ] display resize;
 - [ ] text clipboard;
 - [ ] baseline audio output;

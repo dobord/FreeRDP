@@ -38,7 +38,9 @@ extern "C"
 		char correlation_id[64];
 		char session_id[64];
 		char session_display[32];
+		char agent_socket[108];
 		BOOL managed_session_open;
+		BOOL agent_input_warned;
 		void* pam_handle;
 		char* pam_user;
 		BOOL pam_credentials_established;
