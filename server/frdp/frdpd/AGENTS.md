@@ -1,4 +1,4 @@
-# AI Context Guide for `server/frdpd`
+# AI Context Guide for `server/frdp/frdpd`
 
 ## Product Direction
 

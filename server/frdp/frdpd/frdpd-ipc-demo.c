@@ -10,8 +10,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../../config/frdp-config.h"
-#include "../../ipc/frdp-ipc.h"
+#include "../config/frdp-config.h"
+#include "../ipc/frdp-ipc.h"
 
 int main(int argc, char **argv)
 {

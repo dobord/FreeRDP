@@ -16,7 +16,7 @@ This document describes how to enable Kerberos-first authentication for the Free
 
 ## GSSAPI acceptor path
 
-The `frdp-krb-authd` component (see `frdp-krb-authd/frdp-krb-authd.c`) demonstrates how to accept a GSSAPI security context. It:
+The `frdp-krb-authd` component (see `server/frdp/frdp-krb-authd/frdp-krb-authd.c`) demonstrates how to accept a GSSAPI security context. It:
 
 - Sets the keytab via the environment variable `KRB5_KTNAME`.
 - Calls `gss_accept_sec_context()` on an incoming token provided by the RDP CredSSP client.

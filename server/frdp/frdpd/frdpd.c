@@ -31,7 +31,7 @@
 #include <freerdp/crypto/certificate.h>
 #include <freerdp/crypto/privatekey.h>
 
-#include "../../config/frdp-config.h"
+#include "../config/frdp-config.h"
 #include "frdpd.h"
 #include "frdpd_auth.h"
 

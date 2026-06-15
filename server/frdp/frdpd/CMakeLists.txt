@@ -13,8 +13,8 @@ set(SRCS
     frdpd_auth.h
     frdpd_pam.c
     frdpd_pam.h
-    ../../config/frdp-config.c
-    ../../config/frdp-config.h)
+    ../config/frdp-config.c
+    ../config/frdp-config.h)
 
 addtargetwithresourcefile(${MODULE_NAME} TRUE "${FREERDP_VERSION}" SRCS)
 
@@ -26,4 +26,4 @@ target_link_libraries(${MODULE_NAME} PRIVATE freerdp-server freerdp winpr ${PAM_
 
 installwithrpath(TARGETS ${MODULE_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)
 
-set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "Server/frdpd")
+set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "Server/frdp/frdpd")

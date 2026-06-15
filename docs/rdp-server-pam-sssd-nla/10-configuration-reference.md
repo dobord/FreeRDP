@@ -1,6 +1,6 @@
 # 10. Configuration reference
 
-This document describes the configuration options available in `frdpd.toml` (see `config/frdpd.toml`).
+This document describes the configuration options available in `frdpd.toml` (see `server/frdp/config/frdpd.toml`).
 
 ## [server]
 

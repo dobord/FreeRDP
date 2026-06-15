@@ -17,7 +17,7 @@ These flags add `-fsanitize=address,undefined` and link against the sanitizer ru
 
 Fuzz key protocol parsers and RDP channel handlers using LibFuzzer:
 
-- Build fuzz targets for individual message parsers in `server/frdpd` and channel modules. Use `-fsanitize=fuzzer,address` to link against LibFuzzer.
+- Build fuzz targets for individual message parsers in `server/frdp/frdpd` and channel modules. Use `-fsanitize=fuzzer,address` to link against LibFuzzer.
 - Seed the corpus with captured protocol packets.
 - Run the fuzzers in CI to detect crashes.
 
