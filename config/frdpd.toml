@@ -1,0 +1,35 @@
+# Example configuration for frdpd
+[server]
+listen = "0.0.0.0:3389"
+security = "nla"
+tls_cert = "/etc/frdpd/tls.crt"
+tls_key = "/etc/frdpd/tls.key"
+max_connections = 200
+
+[auth]
+mode = "pam-sssd"
+pam_service = "frdpd"
+kerberos = "preferred"
+ntlm_fallback = false
+keytab = "/etc/frdpd/frdpd.keytab"
+accepted_spn = ["TERMSRV/rdp01.example.com", "TERMSRV/rdp01"]
+
+[session]
+backend = "xorg"
+default_desktop = "xfce"
+idle_timeout = "60m"
+absolute_timeout = "12h"
+reconnect = true
+
+[channels]
+default = "deny"
+clipboard_text = "allow"
+audio_output = "allow"
+drive = "deny"
+printer = "deny"
+smartcard = "deny"
+usb = "deny"
+
+[audit]
+structured = true
+correlation_id = true
