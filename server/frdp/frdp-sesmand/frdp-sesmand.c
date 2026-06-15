@@ -189,6 +189,8 @@ static int open_session(const char *user, const char *rhost, const char *correla
                         char *display_out, size_t display_out_size)
 {
     char geometry_str[32];
+    uuid_t new_id;
+    char new_session_id[64] = {0};
     int exec_pipe[2] = {-1, -1};
 
     if (session_count >= MAX_SESSIONS)
@@ -231,6 +233,8 @@ static int open_session(const char *user, const char *rhost, const char *correla
     int display = next_display++;
     char display_str[16];
     snprintf(display_str, sizeof display_str, ":%d", display);
+    uuid_generate(new_id);
+    uuid_unparse_lower(new_id, new_session_id);
     snprintf(geometry_str, sizeof(geometry_str), "%ux%ux%u",
              normalize_dimension(desktop_width, 1024),
              normalize_dimension(desktop_height, 768), normalize_color_depth(color_depth));
@@ -277,6 +281,11 @@ static int open_session(const char *user, const char *rhost, const char *correla
         setenv("DISPLAY", display_str, 1);
         setenv("FRDP_DISPLAY", display_str, 1);
         setenv("FRDP_GEOMETRY", geometry_str, 1);
+        setenv("FRDP_SESSION_ID", new_session_id, 1);
+        if (correlation_id && correlation_id[0])
+            setenv("FRDP_CORRELATION_ID", correlation_id, 1);
+        if (rhost && rhost[0])
+            setenv("FRDP_RHOST", rhost, 1);
         /* Set groups and UID/GID */
         if (initgroups(user, pwd->pw_gid) != 0) {
             child_exec_failed(exec_pipe[1]);
@@ -304,14 +313,14 @@ static int open_session(const char *user, const char *rhost, const char *correla
     session *s = &sessions[session_count++];
     strncpy(s->user, user, sizeof(s->user) - 1);
     s->user[sizeof(s->user) - 1] = '\0';
-    uuid_generate(s->id);
+    uuid_copy(s->id, new_id);
     s->agent_pid = pid;
     s->pgid = pid; /* child's pgid equals pid since setpgid called with 0 */
     s->start_time = time(NULL);
     s->pamh = pamh;
     s->credentials_established = credentials_established;
     s->display_number = display;
-    session_id_to_string(s, session_id, session_id_size);
+    snprintf(session_id, session_id_size, "%s", new_session_id);
     snprintf(display_out, display_out_size, "%s", display_str);
     syslog(LOG_INFO, "correlation_id=%s created session_id=%s user=%s display=%s geometry=%s",
            correlation_id && correlation_id[0] ? correlation_id : "unknown",

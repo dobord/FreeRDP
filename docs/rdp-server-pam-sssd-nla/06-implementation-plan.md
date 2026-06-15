@@ -39,6 +39,7 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - optional `session_socket` configuration and `--session-socket=<path>` CLI override for opening and closing `frdp-sesmand` sessions over IPC when PAM session opening is disabled;
 - shared IPC client operations use bounded socket send/receive timeouts and suppress `SIGPIPE` on disconnected peers;
 - per-peer correlation ids on integrated `frdpd` accept/auth/logon/activate/disconnect logs, propagated to optional `frdp-authd` auth/account IPC audit events;
+- session ids and correlation ids propagated through optional `frdp-sesmand` session IPC into `frdp-session-agent` startup/exit logs;
 - `--pam-auth-test` smoke-test mode for the PAM helper path;
 - process-level core dump disabling before credential handling;
 - no-op input/update callbacks that keep protocol plumbing in place but do not provide a desktop.
@@ -78,7 +79,7 @@ Deliverables:
 - [x] PAM auth/account smoke-test CLI in `server/frdp/frdpd` (`--pam-auth-test`);
 - [x] PAM credential establish/delete lifecycle in the integrated `server/frdp/frdpd` path;
 - [ ] NSS/SSSD uid/gid/groups lookup integrated with the authenticated session path (standalone prototypes perform limited lookup/group setup only);
-- [ ] audit events with correlation id integrated with the authenticated session path (partial: `frdpd` generates per-peer ids and optional auth/session IPC carries them to `frdp-authd` and `frdp-sesmand`; agents, channels, and structured audit config are not wired yet);
+- [ ] audit events with correlation id integrated with the authenticated session path (partial: `frdpd` generates per-peer ids and optional auth/session IPC carries them to `frdp-authd`, `frdp-sesmand`, and `frdp-session-agent`; channels and structured audit config are not wired yet);
 - [x] fail-closed core dump/non-dumpable hardening in `server/frdp/frdpd`, `server/frdp/frdp-authd`, and `server/frdp/frdp-sesmand`;
 - [ ] locked secret buffers and brokerized credential handling across the integrated auth/session path (partial locked-buffer handling exists only in standalone `frdp-authd`, which is not integrated).
 

@@ -5,8 +5,9 @@
  * launches the headless desktop backend (for example Xvfb or Wayland), sets
  * up graphics capture and input dispatch and enforces channel policy.  In this
  * minimal prototype only the display server launch is implemented.  The
- * display number and geometry are provided via environment variables from
- * the session manager: DISPLAY or FRDP_DISPLAY and FRDP_GEOMETRY.
+ * display number, geometry and audit identifiers are provided via environment
+ * variables from the session manager: DISPLAY or FRDP_DISPLAY, FRDP_GEOMETRY,
+ * FRDP_SESSION_ID and FRDP_CORRELATION_ID.
  */
 
 #include <stdio.h>
@@ -22,7 +23,15 @@ int main(int argc, char **argv)
     (void)argc;
     (void)argv;
     openlog("frdp-session-agent", LOG_PID, LOG_USER);
-    syslog(LOG_INFO, "session agent starting");
+
+    const char *correlation_id = getenv("FRDP_CORRELATION_ID");
+    if (!correlation_id) {
+        correlation_id = "unknown";
+    }
+    const char *session_id = getenv("FRDP_SESSION_ID");
+    if (!session_id) {
+        session_id = "unknown";
+    }
 
     /* Determine display and geometry from environment. */
     const char *display = getenv("DISPLAY");
@@ -37,9 +46,13 @@ int main(int argc, char **argv)
         geometry = "1024x768x24";
     }
 
+    syslog(LOG_INFO, "correlation_id=%s session_id=%s display=%s geometry=%s session agent starting",
+           correlation_id, session_id, display, geometry);
+
     pid_t pid = fork();
     if (pid < 0) {
-        syslog(LOG_ERR, "failed to fork for backend");
+        syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to fork for backend",
+               correlation_id, session_id);
         closelog();
         return 1;
     }
@@ -58,9 +71,11 @@ int main(int argc, char **argv)
     int status;
     waitpid(pid, &status, 0);
     if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-        syslog(LOG_ERR, "display server exited with status %d", WEXITSTATUS(status));
+        syslog(LOG_ERR, "correlation_id=%s session_id=%s display server exited with status %d",
+               correlation_id, session_id, WEXITSTATUS(status));
     }
-    syslog(LOG_INFO, "display server exited, terminating agent");
+    syslog(LOG_INFO, "correlation_id=%s session_id=%s display server exited, terminating agent",
+           correlation_id, session_id);
     closelog();
     return 0;
 }
