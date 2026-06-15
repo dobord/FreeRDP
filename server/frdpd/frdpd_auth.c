@@ -19,15 +19,16 @@ static void frdpd_auth_result_set(frdpdAuthResult* result, frdpdPamAuthStatus st
 
 	result->status = status;
 	result->pam_status = pam_status;
+	result->pam_user = NULL;
 }
 
 BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
-                                 const SEC_WINNT_AUTH_IDENTITY* identity,
-                                 frdpdAuthResult* result)
+                                 const SEC_WINNT_AUTH_IDENTITY* identity, frdpdAuthResult* result)
 {
 	char* user = NULL;
 	char* domain = NULL;
 	char* password = NULL;
+	char* pam_user = NULL;
 	BOOL ok = FALSE;
 	frdpdPamAuthRequest request = { 0 };
 
@@ -36,8 +37,10 @@ BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
 	if (!config || !identity || !config->pam_service)
 		return FALSE;
 
-	if (!sspi_CopyAuthIdentityFieldsA((const SEC_WINNT_AUTH_IDENTITY_INFO*)identity, &user,
-	                                  &domain, &password))
+	if (!sspi_CopyAuthIdentityFieldsA((const SEC_WINNT_AUTH_IDENTITY_INFO*)identity, &user, &domain,
+	                                  &password))
+		goto fail;
+	if (!frdpd_pam_build_user(user, domain, config->domain_mode, &pam_user))
 		goto fail;
 
 	request.service = config->pam_service;
@@ -45,15 +48,22 @@ BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
 	request.domain = domain;
 	request.password = password;
 	request.rhost = config->rhost;
+	request.domain_mode = config->domain_mode;
 	request.pam_status = 0;
 
 	const frdpdPamAuthStatus status = frdpd_pam_authenticate(&request);
 	frdpd_auth_result_set(result, status, request.pam_status);
 	ok = (status == FRDPD_PAM_AUTH_OK);
+	if (ok && result)
+	{
+		result->pam_user = pam_user;
+		pam_user = NULL;
+	}
 
 fail:
 	free(user);
 	free(domain);
+	free(pam_user);
 	frdpd_pam_clear_secret(password);
 	free(password);
 

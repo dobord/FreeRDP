@@ -48,10 +48,11 @@ Create a dedicated PAM service `/etc/pam.d/frdpd` and do not mix it with `login`
 - `pam_systemd.so` if logind integration is required;
 - correct behavior for expired passwords, locked accounts, and denied groups.
 
-The NLA password-backed flow is non-interactive. `frdpd` sets the password as `PAM_AUTHTOK` and rejects
-additional PAM password prompts because CredSSP/NLA is not a general-purpose prompt transport. The PAM
-service must therefore use modules/options that consume the existing authentication token, such as
-`use_first_pass` or an equivalent SSSD profile. MFA or extra prompt flows require a separate UX design.
+The NLA password-backed flow is non-interactive. `frdpd` sets the password as `PAM_AUTHTOK` and answers
+PAM password prompts with the CredSSP/NLA password because CredSSP/NLA is not a general-purpose prompt
+transport. The PAM service should use modules/options that consume the existing authentication token,
+such as `use_first_pass` or an equivalent SSSD profile. MFA or extra prompt flows require a separate UX
+design.
 
 Example non-interactive baseline:
 

@@ -24,16 +24,37 @@ static BOOL frdpd_string_is_empty(const char* value)
 	return !value || (value[0] == '\0');
 }
 
+typedef struct
+{
+	const char* password;
+} frdpdPamConvData;
+
+static char* frdpd_pam_strdup_len(const char* data, size_t length)
+{
+	char* out = NULL;
+
+	if (!data && (length > 0))
+		return NULL;
+
+	out = calloc(length + 1, 1);
+	if (!out)
+		return NULL;
+
+	if (length > 0)
+		memcpy(out, data, length);
+	return out;
+}
+
 void frdpd_pam_clear_secret(char* secret)
 {
 	if (secret)
 		SecureZeroMemory(secret, strlen(secret));
 }
 
-static int frdpd_pam_conv(int num_msg, const struct pam_message** msg,
-                          struct pam_response** resp, void* appdata_ptr)
+static int frdpd_pam_conv(int num_msg, const struct pam_message** msg, struct pam_response** resp,
+                          void* appdata_ptr)
 {
-	WINPR_UNUSED(appdata_ptr);
+	frdpdPamConvData* data = (frdpdPamConvData*)appdata_ptr;
 
 	if ((num_msg <= 0) || !msg || !resp)
 		return PAM_CONV_ERR;
@@ -44,11 +65,24 @@ static int frdpd_pam_conv(int num_msg, const struct pam_message** msg,
 
 	for (int x = 0; x < num_msg; x++)
 	{
+		if (!msg[x])
+			goto fail;
+
 		switch (msg[x]->msg_style)
 		{
 			case PAM_PROMPT_ECHO_OFF:
+				reply[x].resp =
+				    frdpd_pam_strdup_len(data && data->password ? data->password : "",
+				                         data && data->password ? strlen(data->password) : 0);
+				if (!reply[x].resp)
+					goto fail;
+				break;
+
 			case PAM_PROMPT_ECHO_ON:
-				goto fail;
+				reply[x].resp = frdpd_pam_strdup_len("", 0);
+				if (!reply[x].resp)
+					goto fail;
+				break;
 
 			case PAM_TEXT_INFO:
 			case PAM_ERROR_MSG:
@@ -63,11 +97,17 @@ static int frdpd_pam_conv(int num_msg, const struct pam_message** msg,
 	return PAM_SUCCESS;
 
 fail:
+	for (int x = 0; x < num_msg; x++)
+	{
+		frdpd_pam_clear_secret(reply[x].resp);
+		free(reply[x].resp);
+	}
 	free(reply);
 	return PAM_CONV_ERR;
 }
 
-BOOL frdpd_pam_build_user(const char* user, const char* domain, char** normalized_user)
+BOOL frdpd_pam_build_user(const char* user, const char* domain, frdpdDomainMode mode,
+                          char** normalized_user)
 {
 	if (!normalized_user)
 		return FALSE;
@@ -76,13 +116,19 @@ BOOL frdpd_pam_build_user(const char* user, const char* domain, char** normalize
 	if (frdpd_string_is_empty(user))
 		return FALSE;
 
-	if (strchr(user, '@') || strchr(user, '\\') || frdpd_string_is_empty(domain))
+	if (strchr(user, '@') || strchr(user, '\\') || frdpd_string_is_empty(domain) ||
+	    (mode == FRDPD_DOMAIN_PLAIN))
 	{
 		*normalized_user = _strdup(user);
 		return *normalized_user != NULL;
 	}
 
-	const int rc = winpr_asprintf(normalized_user, NULL, "%s\\%s", domain, user);
+	if (mode == FRDPD_DOMAIN_AUTO)
+		mode = strchr(domain, '.') ? FRDPD_DOMAIN_UPN : FRDPD_DOMAIN_DOWNLEVEL;
+
+	const int rc = (mode == FRDPD_DOMAIN_UPN)
+	                   ? winpr_asprintf(normalized_user, NULL, "%s@%s", user, domain)
+	                   : winpr_asprintf(normalized_user, NULL, "%s\\%s", domain, user);
 	return rc >= 0;
 }
 
@@ -94,14 +140,16 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 	if (request)
 		request->pam_status = PAM_SYSTEM_ERR;
 
-	if (!request || frdpd_string_is_empty(request->service) || frdpd_string_is_empty(request->user) ||
-	    !request->password)
+	if (!request || frdpd_string_is_empty(request->service) ||
+	    frdpd_string_is_empty(request->user) || !request->password)
 		return FRDPD_PAM_AUTH_ERROR;
 
-	if (!frdpd_pam_build_user(request->user, request->domain, &normalized_user))
+	if (!frdpd_pam_build_user(request->user, request->domain, request->domain_mode,
+	                          &normalized_user))
 		return FRDPD_PAM_AUTH_ERROR;
 
-	const struct pam_conv conv = { .conv = frdpd_pam_conv, .appdata_ptr = NULL };
+	frdpdPamConvData conv_data = { request->password };
+	const struct pam_conv conv = { .conv = frdpd_pam_conv, .appdata_ptr = &conv_data };
 
 	int pam_status = pam_start(request->service, normalized_user, &conv, &pamh);
 	if (pam_status == PAM_SUCCESS)

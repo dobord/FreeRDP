@@ -16,16 +16,17 @@ typedef struct
 {
 	const char* pam_service;
 	const char* rhost;
+	frdpdDomainMode domain_mode;
 } frdpdAuthConfig;
 
 typedef struct
 {
 	frdpdPamAuthStatus status;
 	int pam_status;
+	char* pam_user;
 } frdpdAuthResult;
 
 BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
-                                 const SEC_WINNT_AUTH_IDENTITY* identity,
-                                 frdpdAuthResult* result);
+                                 const SEC_WINNT_AUTH_IDENTITY* identity, frdpdAuthResult* result);
 
 #endif /* FREERDP_SERVER_FRDPD_AUTH_H */
