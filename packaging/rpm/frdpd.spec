@@ -15,9 +15,10 @@ Requires: pam, sssd
 
 %description
 frdpd provides an RDP server based on the FreeRDP library.  It supports
-Network Level Authentication (CredSSP) using PAM/SSSD and Kerberos-first
-authentication.  frdpd includes a listener daemon, an authentication broker,
-a session manager, per-user session agents, and administrative helper tools.
+Network Level Authentication (CredSSP) using PAM/SSSD.  frdpd includes a
+listener daemon, an authentication broker, a session manager, per-user session
+agents, and administrative helper tools.  Kerberos-first authentication remains
+a non-installed prototype in the current package.
 
 %prep
 %setup -q
@@ -41,6 +42,7 @@ a session manager, per-user session agents, and administrative helper tools.
 /usr/bin/frdpctl
 %dir %{_sysconfdir}/frdpd
 %config(noreplace) %{_sysconfdir}/frdpd/frdpd.toml
+%config(noreplace) %{_sysconfdir}/pam.d/frdpd
 
 %changelog
 * Mon Jun 15 2026 Example Maintainer <maintainer@example.com> - 0.1.0-1

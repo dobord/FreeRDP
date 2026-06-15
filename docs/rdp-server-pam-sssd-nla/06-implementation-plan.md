@@ -29,6 +29,7 @@ cc -fsyntax-only -Wall -Wextra server/frdp/config/frdp-config.c server/frdp/frdp
 Implemented in the integrated `server/frdp/frdpd` path:
 
 - CMake-gated `frdpd` target under `WITH_FRDPD`;
+- installable dedicated PAM service example `server/frdp/pam/frdpd`;
 - FreeRDP listener with one peer worker thread per accepted client;
 - TLS certificate/key loading, NLA enabled by default, and opt-in TLS fallback;
 - FreeRDP `Logon` callback bridged to password-backed PAM authentication/account checks;
@@ -76,7 +77,7 @@ Deliverables:
 - [x] `frdp-authd` helper target and local IPC server build under `WITH_FRDPD`;
 - [x] optional integrated `server/frdp/frdpd` authentication/account check through `frdp-authd` IPC via absolute `auth_socket` with `--no-pam-session` when the session path is delegated;
 - [ ] make `frdp-authd` the canonical/default auth path and remove in-process PAM auth from the peer worker;
-- [ ] PAM service `frdpd` installable example;
+- [x] PAM service `frdpd` installable example;
 - [x] password-backed CredSSP -> PAM flow in `server/frdp/frdpd`;
 - [x] PAM auth/account smoke-test CLI in `server/frdp/frdpd` (`--pam-auth-test`);
 - [x] PAM credential establish/delete lifecycle in the integrated `server/frdp/frdpd` path;

@@ -56,3 +56,4 @@ else()
 endif()
 
 install(FILES config/frdpd.toml DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/frdpd COMPONENT server)
+install(FILES pam/frdpd DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/pam.d COMPONENT server)
