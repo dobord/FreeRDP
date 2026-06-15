@@ -2,6 +2,11 @@
 # Experimental FreeRDP PAM/SSSD RDP server components
 
 find_package(PAM REQUIRED)
+find_package(X11 REQUIRED)
+
+if(NOT X11_XTest_FOUND)
+  message(FATAL_ERROR "XTest is required for frdp-session-agent input injection")
+endif()
 
 find_library(UUID_LIBRARY NAMES uuid)
 if(NOT UUID_LIBRARY)
@@ -32,6 +37,8 @@ installwithrpath(TARGETS frdp-sesmand DESTINATION ${CMAKE_INSTALL_BINDIR} COMPON
 set_property(TARGET frdp-sesmand PROPERTY FOLDER "Server/frdp")
 
 add_executable(frdp-session-agent frdp-session-agent/frdp-session-agent.c)
+target_include_directories(frdp-session-agent SYSTEM PRIVATE ${X11_INCLUDE_DIR} ${X11_XTest_INCLUDE_PATH})
+target_link_libraries(frdp-session-agent PRIVATE winpr ${X11_LIBRARIES} ${X11_XTest_LIB})
 installwithrpath(TARGETS frdp-session-agent DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)
 set_property(TARGET frdp-session-agent PROPERTY FOLDER "Server/frdp")
 

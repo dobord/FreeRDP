@@ -6,11 +6,11 @@
  * This component runs in the security context of an authenticated user.  It
  * launches the headless desktop backend (for example Xvfb or Wayland), sets
  * up graphics capture and input dispatch and enforces channel policy.  In this
- * minimal prototype launches the display server and receives validated input
- * metadata over a local control fd; backend input injection and framebuffer
- * capture are still TODO.  The display number, geometry and audit identifiers
- * are provided via environment variables from the session manager: DISPLAY or
- * FRDP_DISPLAY, FRDP_GEOMETRY, FRDP_SESSION_ID and FRDP_CORRELATION_ID.
+ * minimal prototype launches the display server and injects validated keyboard
+ * scancode and mouse input over a local control fd; framebuffer capture and
+ * Unicode/text input are still TODO.  The display number, geometry and audit
+ * identifiers are provided via environment variables from the session manager:
+ * DISPLAY or FRDP_DISPLAY, FRDP_GEOMETRY, FRDP_SESSION_ID and FRDP_CORRELATION_ID.
  */
 
 #include <stdio.h>
@@ -26,13 +26,188 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 
+#include <X11/Xlib.h>
+#include <X11/extensions/XTest.h>
+
+#include <freerdp/input.h>
+
+#include <winpr/input.h>
+
 #include "../ipc/frdp-ipc.h"
 
-static int parse_control_fd(void)
+#define FRDP_AGENT_READY_MARKER 'R'
+
+static Display *open_backend_display(const char *display_name, const char *correlation_id,
+                                     const char *session_id)
+{
+    Display *display = NULL;
+
+    for (int attempt = 0; attempt < 50; attempt++) {
+        display = XOpenDisplay(display_name);
+        if (display)
+            break;
+        usleep(100000);
+    }
+    if (!display) {
+        syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to open display %s",
+               correlation_id, session_id, display_name ? display_name : "unknown");
+        return NULL;
+    }
+
+    int event_base = 0;
+    int error_base = 0;
+    int major = 0;
+    int minor = 0;
+    if (!XTestQueryExtension(display, &event_base, &error_base, &major, &minor)) {
+        syslog(LOG_ERR, "correlation_id=%s session_id=%s display %s lacks XTest",
+               correlation_id, session_id, display_name ? display_name : "unknown");
+        XCloseDisplay(display);
+        return NULL;
+    }
+    return display;
+}
+
+static int inject_keyboard_event(Display *display, const frdpAgentInputEvent *event)
+{
+    DWORD scancode = (DWORD)(event->param1 & 0xFF);
+    DWORD vkcode = 0;
+    DWORD keycode = 0;
+
+    if (event->flags & KBD_FLAGS_EXTENDED)
+        scancode |= KBDEXT;
+
+    vkcode = GetVirtualKeyCodeFromVirtualScanCode(scancode, WINPR_KBD_TYPE_IBM_ENHANCED);
+    if (event->flags & KBD_FLAGS_EXTENDED)
+        vkcode |= KBDEXT;
+
+    keycode = GetKeycodeFromVirtualKeyCode(vkcode, WINPR_KEYCODE_TYPE_XKB);
+    if (keycode == 0)
+        return -1;
+
+    XTestFakeKeyEvent(display, keycode, (event->flags & KBD_FLAGS_RELEASE) ? False : True,
+                      CurrentTime);
+    return 0;
+}
+
+static void inject_button_event(Display *display, unsigned int button, Bool down)
+{
+    if (button)
+        XTestFakeButtonEvent(display, button, down, CurrentTime);
+}
+
+static int inject_mouse_event(Display *display, const frdpAgentInputEvent *event)
+{
+    const uint32_t flags = event->flags;
+    const int x = event->param1;
+    const int y = event->param2;
+    unsigned int button = 0;
+    Bool down = (flags & PTR_FLAGS_DOWN) ? True : False;
+
+    if (flags & PTR_FLAGS_WHEEL) {
+        button = (flags & PTR_FLAGS_WHEEL_NEGATIVE) ? 5 : 4;
+        XTestFakeButtonEvent(display, button, True, CurrentTime);
+        XTestFakeButtonEvent(display, button, False, CurrentTime);
+        return 0;
+    }
+    if (flags & PTR_FLAGS_HWHEEL) {
+        button = (flags & PTR_FLAGS_WHEEL_NEGATIVE) ? 7 : 6;
+        XTestFakeButtonEvent(display, button, True, CurrentTime);
+        XTestFakeButtonEvent(display, button, False, CurrentTime);
+        return 0;
+    }
+    if (flags & PTR_FLAGS_MOVE)
+        XTestFakeMotionEvent(display, 0, x, y, CurrentTime);
+
+    if (flags & PTR_FLAGS_BUTTON1)
+        button = 1;
+    else if (flags & PTR_FLAGS_BUTTON2)
+        button = 3;
+    else if (flags & PTR_FLAGS_BUTTON3)
+        button = 2;
+    inject_button_event(display, button, down);
+    return 0;
+}
+
+static int inject_rel_mouse_event(Display *display, const frdpAgentInputEvent *event)
+{
+    const uint32_t flags = event->flags;
+    unsigned int button = 0;
+    Bool down = (flags & PTR_FLAGS_DOWN) ? True : False;
+
+    if (flags & PTR_FLAGS_MOVE)
+        XTestFakeRelativeMotionEvent(display, event->param1, event->param2, CurrentTime);
+
+    if (flags & PTR_FLAGS_BUTTON1)
+        button = 1;
+    else if (flags & PTR_FLAGS_BUTTON2)
+        button = 3;
+    else if (flags & PTR_FLAGS_BUTTON3)
+        button = 2;
+    else if (flags & PTR_XFLAGS_BUTTON1)
+        button = 8;
+    else if (flags & PTR_XFLAGS_BUTTON2)
+        button = 9;
+    inject_button_event(display, button, down);
+    return 0;
+}
+
+static int inject_extended_mouse_event(Display *display, const frdpAgentInputEvent *event)
+{
+    const uint32_t flags = event->flags;
+    unsigned int button = 0;
+    Bool down = (flags & PTR_XFLAGS_DOWN) ? True : False;
+
+    XTestFakeMotionEvent(display, 0, event->param1, event->param2, CurrentTime);
+    if (flags & PTR_XFLAGS_BUTTON1)
+        button = 8;
+    else if (flags & PTR_XFLAGS_BUTTON2)
+        button = 9;
+    inject_button_event(display, button, down);
+    return 0;
+}
+
+static int inject_input_event(Display *display, const frdpAgentInputEvent *event)
+{
+    int rc = 0;
+
+    if (!display || !event)
+        return -1;
+    XLockDisplay(display);
+    XTestGrabControl(display, True);
+    switch (event->event_type) {
+        case FRDP_AGENT_INPUT_SYNC:
+            rc = 0;
+            break;
+        case FRDP_AGENT_INPUT_KEYBOARD:
+            rc = inject_keyboard_event(display, event);
+            break;
+        case FRDP_AGENT_INPUT_UNICODE:
+            rc = 0;
+            break;
+        case FRDP_AGENT_INPUT_MOUSE:
+            rc = inject_mouse_event(display, event);
+            break;
+        case FRDP_AGENT_INPUT_REL_MOUSE:
+            rc = inject_rel_mouse_event(display, event);
+            break;
+        case FRDP_AGENT_INPUT_EXT_MOUSE:
+            rc = inject_extended_mouse_event(display, event);
+            break;
+        default:
+            rc = -1;
+            break;
+    }
+    XTestGrabControl(display, False);
+    XFlush(display);
+    XUnlockDisplay(display);
+    return rc;
+}
+
+static int parse_env_fd(const char *name)
 {
     char *end = NULL;
     long value = -1;
-    const char *env = getenv("FRDP_AGENT_CONTROL_FD");
+    const char *env = getenv(name);
 
     if (!env || env[0] == '\0')
         return -1;
@@ -41,6 +216,28 @@ static int parse_control_fd(void)
     if (errno != 0 || !end || end[0] != '\0' || value < 0 || value > 1024 * 1024)
         return -1;
     return (int)value;
+}
+
+static int parse_control_fd(void)
+{
+    return parse_env_fd("FRDP_AGENT_CONTROL_FD");
+}
+
+static int parse_ready_fd(void)
+{
+    return parse_env_fd("FRDP_AGENT_READY_FD");
+}
+
+static int notify_agent_ready(int *fd)
+{
+    if (!fd || *fd < 0)
+        return 0;
+
+    const char marker = FRDP_AGENT_READY_MARKER;
+    const ssize_t rc = write(*fd, &marker, sizeof(marker));
+    close(*fd);
+    *fd = -1;
+    return (rc == (ssize_t)sizeof(marker)) ? 0 : -1;
 }
 
 static int set_cloexec(int fd)
@@ -95,7 +292,8 @@ static int recv_exact(int fd, void *buf, size_t len)
     return 0;
 }
 
-static int handle_control_client(int fd, const char *correlation_id, const char *session_id)
+static int handle_control_client(int fd, Display *display, const char *correlation_id,
+                                 const char *session_id)
 {
     frdpIpcHeader header;
     frdpAgentInputEvent event;
@@ -122,11 +320,11 @@ static int handle_control_client(int fd, const char *correlation_id, const char 
         return -1;
     }
 
-    /* Backend input injection is the next layer; do not log key or text payload. */
-    return 0;
+    return inject_input_event(display, &event);
 }
 
-static int wait_for_backend_exit(pid_t pid, int control_fd, const char *correlation_id,
+static int wait_for_backend_exit(pid_t pid, int control_fd, Display *display,
+                                 const char *correlation_id,
                                  const char *session_id)
 {
     int status = 0;
@@ -162,7 +360,7 @@ static int wait_for_backend_exit(pid_t pid, int control_fd, const char *correlat
         const int cfd = accept(control_fd, NULL, NULL);
         if (cfd < 0)
             continue;
-        if (handle_control_client(cfd, correlation_id, session_id) != 0) {
+        if (handle_control_client(cfd, display, correlation_id, session_id) != 0) {
             syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected agent control event",
                    correlation_id, session_id);
         }
@@ -220,6 +418,7 @@ int main(int argc, char **argv)
     (void)argc;
     (void)argv;
     openlog("frdp-session-agent", LOG_PID, LOG_USER);
+    XInitThreads();
 
     const char *correlation_id = getenv("FRDP_CORRELATION_ID");
     if (!correlation_id) {
@@ -229,10 +428,20 @@ int main(int argc, char **argv)
     if (!session_id) {
         session_id = "unknown";
     }
+    int ready_fd = parse_ready_fd();
+    if (ready_fd >= 0 && set_cloexec(ready_fd) != 0) {
+        syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to mark ready fd close-on-exec",
+               correlation_id, session_id);
+        close(ready_fd);
+        closelog();
+        return 1;
+    }
     int control_fd = parse_control_fd();
     if (control_fd >= 0 && set_cloexec(control_fd) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to mark control fd close-on-exec",
                correlation_id, session_id);
+        if (ready_fd >= 0)
+            close(ready_fd);
         closelog();
         return 1;
     }
@@ -257,6 +466,10 @@ int main(int argc, char **argv)
     if (pipe(exec_pipe) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to create backend exec pipe",
                correlation_id, session_id);
+        if (ready_fd >= 0)
+            close(ready_fd);
+        if (control_fd >= 0)
+            close(control_fd);
         closelog();
         return 1;
     }
@@ -265,6 +478,10 @@ int main(int argc, char **argv)
                correlation_id, session_id);
         close(exec_pipe[0]);
         close(exec_pipe[1]);
+        if (ready_fd >= 0)
+            close(ready_fd);
+        if (control_fd >= 0)
+            close(control_fd);
         closelog();
         return 1;
     }
@@ -275,6 +492,10 @@ int main(int argc, char **argv)
                correlation_id, session_id);
         close(exec_pipe[0]);
         close(exec_pipe[1]);
+        if (ready_fd >= 0)
+            close(ready_fd);
+        if (control_fd >= 0)
+            close(control_fd);
         closelog();
         return 1;
     }
@@ -282,6 +503,8 @@ int main(int argc, char **argv)
         close(exec_pipe[0]);
         if (control_fd >= 0)
             close(control_fd);
+        if (ready_fd >= 0)
+            close(ready_fd);
         /* Child: execute Xvfb.  Provide display and geometry. */
         execlp("Xvfb", "Xvfb", display, "-screen", "0", geometry, (char *)NULL);
         /* If exec fails, log to stderr and exit. */
@@ -294,6 +517,10 @@ int main(int argc, char **argv)
         close(exec_pipe[0]);
         syslog(LOG_ERR, "correlation_id=%s session_id=%s backend failed to start",
                correlation_id, session_id);
+        if (ready_fd >= 0)
+            close(ready_fd);
+        if (control_fd >= 0)
+            close(control_fd);
         closelog();
         return 1;
     }
@@ -302,12 +529,40 @@ int main(int argc, char **argv)
     syslog(LOG_INFO, "correlation_id=%s session_id=%s backend started", correlation_id,
            session_id);
 
+    Display *xdisplay = open_backend_display(display, correlation_id, session_id);
+    if (!xdisplay) {
+        kill(pid, SIGTERM);
+        usleep(200000);
+        kill(pid, SIGKILL);
+        waitpid(pid, NULL, 0);
+        if (ready_fd >= 0)
+            close(ready_fd);
+        if (control_fd >= 0)
+            close(control_fd);
+        closelog();
+        return 1;
+    }
+    if (notify_agent_ready(&ready_fd) != 0) {
+        syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to report agent readiness",
+               correlation_id, session_id);
+        XCloseDisplay(xdisplay);
+        kill(pid, SIGTERM);
+        usleep(200000);
+        kill(pid, SIGKILL);
+        waitpid(pid, NULL, 0);
+        if (control_fd >= 0)
+            close(control_fd);
+        closelog();
+        return 1;
+    }
+
     /* TODO: capture framebuffer updates and forward to the client via FreeRDP. */
-    /* TODO: inject validated input events into the display backend. */
+    /* TODO: add Unicode/text input injection with explicit layout handling. */
     /* TODO: process clipboard/audio channels. */
 
     /* Wait for the display server to exit. */
-    int status = wait_for_backend_exit(pid, control_fd, correlation_id, session_id);
+    int status = wait_for_backend_exit(pid, control_fd, xdisplay, correlation_id, session_id);
+    XCloseDisplay(xdisplay);
     if (control_fd >= 0)
         close(control_fd);
     if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {

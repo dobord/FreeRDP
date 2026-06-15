@@ -53,6 +53,7 @@ typedef struct {
 } session;
 
 #define MAX_SESSIONS 64
+#define FRDP_AGENT_READY_MARKER 'R'
 static session sessions[MAX_SESSIONS];
 static int session_count = 0;
 static int next_display = 100;
@@ -120,58 +121,49 @@ static void child_exec_failed(int fd)
     _exit(127);
 }
 
-static int wait_for_agent_exec(int fd, pid_t pid)
+static void terminate_agent_start_failure(pid_t pid, pid_t pgid)
+{
+    int status = 0;
+
+    if (pgid > 0) {
+        if (kill(-pgid, SIGTERM) != 0 && errno == ESRCH)
+            kill(pid, SIGTERM);
+        usleep(200000);
+        if (kill(-pgid, SIGKILL) != 0 && errno == ESRCH)
+            kill(pid, SIGKILL);
+    } else {
+        kill(pid, SIGTERM);
+        usleep(200000);
+        kill(pid, SIGKILL);
+    }
+    for (int x = 0; x < 20; x++) {
+        const pid_t rc = waitpid(pid, &status, WNOHANG);
+        if (rc == pid || rc < 0)
+            return;
+        usleep(100000);
+    }
+}
+
+static int wait_for_agent_ready(int fd, pid_t pid, pid_t pgid)
 {
     struct pollfd pfd;
     char marker = 0;
-    int status = 0;
 
     memset(&pfd, 0, sizeof(pfd));
     pfd.fd = fd;
     pfd.events = POLLIN | POLLHUP;
-    const int poll_status = poll(&pfd, 1, 10000);
+    const int poll_status = poll(&pfd, 1, 20000);
     if (poll_status <= 0) {
-        kill(pid, SIGKILL);
-        for (int x = 0; x < 20; x++) {
-            const pid_t rc = waitpid(pid, &status, WNOHANG);
-            if (rc == pid || rc < 0)
-                break;
-            usleep(100000);
-        }
+        terminate_agent_start_failure(pid, pgid);
         return -1;
     }
 
     const ssize_t rc = read(fd, &marker, sizeof(marker));
-    if (rc == 0)
+    if (rc == (ssize_t)sizeof(marker) && marker == FRDP_AGENT_READY_MARKER)
         return 0;
 
-    for (int x = 0; x < 20; x++) {
-        const pid_t wait_rc = waitpid(pid, &status, WNOHANG);
-        if (wait_rc == pid || wait_rc < 0)
-            break;
-        usleep(100000);
-    }
+    terminate_agent_start_failure(pid, pgid);
     return -1;
-}
-
-static int wait_for_agent_stable(pid_t pid, pid_t pgid)
-{
-    int status = 0;
-
-    for (int x = 0; x < 10; x++) {
-        const pid_t rc = waitpid(pid, &status, WNOHANG);
-        if (rc == pid || rc < 0) {
-            if (pgid > 0) {
-                kill(-pgid, SIGTERM);
-                usleep(200000);
-                kill(-pgid, SIGKILL);
-            }
-            return -1;
-        }
-        usleep(100000);
-    }
-
-    return 0;
 }
 
 static void close_child_fds_except(int keep_a, int keep_b)
@@ -260,6 +252,7 @@ static int open_session(const char *user, const char *rhost, const char *correla
     char new_session_id[64] = {0};
     char agent_socket_path[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
     char agent_fd_str[16] = {0};
+    char ready_fd_str[16] = {0};
     int exec_pipe[2] = {-1, -1};
     int agent_fd = -1;
 
@@ -341,16 +334,6 @@ static int open_session(const char *user, const char *rhost, const char *correla
         pam_end(pamh, PAM_SUCCESS);
         return -1;
     }
-    if (fcntl(exec_pipe[1], F_SETFD, FD_CLOEXEC) != 0) {
-        close(exec_pipe[0]);
-        close(exec_pipe[1]);
-        destroy_agent_socket(&agent_fd, agent_socket_path);
-        pam_close_session(pamh, 0);
-        pam_setcred(pamh, PAM_DELETE_CRED);
-        pam_end(pamh, PAM_SUCCESS);
-        return -1;
-    }
-
     pid_t pid = fork();
     if (pid < 0) {
         close(exec_pipe[0]);
@@ -372,6 +355,8 @@ static int open_session(const char *user, const char *rhost, const char *correla
         setenv("FRDP_DISPLAY", display_str, 1);
         setenv("FRDP_GEOMETRY", geometry_str, 1);
         setenv("FRDP_SESSION_ID", new_session_id, 1);
+        snprintf(ready_fd_str, sizeof(ready_fd_str), "%d", exec_pipe[1]);
+        setenv("FRDP_AGENT_READY_FD", ready_fd_str, 1);
         if (correlation_id && correlation_id[0])
             setenv("FRDP_CORRELATION_ID", correlation_id, 1);
         if (rhost && rhost[0])
@@ -399,7 +384,7 @@ static int open_session(const char *user, const char *rhost, const char *correla
         close(agent_fd);
         agent_fd = -1;
     }
-    if (wait_for_agent_exec(exec_pipe[0], pid) != 0) {
+    if (wait_for_agent_ready(exec_pipe[0], pid, pid) != 0) {
         close(exec_pipe[0]);
         destroy_agent_socket(&agent_fd, agent_socket_path);
         pam_close_session(pamh, 0);
@@ -408,13 +393,6 @@ static int open_session(const char *user, const char *rhost, const char *correla
         return -1;
     }
     close(exec_pipe[0]);
-    if (wait_for_agent_stable(pid, pid) != 0) {
-        destroy_agent_socket(&agent_fd, agent_socket_path);
-        pam_close_session(pamh, 0);
-        pam_setcred(pamh, PAM_DELETE_CRED);
-        pam_end(pamh, PAM_SUCCESS);
-        return -1;
-    }
 
     /* Parent: record session metadata. */
     session *s = &sessions[session_count++];

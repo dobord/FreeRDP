@@ -42,8 +42,8 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - shared IPC client operations use bounded socket send/receive timeouts and suppress `SIGPIPE` on disconnected peers;
 - per-peer correlation ids on integrated `frdpd` accept/auth/logon/activate/disconnect logs, propagated to optional `frdp-authd` auth/account IPC audit events;
 - session ids and correlation ids propagated through optional `frdp-sesmand` session IPC into `frdp-session-agent` startup/exit logs;
-- `frdp-session-agent` verifies the Xvfb backend `exec()` with a close-on-exec readiness pipe before reporting backend startup;
-- optional `frdp-sesmand` session IPC creates a root-owned per-session agent control socket and returns it to `frdpd` for keyboard/mouse event forwarding;
+- `frdp-session-agent` verifies Xvfb `exec()`, X display open, and XTest availability before reporting agent readiness to `frdp-sesmand`;
+- optional `frdp-sesmand` session IPC creates a root-owned per-session agent control socket and returns it to `frdpd` for keyboard/mouse event forwarding into the session agent;
 - `--pam-auth-test` smoke-test mode for the PAM helper path;
 - process-level core dump disabling before credential handling;
 - no-op update callbacks that keep protocol plumbing in place but do not provide framebuffer output yet.
@@ -52,7 +52,7 @@ CMake-built helper binaries/prototypes that are not yet the default canonical ru
 
 - `server/frdp/frdp-authd` (optional auth/account IPC path);
 - `server/frdp/frdp-sesmand` (optional session IPC path);
-- `server/frdp/frdp-session-agent` (launched by optional `frdp-sesmand` session requests; control input IPC exists, but backend input injection and framebuffer output are not implemented yet);
+- `server/frdp/frdp-session-agent` (launched by optional `frdp-sesmand` session requests; keyboard/mouse backend injection exists, but framebuffer output and Unicode/text input are not implemented yet);
 - `server/frdp/frdp-krb-authd` (build-only prototype, not installed by default);
 - `tools/frdpctl`.
 
@@ -99,7 +99,7 @@ Deliverables:
 - [x] PAM session lifecycle in the integrated `server/frdp/frdpd` peer path;
 - [x] standalone development `frdp-sesmand --open-session <user>` path performs PAM account, credential, session, process-group, and cleanup handling behind an explicit opt-in guard;
 - [ ] logind/cgroup integration;
-- [x] headless Xvfb launch integrated with optional `frdpd -> frdp-sesmand -> frdp-session-agent` session requests, including fail-closed backend `exec()` readiness checks;
+- [x] headless Xvfb launch integrated with optional `frdpd -> frdp-sesmand -> frdp-session-agent` session requests, including fail-closed backend `exec()`, X display, and XTest readiness checks;
 - [ ] simple reconnect by user/session id;
 - [ ] cleanup on disconnect across `frdp-sesmand` agent process groups and PAM sessions (partial: optional `session_socket` close requests use bounded IPC and async retry, but durable cleanup after prolonged `frdp-sesmand` outage is not implemented).
 
@@ -111,7 +111,7 @@ Deliverables:
 
 - [ ] framebuffer/damage capture;
 - [ ] basic encoder scheduling;
-- [ ] keyboard/mouse input (partial: integrated callbacks forward input over optional agent control IPC; backend injection is not implemented yet);
+- [x] keyboard/mouse input (partial: integrated callbacks forward input over optional agent control IPC and the agent injects scancode keyboard plus mouse events through XTest; Unicode/text input is not implemented yet);
 - [ ] display resize;
 - [ ] text clipboard;
 - [ ] baseline audio output;

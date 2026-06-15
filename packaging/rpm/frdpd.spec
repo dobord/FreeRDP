@@ -8,10 +8,10 @@ Source0: %{name}-%{version}.tar.gz
 
 # Build requirements
 BuildRequires: cmake, gcc, pam-devel, krb5-devel, openssl-devel, systemd-devel
-BuildRequires: libX11-devel, libXv-devel, sssd-client, libuuid-devel, systemd-rpm-macros
+BuildRequires: libX11-devel, libXv-devel, libXtst-devel, sssd-client, libuuid-devel, systemd-rpm-macros
 
 # Runtime dependencies
-Requires: pam, sssd
+Requires: pam, sssd, xorg-x11-server-Xvfb
 %{?systemd_requires}
 
 %description
