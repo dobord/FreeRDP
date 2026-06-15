@@ -63,6 +63,10 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 	if (!context)
 		return;
 
+	(void)frdpd_pam_close_session(context->pam_handle, context->pam_user,
+	                              context->pam_session_open);
+	context->pam_handle = NULL;
+	context->pam_session_open = FALSE;
 	free(context->pam_user);
 	context->pam_user = NULL;
 }
@@ -116,14 +120,22 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 		.pam_service = config->pam_service,
 		.rhost = (client->hostname[0] != '\0') ? client->hostname : NULL,
 		.domain_mode = config->domain_mode,
+		.open_pam_session = config->open_pam_session,
 	};
 
 	const BOOL ok = frdpd_authenticate_identity(&auth, identity, &result);
+	(void)frdpd_pam_close_session(context->pam_handle, context->pam_user,
+	                              context->pam_session_open);
+	context->pam_handle = NULL;
+	context->pam_session_open = FALSE;
 	context->auth_status = result.status;
 	context->pam_status = result.pam_status;
 	free(context->pam_user);
 	context->pam_user = result.pam_user;
+	context->pam_handle = result.pam_handle;
+	context->pam_session_open = result.pam_session_open;
 	result.pam_user = NULL;
+	result.pam_handle = NULL;
 
 	if (!ok)
 	{
@@ -467,6 +479,7 @@ static void frdpd_print_usage(const char* app)
 	(void)fprintf(stderr, "  --domain-mode=plain|downlevel|upn|auto\n");
 	(void)fprintf(stderr,
 	              "  --allow-tls-fallback          Also advertise TLS; NLA remains preferred\n");
+	(void)fprintf(stderr, "  --no-pam-session             Run PAM auth/account only\n");
 }
 
 static BOOL frdpd_parse_port(const char* value, UINT16* port)
@@ -553,6 +566,8 @@ static BOOL frdpd_parse_args(int argc, char* argv[], frdpdOptions* options)
 		}
 		else if (strcmp(arg, "--allow-tls-fallback") == 0)
 			options->server.allow_tls_fallback = TRUE;
+		else if (strcmp(arg, "--no-pam-session") == 0)
+			options->server.open_pam_session = FALSE;
 		else if ((strcmp(arg, "--help") == 0) || (strcmp(arg, "-h") == 0))
 			options->show_help = TRUE;
 		else
@@ -658,6 +673,7 @@ int main(int argc, char* argv[])
 	options.server.key_path = "server.key";
 	options.server.pam_service = "frdpd";
 	options.server.allow_tls_fallback = FALSE;
+	options.server.open_pam_session = TRUE;
 	options.server.domain_mode = FRDPD_DOMAIN_PLAIN;
 
 	if (!frdpd_parse_args(argc, argv, &options))

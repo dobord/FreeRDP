@@ -67,6 +67,10 @@ session   required   pam_sss.so
 password  sufficient pam_sss.so use_authtok
 ```
 
+For early integration testing, `frdpd --no-pam-session` keeps the PAM flow to authentication and account
+checks only. Production session startup should keep PAM session handling enabled so session modules can
+apply limits, logind integration, and SSSD session policy.
+
 ## SSSD operations
 
 Baseline checks:

@@ -138,7 +138,11 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 	char* normalized_user = NULL;
 
 	if (request)
+	{
 		request->pam_status = PAM_SYSTEM_ERR;
+		request->pam_handle = NULL;
+		request->pam_session_open = FALSE;
+	}
 
 	if (!request || frdpd_string_is_empty(request->service) ||
 	    frdpd_string_is_empty(request->user) || !request->password)
@@ -157,6 +161,10 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 		if (!frdpd_string_is_empty(request->rhost))
 			pam_status = pam_set_item(pamh, PAM_RHOST, request->rhost);
 	}
+	if (pam_status == PAM_SUCCESS)
+		pam_status = pam_set_item(pamh, PAM_TTY, "rdp");
+	if (pam_status == PAM_SUCCESS)
+		pam_status = pam_set_item(pamh, PAM_RUSER, normalized_user);
 
 	if (pam_status == PAM_SUCCESS)
 		pam_status = pam_set_item(pamh, PAM_AUTHTOK, request->password);
@@ -176,6 +184,20 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 		status = FRDPD_PAM_AUTH_DENIED;
 	}
 
+	if ((status == FRDPD_PAM_AUTH_OK) && request->open_session)
+	{
+		pam_status = pam_open_session(pamh, 0);
+		if (pam_status == PAM_SUCCESS)
+		{
+			(void)pam_set_item(pamh, PAM_AUTHTOK, "");
+			request->pam_handle = pamh;
+			request->pam_session_open = TRUE;
+			pamh = NULL;
+		}
+		else
+			status = FRDPD_PAM_AUTH_ERROR;
+	}
+
 	if (pamh)
 	{
 		(void)pam_set_item(pamh, PAM_AUTHTOK, "");
@@ -189,6 +211,22 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 
 	request->pam_status = pam_status;
 	free(normalized_user);
+	return status;
+}
+
+int frdpd_pam_close_session(void* pam_handle, const char* pam_user, BOOL pam_session_open)
+{
+	pam_handle_t* pamh = (pam_handle_t*)pam_handle;
+	int status = PAM_SUCCESS;
+
+	WINPR_UNUSED(pam_user);
+	if (!pamh)
+		return PAM_SUCCESS;
+
+	(void)pam_set_item(pamh, PAM_AUTHTOK, "");
+	if (pam_session_open)
+		status = pam_close_session(pamh, 0);
+	(void)pam_end(pamh, status);
 	return status;
 }
 

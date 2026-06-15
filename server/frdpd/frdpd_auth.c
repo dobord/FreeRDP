@@ -20,6 +20,8 @@ static void frdpd_auth_result_set(frdpdAuthResult* result, frdpdPamAuthStatus st
 	result->status = status;
 	result->pam_status = pam_status;
 	result->pam_user = NULL;
+	result->pam_handle = NULL;
+	result->pam_session_open = FALSE;
 }
 
 BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
@@ -49,6 +51,7 @@ BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
 	request.password = password;
 	request.rhost = config->rhost;
 	request.domain_mode = config->domain_mode;
+	request.open_session = config->open_pam_session;
 	request.pam_status = 0;
 
 	const frdpdPamAuthStatus status = frdpd_pam_authenticate(&request);
@@ -57,7 +60,10 @@ BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
 	if (ok && result)
 	{
 		result->pam_user = pam_user;
+		result->pam_handle = request.pam_handle;
+		result->pam_session_open = request.pam_session_open;
 		pam_user = NULL;
+		request.pam_handle = NULL;
 	}
 
 fail:

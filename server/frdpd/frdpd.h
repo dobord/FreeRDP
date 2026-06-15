@@ -26,13 +26,16 @@ extern "C"
 		const char* pam_service;
 		UINT16 port;
 		BOOL allow_tls_fallback;
+		BOOL open_pam_session;
 		frdpdDomainMode domain_mode;
 	} frdpdServerConfig;
 
 	typedef struct
 	{
 		rdpContext _p;
+		void* pam_handle;
 		char* pam_user;
+		BOOL pam_session_open;
 		frdpdPamAuthStatus auth_status;
 		int pam_status;
 	} frdpdPeerContext;

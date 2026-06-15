@@ -17,6 +17,7 @@ typedef struct
 	const char* pam_service;
 	const char* rhost;
 	frdpdDomainMode domain_mode;
+	BOOL open_pam_session;
 } frdpdAuthConfig;
 
 typedef struct
@@ -24,6 +25,8 @@ typedef struct
 	frdpdPamAuthStatus status;
 	int pam_status;
 	char* pam_user;
+	void* pam_handle;
+	BOOL pam_session_open;
 } frdpdAuthResult;
 
 BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,

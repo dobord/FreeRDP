@@ -34,6 +34,9 @@ typedef struct
 	const char* password;
 	const char* rhost;
 	frdpdDomainMode domain_mode;
+	BOOL open_session;
+	void* pam_handle;
+	BOOL pam_session_open;
 	int pam_status;
 } frdpdPamAuthRequest;
 
@@ -41,6 +44,7 @@ BOOL frdpd_pam_build_user(const char* user, const char* domain, frdpdDomainMode 
                           char** normalized_user);
 void frdpd_pam_clear_secret(char* secret);
 frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request);
+int frdpd_pam_close_session(void* pam_handle, const char* pam_user, BOOL pam_session_open);
 const char* frdpd_pam_auth_status_string(frdpdPamAuthStatus status);
 
 #endif /* FREERDP_SERVER_FRDPD_PAM_H */
