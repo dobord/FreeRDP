@@ -2,13 +2,14 @@ Source: frdpd
 Section: net
 Priority: optional
 Maintainer: Example Maintainer <maintainer@example.com>
-Build-Depends: debhelper (>= 13), cmake, make, gcc, libpam-dev, libgssapi-krb5-dev, libssl-dev
+Build-Depends: debhelper (>= 13), cmake, make, gcc, libpam-dev, libgssapi-krb5-dev, libssl-dev, uuid-dev
 Standards-Version: 4.6.0
 Homepage: https://example.com/frdpd
 
 Package: frdpd
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, pam, sssd
+Depends: ${shlibs:Depends}, ${misc:Depends}, libpam0g, sssd
 Description: FreeRDP-based RDP server with PAM/SSSD/NLA
  This package provides the frdpd daemon, authentication helpers and session manager.
- It supports NLA (CredSSP), Kerberos-first authentication and session management.
+ It supports password-backed NLA (CredSSP) through PAM/SSSD and prototype session management.
+ Kerberos-first authentication is not installed as a production runtime path yet.

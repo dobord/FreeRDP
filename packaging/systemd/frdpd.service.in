@@ -3,7 +3,8 @@ Description=FreeRDP PAM/SSSD/NLA Server
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/frdpd --config /etc/frdpd/frdpd.toml
+EnvironmentFile=-@CMAKE_INSTALL_FULL_SYSCONFDIR@/frdpd/frdpd.env
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/frdpd --config @CMAKE_INSTALL_FULL_SYSCONFDIR@/frdpd/frdpd.toml $FRDPD_ARGS
 User=root
 Group=root
 PrivateTmp=true
@@ -12,6 +13,9 @@ ProtectHome=true
 NoNewPrivileges=true
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_BIND_SERVICE
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
 LimitNOFILE=1024
 TimeoutStopSec=30s
 

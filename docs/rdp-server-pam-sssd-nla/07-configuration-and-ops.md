@@ -13,11 +13,15 @@ tls_key = "/etc/frdpd/tls.key"
 [auth]
 mode = "pam-sssd"
 pam_service = "frdpd"
+# auth_socket = "/run/frdp-authd/authd.sock"
 # Kerberos-first fields are intentionally omitted until the daemon enforces them.
 # Do not configure kerberos, ntlm_fallback, keytab, or accepted_spn in the current parser.
 
-# Session, channel, and audit sections are omitted until the daemon enforces them.
-# The current parser rejects [session], [channels], and [audit] instead of silently ignoring policy.
+# [session]
+# session_socket = "/run/frdp-sesmand/sesmand.sock"
+
+# Channel and audit sections are omitted until the daemon enforces them.
+# The current parser rejects [channels] and [audit] instead of silently ignoring policy.
 ```
 
 ## PAM
@@ -50,8 +54,10 @@ password  sufficient pam_sss.so use_authtok
 ```
 
 For early integration testing, `frdpd --no-pam-session` keeps the PAM flow to authentication and account
-checks only. Production session startup should keep PAM session handling enabled so session modules can
-apply limits, logind integration, and SSSD session policy.
+checks only. Use this mode when the optional `frdp-authd` and `frdp-sesmand` IPC paths own authentication
+and PAM sessions; do not use it for a production desktop path until the helpers are the canonical/default
+owners. The packaged helper units listen on `/run/frdp-authd/authd.sock` and
+`/run/frdp-sesmand/sesmand.sock`.
 
 ## SSSD operations
 
@@ -85,12 +91,17 @@ Common problems:
 
 ## systemd units
 
-Minimum required units:
+Installed unit examples:
 
-- `frdpd.service` or `frdpd.socket` + `frdpd.service`;
+- `frdpd.service`;
 - `frdp-authd.service`;
 - `frdp-sesmand.service`;
 - per-user transient units for `frdp-session-agent`.
+
+The helper units are installed but not required by the listener unit while helper IPC remains optional.
+Enable/order them with `frdpd.service` when `auth_socket` and `session_socket` are configured, and set
+`FRDPD_ARGS=--no-pam-session` in `/etc/frdpd/frdpd.env`. The helper topology is therefore installable but
+not the canonical/default runtime path yet.
 
 Hardening:
 
@@ -106,6 +117,9 @@ MemoryDenyWriteExecute=true
 ```
 
 For `sesmand`, restrictions must account for the need to create user sessions, cgroups, and runtime directories.
+
+SELinux and AppArmor draft profiles install as inactive examples under `/usr/share/frdpd/security`. They are
+not loaded automatically and must be reviewed, adapted, and validated for the target distribution before use.
 
 ## Logging and audit
 

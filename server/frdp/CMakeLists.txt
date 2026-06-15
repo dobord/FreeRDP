@@ -55,5 +55,29 @@ else()
   message(WARNING "GSSAPI library not found; frdp-krb-authd target will not be built")
 endif()
 
+set(FRDP_SYSTEMD_SYSTEM_UNIT_DIR "lib/systemd/system" CACHE PATH "systemd system unit install directory")
+set(FRDP_SECURITY_POLICY_DIR "${CMAKE_INSTALL_DATADIR}/frdpd/security" CACHE PATH "FRDP security policy example install directory")
+set(FRDP_SYSTEMD_UNITS
+    frdpd.service
+    frdp-authd.service
+    frdp-sesmand.service)
+set(FRDP_SYSTEMD_UNIT_FILES)
+foreach(FRDP_SYSTEMD_UNIT IN LISTS FRDP_SYSTEMD_UNITS)
+  configure_file(${CMAKE_SOURCE_DIR}/packaging/systemd/${FRDP_SYSTEMD_UNIT}.in
+                 ${CMAKE_CURRENT_BINARY_DIR}/${FRDP_SYSTEMD_UNIT}
+                 @ONLY)
+  list(APPEND FRDP_SYSTEMD_UNIT_FILES ${CMAKE_CURRENT_BINARY_DIR}/${FRDP_SYSTEMD_UNIT})
+endforeach()
+
 install(FILES config/frdpd.toml DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/frdpd COMPONENT server)
+install(FILES config/frdpd.env DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/frdpd COMPONENT server)
 install(FILES pam/frdpd DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/pam.d COMPONENT server)
+install(FILES ${FRDP_SYSTEMD_UNIT_FILES}
+        DESTINATION ${FRDP_SYSTEMD_SYSTEM_UNIT_DIR}
+        COMPONENT server)
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/selinux/frdpd.te
+        DESTINATION ${FRDP_SECURITY_POLICY_DIR}/selinux
+        COMPONENT server)
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/apparmor/frdpd
+        DESTINATION ${FRDP_SECURITY_POLICY_DIR}/apparmor
+        COMPONENT server)

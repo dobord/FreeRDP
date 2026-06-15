@@ -9,12 +9,12 @@ tls_key = "/etc/frdpd/tls.key"
 [auth]
 mode = "pam-sssd"
 pam_service = "frdpd"
-# auth_socket = "/run/frdpd/authd.sock"
+# auth_socket = "/run/frdp-authd/authd.sock"
 # Kerberos-first fields are intentionally omitted until the daemon enforces them.
 # Do not configure kerberos, ntlm_fallback, keytab, or accepted_spn in the current parser.
 
 # [session]
-# session_socket = "/run/frdpd/sesmand.sock"
+# session_socket = "/run/frdp-sesmand/sesmand.sock"
 
 # Channel and audit sections are omitted until the daemon enforces them.
 # The current parser rejects [channels] and [audit] instead of silently ignoring policy.

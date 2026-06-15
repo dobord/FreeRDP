@@ -139,8 +139,8 @@ Deliverables:
 - [ ] fuzzing harnesses for channel parsers and selected RDP inputs;
 - [ ] protocol regression suite;
 - [ ] load testing harness;
-- [ ] SELinux/AppArmor profiles (draft files exist under `packaging/selinux` and `packaging/apparmor`, not validated);
-- [ ] systemd hardening (draft `packaging/systemd/frdpd.service` exists, not installed or validated as part of packages);
+- [ ] SELinux/AppArmor profiles (draft examples install under `/usr/share/frdpd/security`, but are not validated or activated);
+- [ ] systemd hardening (listener/auth/session unit examples install, but package builds and production hardening validation remain open);
 - [ ] package signing and reproducible-build notes.
 
 Exit criteria: the security baseline is accepted; no critical crashes are found during the fuzz/load-test window; packages install cleanly on target operating systems.
@@ -149,7 +149,7 @@ Exit criteria: the security baseline is accepted; no critical crashes are found 
 
 Deliverables:
 
-- [x] CMake install rules for FRDP runtime helper binaries and `frdpd.toml` verified with the `server` component in an isolated build;
+- [x] CMake install rules for FRDP runtime helper binaries, `frdpd.toml`, PAM service, systemd unit examples, and inactive MAC policy examples verified with the `server` component in an isolated build;
 - [ ] deb/rpm packages (draft packaging files exist, RPM CMake flags are aligned with `WITH_FRDPD`, but actual package builds are not verified);
 - [x] admin CLI `frdpctl` stub builds and installs under `WITH_FRDPD`;
 - [ ] admin CLI `frdpctl` session IPC operations;

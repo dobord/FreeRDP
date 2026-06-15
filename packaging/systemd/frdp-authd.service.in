@@ -1,0 +1,23 @@
+[Unit]
+Description=FreeRDP RDP Server Authentication Broker
+After=network.target
+
+[Service]
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/frdp-authd --pam-service frdpd --socket /run/frdp-authd/authd.sock
+User=root
+Group=root
+RuntimeDirectory=frdp-authd
+RuntimeDirectoryMode=0755
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/frdp-authd
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+LimitNOFILE=1024
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target
