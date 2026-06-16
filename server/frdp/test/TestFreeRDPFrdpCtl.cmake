@@ -1,0 +1,53 @@
+if(NOT DEFINED FRDPCTL_BINARY)
+  message(FATAL_ERROR "FRDPCTL_BINARY is not set")
+endif()
+
+execute_process(
+  COMMAND "${FRDPCTL_BINARY}" reload
+  RESULT_VARIABLE reload_result
+  OUTPUT_VARIABLE reload_stdout
+  ERROR_VARIABLE reload_stderr)
+
+if(NOT reload_result EQUAL 2)
+  message(FATAL_ERROR "frdpctl reload returned ${reload_result}, expected 2")
+endif()
+if(NOT reload_stdout STREQUAL "")
+  message(FATAL_ERROR "frdpctl reload wrote unexpected stdout: ${reload_stdout}")
+endif()
+if(NOT reload_stderr STREQUAL "reload is not implemented\n")
+  message(FATAL_ERROR "frdpctl reload stderr did not report not implemented: ${reload_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${FRDPCTL_BINARY}" status --socket
+  RESULT_VARIABLE status_result
+  OUTPUT_VARIABLE status_stdout
+  ERROR_VARIABLE status_stderr)
+
+if(NOT status_result EQUAL 1)
+  message(FATAL_ERROR "frdpctl status --socket returned ${status_result}, expected 1")
+endif()
+if(NOT status_stdout STREQUAL "")
+  message(FATAL_ERROR "frdpctl status --socket wrote unexpected stdout: ${status_stdout}")
+endif()
+set(expected_status_stderr "Usage: ${FRDPCTL_BINARY} status [--socket <path>]\n")
+if(NOT status_stderr STREQUAL expected_status_stderr)
+  message(FATAL_ERROR "frdpctl status --socket stderr did not report usage: ${status_stderr}")
+endif()
+
+execute_process(
+  COMMAND "${FRDPCTL_BINARY}" kill-session
+  RESULT_VARIABLE kill_result
+  OUTPUT_VARIABLE kill_stdout
+  ERROR_VARIABLE kill_stderr)
+
+if(NOT kill_result EQUAL 1)
+  message(FATAL_ERROR "frdpctl kill-session returned ${kill_result}, expected 1")
+endif()
+if(NOT kill_stdout STREQUAL "")
+  message(FATAL_ERROR "frdpctl kill-session wrote unexpected stdout: ${kill_stdout}")
+endif()
+set(expected_kill_stderr "Usage: ${FRDPCTL_BINARY} kill-session <id> [--socket <path>]\n")
+if(NOT kill_stderr STREQUAL expected_kill_stderr)
+  message(FATAL_ERROR "frdpctl kill-session stderr did not report usage: ${kill_stderr}")
+endif()
