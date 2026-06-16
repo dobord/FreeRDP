@@ -31,6 +31,7 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <fcntl.h>
 
 /* IPC definitions */
 #include "../ipc/frdp-ipc.h"
@@ -390,6 +391,35 @@ static int pam_service_is_valid(const char *service)
     return 1;
 }
 
+static int set_cloexec(int fd)
+{
+    const int flags = fcntl(fd, F_GETFD);
+
+    if (flags < 0)
+        return -1;
+    return fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+}
+
+static int create_cloexec_unix_socket(void)
+{
+    int fd = -1;
+
+#ifdef SOCK_CLOEXEC
+    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if ((fd == -1) && (errno == EINVAL || errno == EPROTONOSUPPORT))
+#endif
+        fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0)
+        return -1;
+    if (set_cloexec(fd) != 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    return fd;
+}
+
 static int run_ipc_server(const char *socket_path, const char *pam_service)
 {
     mode_t old_umask;
@@ -414,7 +444,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
         return -1;
     }
 
-    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    fd = create_cloexec_unix_socket();
     if (fd < 0) {
         perror("socket");
         return -1;
