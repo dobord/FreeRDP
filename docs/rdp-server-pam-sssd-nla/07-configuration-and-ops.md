@@ -22,12 +22,16 @@ pam_service = "frdpd"
 # session_socket = "/run/frdp-sesmand/sesmand.sock"
 
 # [channels]
-# Deny all client-requested static virtual channels by default.
-# static_allow = "" accepts no channels. Example allow-list syntax:
+# Channel filtering defaults to blocklist mode with empty lists.
+# static_mode = "blocklist"
+# static_deny = ""
+# dynamic_mode = "blocklist"
+# dynamic_deny = ""
+# Dynamic channel lists are preparatory until dynamic-channel open enforcement is implemented.
+# Use allowlist mode to permit only exact channel names:
+# static_mode = "allowlist"
 # static_allow = "cliprdr,rdpsnd"
 # Allowing a name only permits negotiation; clipboard/audio handlers are not implemented yet.
-# dynamic_allow = "" prepares exact dynamic virtual-channel policy but does not enable drdynvc yet.
-# drdynvc is rejected until dynamic virtual-channel open enforcement is implemented.
 
 # The current parser still rejects [audit] instead of silently ignoring policy.
 ```
@@ -152,7 +156,7 @@ Current `frdpd` peer/channel/session logs escape client-supplied hostnames, auth
 4. Test the PAM stack with a local test helper.
 5. Verify the TLS certificate chain.
 6. Compare the client authentication mechanism: Kerberos vs NTLM.
-7. Check the static channel exact allow-list policy.
+7. Check the static/dynamic channel filter mode and exact channel lists.
 8. Check Xorg/Xvfb startup logs and the user runtime directory.
 
 ## Upgrade policy

@@ -46,7 +46,7 @@ The MVP must provide:
 - reconnect to an existing session;
 - text clipboard plus baseline audio output;
 - centralized audit in journald/syslog;
-- deny-by-default for risky redirection channels;
+- configurable allowlist/blocklist filtering for risky redirection channels;
 - reproducible `.deb`/`.rpm` packages and systemd units.
 
 Replacing xrdp feature-for-feature in the first version is not practical: xrdp is mature, widely packaged, and already has a broad set of channels and backends. The point of the new solution is not "another xrdp", but a controlled enterprise RDP daemon with an NLA/Kerberos-first model and modern separation of security, session, and display layers.

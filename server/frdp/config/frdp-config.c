@@ -66,6 +66,21 @@ static int parse_uint32_limit(const char *value, uint32_t *out)
     return 0;
 }
 
+static int parse_channel_filter_mode(const char *value, frdpChannelFilterMode *mode)
+{
+    if (!value || !mode)
+        return -1;
+    if (strcmp(value, "allowlist") == 0 || strcmp(value, "whitelist") == 0) {
+        *mode = FRDP_CHANNEL_FILTER_ALLOWLIST;
+        return 0;
+    }
+    if (strcmp(value, "blocklist") == 0 || strcmp(value, "blacklist") == 0) {
+        *mode = FRDP_CHANNEL_FILTER_BLOCKLIST;
+        return 0;
+    }
+    return -1;
+}
+
 static int is_channel_name_valid(const char *name)
 {
     size_t len = 0;
@@ -83,20 +98,18 @@ static int is_channel_name_valid(const char *name)
     return 1;
 }
 
-static int add_channel_allow(char allow[FRDP_CONFIG_MAX_CHANNELS][FRDP_CONFIG_CHANNEL_NAME_SIZE],
-                             uint32_t *count, const char *name)
+static int add_channel_name(char channels[FRDP_CONFIG_MAX_CHANNELS][FRDP_CONFIG_CHANNEL_NAME_SIZE],
+                            uint32_t *count, const char *name)
 {
-    if (!allow || !count || !is_channel_name_valid(name))
-        return -1;
-    if (strcmp(name, "drdynvc") == 0)
+    if (!channels || !count || !is_channel_name_valid(name))
         return -1;
     for (uint32_t i = 0; i < *count; i++) {
-        if (strcmp(allow[i], name) == 0)
+        if (strcmp(channels[i], name) == 0)
             return -1;
     }
     if (*count >= FRDP_CONFIG_MAX_CHANNELS)
         return -1;
-    if (copy_string(allow[*count], FRDP_CONFIG_CHANNEL_NAME_SIZE, name) != 0)
+    if (copy_string(channels[*count], FRDP_CONFIG_CHANNEL_NAME_SIZE, name) != 0)
         return -1;
     (*count)++;
     return 0;
@@ -106,19 +119,35 @@ static int add_static_channel_allow(frdpConfig *config, const char *name)
 {
     if (!config)
         return -1;
-    return add_channel_allow(config->channels.static_allow, &config->channels.static_allow_count,
-                             name);
+    return add_channel_name(config->channels.static_allow, &config->channels.static_allow_count,
+                            name);
+}
+
+static int add_static_channel_deny(frdpConfig *config, const char *name)
+{
+    if (!config)
+        return -1;
+    return add_channel_name(config->channels.static_deny, &config->channels.static_deny_count,
+                            name);
 }
 
 static int add_dynamic_channel_allow(frdpConfig *config, const char *name)
 {
     if (!config)
         return -1;
-    return add_channel_allow(config->channels.dynamic_allow, &config->channels.dynamic_allow_count,
-                             name);
+    return add_channel_name(config->channels.dynamic_allow, &config->channels.dynamic_allow_count,
+                            name);
 }
 
-static int parse_channel_allow(frdpConfig *config, char *value, int dynamic)
+static int add_dynamic_channel_deny(frdpConfig *config, const char *name)
+{
+    if (!config)
+        return -1;
+    return add_channel_name(config->channels.dynamic_deny, &config->channels.dynamic_deny_count,
+                            name);
+}
+
+static int parse_channel_list(frdpConfig *config, char *value, int dynamic, int deny)
 {
     char *cursor = value;
 
@@ -135,7 +164,15 @@ static int parse_channel_allow(frdpConfig *config, char *value, int dynamic)
         }
         trim(cursor);
         if (dynamic) {
-            if (add_dynamic_channel_allow(config, cursor) != 0)
+            if (deny) {
+                if (add_dynamic_channel_deny(config, cursor) != 0)
+                    return -1;
+            }
+            else if (add_dynamic_channel_allow(config, cursor) != 0)
+                return -1;
+        }
+        else if (deny) {
+            if (add_static_channel_deny(config, cursor) != 0)
                 return -1;
         }
         else if (add_static_channel_allow(config, cursor) != 0)
@@ -147,12 +184,69 @@ static int parse_channel_allow(frdpConfig *config, char *value, int dynamic)
 
 static int parse_static_channel_allow(frdpConfig *config, char *value)
 {
-    return parse_channel_allow(config, value, 0);
+    return parse_channel_list(config, value, 0, 0);
+}
+
+static int parse_static_channel_deny(frdpConfig *config, char *value)
+{
+    return parse_channel_list(config, value, 0, 1);
 }
 
 static int parse_dynamic_channel_allow(frdpConfig *config, char *value)
 {
-    return parse_channel_allow(config, value, 1);
+    return parse_channel_list(config, value, 1, 0);
+}
+
+static int parse_dynamic_channel_deny(frdpConfig *config, char *value)
+{
+    return parse_channel_list(config, value, 1, 1);
+}
+
+static int channel_list_contains(
+    const char channels[FRDP_CONFIG_MAX_CHANNELS][FRDP_CONFIG_CHANNEL_NAME_SIZE], uint32_t count,
+    const char *name)
+{
+    for (uint32_t i = 0; i < count; i++) {
+        if (strcmp(channels[i], name) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int validate_channel_filter_lists(const frdpConfig *config, int seen_static_allow,
+                                         int seen_static_deny, int seen_dynamic_allow,
+                                         int seen_dynamic_deny)
+{
+    if (!config)
+        return -1;
+    if (config->channels.static_mode == FRDP_CHANNEL_FILTER_ALLOWLIST) {
+        if (seen_static_deny)
+            return -1;
+        if (channel_list_contains(config->channels.static_allow,
+                                  config->channels.static_allow_count, "drdynvc"))
+            return -1;
+    }
+    else if (config->channels.static_mode == FRDP_CHANNEL_FILTER_BLOCKLIST) {
+        if (seen_static_allow)
+            return -1;
+    }
+    else
+        return -1;
+
+    if (config->channels.dynamic_mode == FRDP_CHANNEL_FILTER_ALLOWLIST) {
+        if (seen_dynamic_deny)
+            return -1;
+        if (channel_list_contains(config->channels.dynamic_allow,
+                                  config->channels.dynamic_allow_count, "drdynvc"))
+            return -1;
+    }
+    else if (config->channels.dynamic_mode == FRDP_CHANNEL_FILTER_BLOCKLIST) {
+        if (seen_dynamic_allow)
+            return -1;
+    }
+    else
+        return -1;
+    return 0;
 }
 
 /* Load key/value pairs from a small fail-closed TOML subset. */
@@ -179,8 +273,12 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_pam_service = 0;
     int seen_auth_socket = 0;
     int seen_session_socket = 0;
+    int seen_channel_static_mode = 0;
     int seen_channel_static_allow = 0;
+    int seen_channel_static_deny = 0;
+    int seen_channel_dynamic_mode = 0;
     int seen_channel_dynamic_allow = 0;
+    int seen_channel_dynamic_deny = 0;
     /* Set defaults */
     memset(config, 0, sizeof(*config));
     if (copy_string(config->listen, sizeof(config->listen), "0.0.0.0:3389") != 0 ||
@@ -269,7 +367,9 @@ int frdp_config_load(const char *path, frdpConfig *config)
         trim(val);
         const int allow_empty_value = (strcmp(current_section, "channels") == 0) &&
                                       ((strcmp(key, "static_allow") == 0) ||
-                                       (strcmp(key, "dynamic_allow") == 0));
+                                       (strcmp(key, "static_deny") == 0) ||
+                                       (strcmp(key, "dynamic_allow") == 0) ||
+                                       (strcmp(key, "dynamic_deny") == 0));
         const int allow_bare_value = (strcmp(current_section, "server") == 0) &&
                                      (strcmp(key, "max_connections") == 0);
         if (allow_bare_value) {
@@ -429,13 +529,46 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 return -1;
             }
         } else if (strcmp(current_section, "channels") == 0) {
-            if (strcmp(key, "static_allow") == 0) {
+            if (strcmp(key, "static_mode") == 0) {
+                if (seen_channel_static_mode) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_channel_static_mode = 1;
+                if (parse_channel_filter_mode(val, &config->channels.static_mode) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "static_allow") == 0) {
                 if (seen_channel_static_allow) {
                     fclose(f);
                     return -1;
                 }
                 seen_channel_static_allow = 1;
                 if (parse_static_channel_allow(config, val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "static_deny") == 0) {
+                if (seen_channel_static_deny) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_channel_static_deny = 1;
+                if (parse_static_channel_deny(config, val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "dynamic_mode") == 0) {
+                if (seen_channel_dynamic_mode) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_channel_dynamic_mode = 1;
+                if (parse_channel_filter_mode(val, &config->channels.dynamic_mode) != 0) {
                     fclose(f);
                     return -1;
                 }
@@ -447,6 +580,17 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 }
                 seen_channel_dynamic_allow = 1;
                 if (parse_dynamic_channel_allow(config, val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "dynamic_deny") == 0) {
+                if (seen_channel_dynamic_deny) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_channel_dynamic_deny = 1;
+                if (parse_dynamic_channel_deny(config, val) != 0) {
                     fclose(f);
                     return -1;
                 }
@@ -467,5 +611,9 @@ int frdp_config_load(const char *path, frdpConfig *config)
         }
     }
     fclose(f);
+    if (validate_channel_filter_lists(config, seen_channel_static_allow, seen_channel_static_deny,
+                                      seen_channel_dynamic_allow,
+                                      seen_channel_dynamic_deny) != 0)
+        return -1;
     return 0;
 }

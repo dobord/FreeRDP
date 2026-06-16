@@ -80,7 +80,7 @@ Responsibilities:
 - handling input events;
 - capturing framebuffer/damage regions;
 - clipboard, audio, and display resize handling;
-- channel allowlist enforcement;
+- channel filter policy enforcement;
 - health metrics and watchdog heartbeat.
 
 ## Display backend

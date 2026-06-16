@@ -50,31 +50,47 @@ static int expect_load_failure(const char* name, const char* body)
 	return 0;
 }
 
-static int test_default_deny(void)
+static int test_default_blocklist(void)
 {
 	frdpConfig config = { 0 };
+	CHANNEL_DEF channel = { 0 };
+	char name[CHANNEL_NAME_LEN + 2] = { 0 };
 
-	if (load_config_body("frdp-default-deny.toml", "", &config) != 0)
+	if (load_config_body("frdp-default-blocklist.toml", "", &config) != 0)
 		return -1;
 	if (config.max_connections != 0)
 		return -1;
+	if (config.channels.static_mode != FRDP_CHANNEL_FILTER_BLOCKLIST)
+		return -1;
+	if (config.channels.dynamic_mode != FRDP_CHANNEL_FILTER_BLOCKLIST)
+		return -1;
 	if (config.channels.static_allow_count != 0)
+		return -1;
+	if (config.channels.static_deny_count != 0)
 		return -1;
 	if (config.channels.dynamic_allow_count != 0)
 		return -1;
-	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") != 0)
+	if (config.channels.dynamic_deny_count != 0)
 		return -1;
-	if (frdp_channel_policy_dynamic_allowed(&config.channels, "rdpgfx") != 0)
+	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") == 0)
 		return -1;
-	if (frdp_channel_policy_static_allowed(&config.channels, "rdpsnd") != 0)
+	if (frdp_channel_policy_static_allowed(&config.channels, "drdynvc") != 0)
+		return -1;
+	if (frdp_channel_policy_dynamic_allowed(&config.channels, "rdpgfx") == 0)
+		return -1;
+	if (frdp_channel_policy_dynamic_allowed(&config.channels, "drdynvc") != 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(NULL, "cliprdr") != 0)
 		return -1;
-	if (frdp_channel_policy_dynamic_allowed(NULL, "rdpgfx") != 0)
-		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "") != 0)
 		return -1;
+	if (frdp_channel_policy_dynamic_allowed(NULL, "rdpgfx") != 0)
+		return -1;
 	if (frdp_channel_policy_dynamic_allowed(&config.channels, "") != 0)
+		return -1;
+	memcpy(channel.name, "bad-name", sizeof(channel.name));
+	if (frdp_channel_policy_static_channel_allowed(&config.channels, &channel, name,
+	                                               sizeof(name)) != 0)
 		return -1;
 	return 0;
 }
@@ -96,35 +112,49 @@ static int test_server_max_connections(void)
 	return 0;
 }
 
-static int test_empty_allow_list(void)
+static int test_empty_filter_lists(void)
 {
 	frdpConfig config = { 0 };
-	const char* body = "[channels]\nstatic_allow = \"\"\ndynamic_allow = \"\"\n";
+	const char* body = "[channels]\nstatic_mode = \"blacklist\"\nstatic_deny = \"\"\n"
+	                   "dynamic_mode = \"blocklist\"\ndynamic_deny = \"\"\n";
 
 	if (load_config_body("frdp-empty-channels.toml", body, &config) != 0)
 		return -1;
+	if (config.channels.static_mode != FRDP_CHANNEL_FILTER_BLOCKLIST)
+		return -1;
+	if (config.channels.dynamic_mode != FRDP_CHANNEL_FILTER_BLOCKLIST)
+		return -1;
 	if (config.channels.static_allow_count != 0)
+		return -1;
+	if (config.channels.static_deny_count != 0)
 		return -1;
 	if (config.channels.dynamic_allow_count != 0)
 		return -1;
-	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") != 0)
+	if (config.channels.dynamic_deny_count != 0)
 		return -1;
-	if (frdp_channel_policy_dynamic_allowed(&config.channels, "rdpgfx") != 0)
+	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") == 0)
+		return -1;
+	if (frdp_channel_policy_dynamic_allowed(&config.channels, "rdpgfx") == 0)
 		return -1;
 	return 0;
 }
 
-static int test_static_allow_list(void)
+static int test_static_allowlist(void)
 {
 	frdpConfig config = { 0 };
 	frdpChannelPolicy direct_policy = { 0 };
-	const char* body = "[channels]\nstatic_allow = \"cliprdr, rdpsnd,rdpdr\"\n";
+	const char* body = "[channels]\nstatic_mode = \"allowlist\"\n"
+	                   "static_allow = \"cliprdr, rdpsnd,rdpdr\"\n";
 	CHANNEL_DEF channel = { 0 };
 	char name[CHANNEL_NAME_LEN + 2] = { 0 };
 
 	if (load_config_body("frdp-static-channels.toml", body, &config) != 0)
 		return -1;
+	if (config.channels.static_mode != FRDP_CHANNEL_FILTER_ALLOWLIST)
+		return -1;
 	if (config.channels.static_allow_count != 3)
+		return -1;
+	if (config.channels.static_deny_count != 0)
 		return -1;
 	if (strcmp(config.channels.static_allow[0], "cliprdr") != 0)
 		return -1;
@@ -154,11 +184,13 @@ static int test_static_allow_list(void)
 		return -1;
 	if (strcmp(name, "drdynvc") != 0)
 		return -1;
+	direct_policy.static_mode = FRDP_CHANNEL_FILTER_ALLOWLIST;
 	direct_policy.static_allow_count = 1;
 	memcpy(direct_policy.static_allow[0], "drdynvc", sizeof("drdynvc"));
 	if (frdp_channel_policy_static_allowed(&direct_policy, "drdynvc") != 0)
 		return -1;
-	if (frdp_channel_policy_static_channel_allowed(&direct_policy, &channel, name, sizeof(name)) != 0)
+	if (frdp_channel_policy_static_channel_allowed(&direct_policy, &channel, name,
+	                                               sizeof(name)) != 0)
 		return -1;
 	memset(&channel, 0, sizeof(channel));
 	memset(name, 0xff, sizeof(name));
@@ -171,14 +203,50 @@ static int test_static_allow_list(void)
 	return 0;
 }
 
-static int test_dynamic_allow_list(void)
+static int test_static_blocklist(void)
 {
 	frdpConfig config = { 0 };
-	const char* body = "[channels]\ndynamic_allow = \"rdpgfx, disp,geometry\"\n";
+	const char* body = "[channels]\nstatic_mode = \"blocklist\"\n"
+	                   "static_deny = \"cliprdr, drdynvc\"\n";
+	CHANNEL_DEF channel = { 0 };
+	char name[CHANNEL_NAME_LEN + 2] = { 0 };
+
+	if (load_config_body("frdp-static-blocklist.toml", body, &config) != 0)
+		return -1;
+	if (config.channels.static_mode != FRDP_CHANNEL_FILTER_BLOCKLIST)
+		return -1;
+	if (config.channels.static_deny_count != 2)
+		return -1;
+	if (strcmp(config.channels.static_deny[0], "cliprdr") != 0)
+		return -1;
+	if (strcmp(config.channels.static_deny[1], "drdynvc") != 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") != 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "drdynvc") != 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "rdpsnd") == 0)
+		return -1;
+	memcpy(channel.name, "rdpsnd", sizeof("rdpsnd"));
+	if (frdp_channel_policy_static_channel_allowed(&config.channels, &channel, name,
+	                                               sizeof(name)) == 0)
+		return -1;
+	if (strcmp(name, "rdpsnd") != 0)
+		return -1;
+	return 0;
+}
+
+static int test_dynamic_allowlist(void)
+{
+	frdpConfig config = { 0 };
+	const char* body = "[channels]\ndynamic_mode = \"whitelist\"\n"
+	                   "dynamic_allow = \"rdpgfx, disp,geometry\"\n";
 	CHANNEL_DEF channel = { 0 };
 	char name[CHANNEL_NAME_LEN + 2] = { 0 };
 
 	if (load_config_body("frdp-dynamic-channels.toml", body, &config) != 0)
+		return -1;
+	if (config.channels.dynamic_mode != FRDP_CHANNEL_FILTER_ALLOWLIST)
 		return -1;
 	if (config.channels.static_allow_count != 0)
 		return -1;
@@ -209,6 +277,30 @@ static int test_dynamic_allow_list(void)
 	return 0;
 }
 
+static int test_dynamic_blocklist(void)
+{
+	frdpConfig config = { 0 };
+	const char* body = "[channels]\ndynamic_deny = \"rdpgfx, disp\"\n";
+
+	if (load_config_body("frdp-dynamic-blocklist.toml", body, &config) != 0)
+		return -1;
+	if (config.channels.dynamic_mode != FRDP_CHANNEL_FILTER_BLOCKLIST)
+		return -1;
+	if (config.channels.dynamic_deny_count != 2)
+		return -1;
+	if (strcmp(config.channels.dynamic_deny[0], "rdpgfx") != 0)
+		return -1;
+	if (strcmp(config.channels.dynamic_deny[1], "disp") != 0)
+		return -1;
+	if (frdp_channel_policy_dynamic_allowed(&config.channels, "rdpgfx") != 0)
+		return -1;
+	if (frdp_channel_policy_dynamic_allowed(&config.channels, "disp") != 0)
+		return -1;
+	if (frdp_channel_policy_dynamic_allowed(&config.channels, "geometry") == 0)
+		return -1;
+	return 0;
+}
+
 static int test_invalid_channel_config(void)
 {
 	if (expect_load_failure("frdp-duplicate-max-connections.toml",
@@ -226,50 +318,110 @@ static int test_invalid_channel_config(void)
 	if (expect_load_failure("frdp-too-large-max-connections.toml",
 	                        "[server]\nmax_connections = 2147483648\n") != 0)
 		return -1;
+	if (expect_load_failure("frdp-bad-static-mode.toml",
+	                        "[channels]\nstatic_mode = \"maybe\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-bad-dynamic-mode.toml",
+	                        "[channels]\ndynamic_mode = \"maybe\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-static-mode.toml",
+	                        "[channels]\nstatic_mode = \"blocklist\"\nstatic_mode = \"allowlist\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-dynamic-mode.toml",
+	                        "[channels]\ndynamic_mode = \"blocklist\"\ndynamic_mode = \"allowlist\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-static-allow-with-default-blocklist.toml",
+	                        "[channels]\nstatic_allow = \"cliprdr\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-empty-static-allow-with-default-blocklist.toml",
+	                        "[channels]\nstatic_allow = \"\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-dynamic-allow-with-default-blocklist.toml",
+	                        "[channels]\ndynamic_allow = \"rdpgfx\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-empty-dynamic-allow-with-default-blocklist.toml",
+	                        "[channels]\ndynamic_allow = \"\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-static-deny-with-allowlist.toml",
+	                        "[channels]\nstatic_mode = \"allowlist\"\nstatic_deny = \"cliprdr\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-empty-static-deny-with-allowlist.toml",
+	                        "[channels]\nstatic_mode = \"allowlist\"\nstatic_deny = \"\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-dynamic-deny-with-allowlist.toml",
+	                        "[channels]\ndynamic_mode = \"allowlist\"\ndynamic_deny = \"rdpgfx\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-empty-dynamic-deny-with-allowlist.toml",
+	                        "[channels]\ndynamic_mode = \"allowlist\"\ndynamic_deny = \"\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-static-allow-with-blocklist.toml",
+	                        "[channels]\nstatic_mode = \"blocklist\"\nstatic_allow = \"cliprdr\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-dynamic-allow-with-blocklist.toml",
+	                        "[channels]\ndynamic_mode = \"blocklist\"\ndynamic_allow = \"rdpgfx\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-drdynvc-static-allow.toml",
+	                        "[channels]\nstatic_mode = \"allowlist\"\nstatic_allow = \"drdynvc\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-drdynvc-dynamic-allow.toml",
+	                        "[channels]\ndynamic_mode = \"allowlist\"\ndynamic_allow = \"drdynvc\"\n") !=
+	    0)
+		return -1;
 	if (expect_load_failure("frdp-duplicate-channel.toml",
-	                        "[channels]\nstatic_allow = \"cliprdr,cliprdr\"\n") != 0)
+	                        "[channels]\nstatic_mode = \"allowlist\"\n"
+	                        "static_allow = \"cliprdr,cliprdr\"\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-duplicate-dynamic-channel.toml",
-	                        "[channels]\ndynamic_allow = \"rdpgfx,rdpgfx\"\n") != 0)
+	                        "[channels]\ndynamic_mode = \"allowlist\"\n"
+	                        "dynamic_allow = \"rdpgfx,rdpgfx\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-static-deny-channel.toml",
+	                        "[channels]\nstatic_deny = \"cliprdr,cliprdr\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-dynamic-deny-channel.toml",
+	                        "[channels]\ndynamic_deny = \"rdpgfx,rdpgfx\"\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-empty-channel-token.toml",
-	                        "[channels]\nstatic_allow = \"cliprdr,,rdpsnd\"\n") != 0)
+	                        "[channels]\nstatic_mode = \"allowlist\"\n"
+	                        "static_allow = \"cliprdr,,rdpsnd\"\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-empty-dynamic-channel-token.toml",
-	                        "[channels]\ndynamic_allow = \"rdpgfx,,disp\"\n") != 0)
+	                        "[channels]\ndynamic_mode = \"allowlist\"\n"
+	                        "dynamic_allow = \"rdpgfx,,disp\"\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-bad-channel-char.toml",
-	                        "[channels]\nstatic_allow = \"clip-rdr\"\n") != 0)
+	                        "[channels]\nstatic_deny = \"clip-rdr\"\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-bad-dynamic-channel-char.toml",
-	                        "[channels]\ndynamic_allow = \"rdp-gfx\"\n") != 0)
-		return -1;
-	if (expect_load_failure("frdp-drdynvc-static-channel.toml",
-	                        "[channels]\nstatic_allow = \"drdynvc\"\n") != 0)
-		return -1;
-	if (expect_load_failure("frdp-drdynvc-dynamic-channel.toml",
-	                        "[channels]\ndynamic_allow = \"drdynvc\"\n") != 0)
-		return -1;
-	if (expect_load_failure("frdp-drdynvc-mixed-static-channel.toml",
-	                        "[channels]\nstatic_allow = \"cliprdr, drdynvc\"\n") != 0)
-		return -1;
-	if (expect_load_failure("frdp-drdynvc-mixed-dynamic-channel.toml",
-	                        "[channels]\ndynamic_allow = \"rdpgfx, drdynvc\"\n") != 0)
+	                        "[channels]\ndynamic_deny = \"rdp-gfx\"\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-long-channel-name.toml",
-	                        "[channels]\nstatic_allow = \"abcdefghi\"\n") != 0)
+	                        "[channels]\nstatic_deny = \"abcdefghi\"\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-long-dynamic-channel-name.toml",
-	                        "[channels]\ndynamic_allow = \"abcdefghi\"\n") != 0)
+	                        "[channels]\ndynamic_deny = \"abcdefghi\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-static-deny-key.toml",
+	                        "[channels]\nstatic_deny = \"cliprdr\"\nstatic_deny = \"rdpsnd\"\n") !=
+	    0)
 		return -1;
 	if (expect_load_failure("frdp-duplicate-dynamic-channel-key.toml",
-	                        "[channels]\ndynamic_allow = \"rdpgfx\"\ndynamic_allow = \"disp\"\n") !=
+	                        "[channels]\ndynamic_allow = \"\"\ndynamic_allow = \"\"\n") !=
 	    0)
 		return -1;
 	if (expect_load_failure("frdp-unknown-channel-key.toml", "[channels]\nclipboard = \"true\"\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-duplicate-channel-section.toml",
-	                        "[channels]\nstatic_allow = \"cliprdr\"\n[channels]\nstatic_allow = \"rdpsnd\"\n") !=
+	                        "[channels]\nstatic_deny = \"cliprdr\"\n[channels]\nstatic_deny = \"rdpsnd\"\n") !=
 	    0)
 		return -1;
 	return 0;
@@ -280,15 +432,19 @@ int TestFreeRDPFrdpConfig(int argc, char* argv[])
 	(void)argc;
 	(void)argv;
 
-	if (test_default_deny() != 0)
+	if (test_default_blocklist() != 0)
 		return -1;
-	if (test_empty_allow_list() != 0)
+	if (test_empty_filter_lists() != 0)
 		return -1;
 	if (test_server_max_connections() != 0)
 		return -1;
-	if (test_static_allow_list() != 0)
+	if (test_static_allowlist() != 0)
 		return -1;
-	if (test_dynamic_allow_list() != 0)
+	if (test_static_blocklist() != 0)
+		return -1;
+	if (test_dynamic_allowlist() != 0)
+		return -1;
+	if (test_dynamic_blocklist() != 0)
 		return -1;
 	if (test_invalid_channel_config() != 0)
 		return -1;

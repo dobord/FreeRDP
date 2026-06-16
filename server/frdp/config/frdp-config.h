@@ -5,11 +5,22 @@
 #define FRDP_CONFIG_MAX_CHANNELS 31
 #define FRDP_CONFIG_CHANNEL_NAME_SIZE 9
 
+typedef enum {
+    FRDP_CHANNEL_FILTER_BLOCKLIST = 0,
+    FRDP_CHANNEL_FILTER_ALLOWLIST = 1
+} frdpChannelFilterMode;
+
 typedef struct {
+    frdpChannelFilterMode static_mode;
     uint32_t static_allow_count;
     char static_allow[FRDP_CONFIG_MAX_CHANNELS][FRDP_CONFIG_CHANNEL_NAME_SIZE];
+    uint32_t static_deny_count;
+    char static_deny[FRDP_CONFIG_MAX_CHANNELS][FRDP_CONFIG_CHANNEL_NAME_SIZE];
+    frdpChannelFilterMode dynamic_mode;
     uint32_t dynamic_allow_count;
     char dynamic_allow[FRDP_CONFIG_MAX_CHANNELS][FRDP_CONFIG_CHANNEL_NAME_SIZE];
+    uint32_t dynamic_deny_count;
+    char dynamic_deny[FRDP_CONFIG_MAX_CHANNELS][FRDP_CONFIG_CHANNEL_NAME_SIZE];
 } frdpChannelPolicy;
 
 /* Structure representing configuration parsed from frdpd.toml */

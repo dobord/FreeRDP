@@ -70,7 +70,7 @@ Sizing strongly depends on the desktop environment, browser use, codec mode, mon
 - Authentication broker with no core dumps and no password logs.
 - Keytab readable only by root or the authd user.
 - systemd hardening for daemons.
-- Channel allowlists by group.
+- Channel filter profiles by group.
 - Audit logs for every auth/session/channel decision.
 
 ## Operational requirements

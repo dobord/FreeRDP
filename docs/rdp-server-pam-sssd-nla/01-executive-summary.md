@@ -12,7 +12,7 @@ The solution is technically feasible, but it should not be implemented as a thin
 - a dedicated authentication broker for CredSSP/SPNEGO/Kerberos/PAM;
 - a session manager with a role similar to xrdp-sesman, but with a stricter security model;
 - a per-user session agent for the desktop backend and channels;
-- deny-by-default policy for redirection.
+- configurable allowlist/blocklist policy for redirection.
 
 ## Why FreeRDP
 
@@ -54,7 +54,7 @@ Do not include in the first MVP:
 | CredSSP/Kerberos interoperability with Windows clients | High | client matrix and regression suite |
 | PAM prompts do not match the NLA UX | Medium | constrain the MVP to a password-backed flow |
 | Desktop lifecycle is more complex than the RDP layer | High | dedicated sesmand and Xorg MVP |
-| Redirection can become an exfiltration channel | High | deny-by-default and group policy |
+| Redirection can become an exfiltration channel | High | configurable channel filters, restrictive profiles, and group policy |
 | Performance under browser/video workloads | Medium | load tests, codec tuning, resource limits |
 
 ## Recommendation

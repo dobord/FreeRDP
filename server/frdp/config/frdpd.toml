@@ -18,12 +18,16 @@ pam_service = "frdpd"
 # session_socket = "/run/frdp-sesmand/sesmand.sock"
 
 # [channels]
-# Deny all client-requested static virtual channels by default.
-# static_allow = "" accepts no channels. Example allow-list syntax:
+# Channel filtering defaults to blocklist mode with empty lists.
+# static_mode = "blocklist"
+# static_deny = ""
+# dynamic_mode = "blocklist"
+# dynamic_deny = ""
+# Dynamic channel lists are preparatory until dynamic-channel open enforcement is implemented.
+# Use allowlist mode to permit only exact channel names:
+# static_mode = "allowlist"
 # static_allow = "cliprdr,rdpsnd"
 # Allowing a name only permits negotiation; clipboard/audio handlers are not implemented yet.
-# Dynamic virtual channels have a separate preparatory allow-list. It does not enable drdynvc yet.
-# dynamic_allow = ""
-# drdynvc is rejected until dynamic virtual-channel open enforcement is implemented.
+# drdynvc remains guard-denied until dynamic-channel open enforcement is implemented.
 
 # The current parser still rejects [audit] instead of silently ignoring policy.

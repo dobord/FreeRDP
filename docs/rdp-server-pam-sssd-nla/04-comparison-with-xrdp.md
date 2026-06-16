@@ -9,7 +9,7 @@ xrdp remains a mature and practical Linux RDP server. Its strengths are readines
 - Use of the FreeRDP server-side peer/listener API and existing protocol/security/channel stack.
 - Ability to design NLA/CredSSP/Kerberos-first authentication without historical xrdp constraints.
 - Clear privilege separation: listener, authentication broker, session manager, user agent.
-- Policy-driven redirection: deny-by-default and a centralized channel model.
+- Policy-driven redirection: configurable allowlist/blocklist filtering and a centralized channel model.
 - Ability to build session registry, audit, metrics, tracing, and zero-trust controls from the start.
 - Shared library base with the FreeRDP client/proxy/shadow ecosystem.
 

@@ -119,8 +119,8 @@ Deliverables:
 - [x] opportunistic framebuffer tile compression (partial: `frdpd` advertises and enforces minimum-color-loss/no-subsampling NSCodec and sends `SET_SURFACE_BITS` only when the client negotiated it and the encoded tile is smaller than the raw tile; RFX/RDPGFX and production codec policy remain open);
 - [x] keyboard/mouse/text input (partial: integrated callbacks forward input over optional agent control IPC and the agent injects scancode keyboard, Unicode BMP text, and mouse events through XTest/X11; IME/layout-safe text input and supplementary-plane Unicode are not implemented yet);
 - [x] display resize (prototype: RDP monitor-layout changes are forwarded to the agent and applied through XRandR before `frdpd` updates peer geometry; runtime interop and resize churn are not smoke-tested yet);
-- [x] static channel policy engine (`frdpd` enforces deny-by-default for client-requested static virtual channels during capability processing, supports an explicit `static_allow` list, keeps `drdynvc` rejected until dynamic-channel open enforcement exists, and has CTest coverage for config parsing plus `CHANNEL_DEF` validation; useful channel handlers remain open);
-- [x] preparatory dynamic channel allow-list parsing and policy helper (`dynamic_allow` is exact-match/default-deny, but does not enable `drdynvc` yet);
+- [x] static channel policy engine (`frdpd` filters client-requested static virtual channels during capability processing with configurable blocklist/allowlist modes, defaults to empty blocklist mode, keeps `drdynvc` guard-denied until dynamic-channel open enforcement exists, and has CTest coverage for config parsing plus `CHANNEL_DEF` validation; useful channel handlers remain open);
+- [x] preparatory dynamic channel filter parsing and policy helper (`dynamic_mode` plus `dynamic_allow`/`dynamic_deny` support exact-match blocklist/allowlist semantics in config/tests, but dynamic-channel open enforcement remains open);
 - [ ] text clipboard;
 - [ ] baseline audio output;
 - [ ] dynamic channel open enforcement and useful channel handlers.
@@ -145,7 +145,7 @@ Exit criteria: a domain-joined Windows client authenticates with Kerberos where 
 Deliverables:
 
 - [ ] ASAN/UBSAN builds;
-- [x] focused unit/CTest coverage for implemented static/dynamic channel config parsing, capability validation, `drdynvc` rejection, and `max_connections` parsing;
+- [x] focused unit/CTest coverage for implemented static/dynamic channel config parsing, filter modes, capability validation, and `max_connections` parsing;
 - [ ] fuzzing harnesses for channel parsers and selected RDP inputs;
 - [ ] protocol regression suite;
 - [ ] load testing harness;
@@ -163,7 +163,7 @@ Deliverables:
 - [ ] deb/rpm packages (draft packaging files exist, RPM CMake flags are aligned with `WITH_FRDPD`, but actual package builds are not verified);
 - [x] admin CLI `frdpctl` stub builds and installs under `WITH_FRDPD`;
 - [ ] admin CLI `frdpctl` session IPC operations;
-- [x] configuration reference, example, and partial parser integration for implemented daemon fields, including `max_connections` and static channel policy (`10-configuration-reference.md`, `server/frdp/config/frdpd.toml`);
+- [x] configuration reference, example, and partial parser integration for implemented daemon fields, including `max_connections` and static/dynamic channel filter policy (`10-configuration-reference.md`, `server/frdp/config/frdpd.toml`);
 - [x] runbooks for AD join, keytab rotation, and troubleshooting (`09-runbooks.md`);
 - [ ] dashboards and alert rules;
 - [x] migration/fallback plan to xrdp (basic documented fallback in `09-runbooks.md`; rollback testing remains part of exit criteria);
@@ -179,7 +179,7 @@ Exit criteria: pilot users complete acceptance scenarios; rollback is tested; th
 | CredSSP/Kerberos interoperability issues | High | client matrix, packet-level regression, strict SPN tests |
 | PAM prompts incompatible with NLA UX | Medium | constrain MVP to password flow, separate MFA design |
 | Desktop backend complexity | High | start with Xorg/Xvfb, defer Wayland |
-| Redirection data exfiltration | High | deny-by-default policy and audit |
+| Redirection data exfiltration | High | configurable channel filters, restrictive profiles, and audit |
 | Performance under browser/video workload | Medium | codec tuning, resource limits, load tests |
 | Prototype drift outside the canonical daemon path | High | either integrate prototypes into CMake/IPC or retire them quickly |
 | Packaging/documentation ahead of executable behavior | Medium | verify packages in CI and label draft-only material explicitly |

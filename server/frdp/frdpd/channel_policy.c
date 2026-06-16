@@ -1,5 +1,6 @@
 #include "channel_policy.h"
 
+#include <ctype.h>
 #include <string.h>
 
 static void frdp_channel_policy_channel_name(char* dst, size_t dst_size, const CHANNEL_DEF* channel)
@@ -18,32 +19,69 @@ static void frdp_channel_policy_channel_name(char* dst, size_t dst_size, const C
 	dst[len] = '\0';
 }
 
+static int frdp_channel_policy_list_contains(
+    const char channels[FRDP_CONFIG_MAX_CHANNELS][FRDP_CONFIG_CHANNEL_NAME_SIZE], uint32_t count,
+    const char* channel)
+{
+	for (uint32_t i = 0; i < count; i++)
+	{
+		if (strcmp(channels[i], channel) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+static int frdp_channel_policy_name_valid(const char* channel)
+{
+	size_t len = 0;
+
+	if (!channel)
+		return 0;
+	len = strlen(channel);
+	if ((len == 0) || (len >= FRDP_CONFIG_CHANNEL_NAME_SIZE))
+		return 0;
+	for (size_t i = 0; i < len; i++)
+	{
+		const unsigned char c = (unsigned char)channel[i];
+
+		if (!isalnum(c) && (c != '_'))
+			return 0;
+	}
+	return 1;
+}
+
 int frdp_channel_policy_static_allowed(const frdpChannelPolicy *policy, const char *channel)
 {
-	if (!policy || !channel || channel[0] == '\0')
+	if (!policy || !frdp_channel_policy_name_valid(channel))
 		return 0;
 	if (strcmp(channel, "drdynvc") == 0)
 		return 0;
 
-	for (uint32_t i = 0; i < policy->static_allow_count; i++)
+	if (policy->static_mode == FRDP_CHANNEL_FILTER_ALLOWLIST)
+		return frdp_channel_policy_list_contains(policy->static_allow, policy->static_allow_count,
+		                                         channel);
+	if (policy->static_mode == FRDP_CHANNEL_FILTER_BLOCKLIST)
 	{
-		if (strcmp(policy->static_allow[i], channel) == 0)
-			return 1;
+		return !frdp_channel_policy_list_contains(policy->static_deny, policy->static_deny_count,
+		                                         channel);
 	}
 	return 0;
 }
 
 int frdp_channel_policy_dynamic_allowed(const frdpChannelPolicy *policy, const char *channel)
 {
-	if (!policy || !channel || channel[0] == '\0')
+	if (!policy || !frdp_channel_policy_name_valid(channel))
 		return 0;
 	if (strcmp(channel, "drdynvc") == 0)
 		return 0;
 
-	for (uint32_t i = 0; i < policy->dynamic_allow_count; i++)
+	if (policy->dynamic_mode == FRDP_CHANNEL_FILTER_ALLOWLIST)
+		return frdp_channel_policy_list_contains(policy->dynamic_allow, policy->dynamic_allow_count,
+		                                         channel);
+	if (policy->dynamic_mode == FRDP_CHANNEL_FILTER_BLOCKLIST)
 	{
-		if (strcmp(policy->dynamic_allow[i], channel) == 0)
-			return 1;
+		return !frdp_channel_policy_list_contains(policy->dynamic_deny, policy->dynamic_deny_count,
+		                                         channel);
 	}
 	return 0;
 }
