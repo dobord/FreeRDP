@@ -6,7 +6,7 @@ This document provides guidance on building and distributing the FreeRDP‑based
 
 The `packaging/debian` directory contains a sample `control` file and can be extended with the rest of the Debian packaging infrastructure (`rules`, `copyright`, `changelog`, etc.). Key points:
 
-- Build depends list the toolchain and libraries required at build time (debhelper, cmake, GCC, PAM, GSSAPI and OpenSSL headers).
+- Build depends list the toolchain and libraries required at build time (debhelper, cmake, GCC, PAM, GSSAPI, OpenSSL, X11/XTest, XDamage, and XRandR headers).
 - The resulting binary package declares dependencies on `pam` and `sssd` so that authentication back ends are present.
 - Use `dpkg-buildpackage -uc -us` from the project root to build a `.deb` after the remaining packaging files are added.
 - Sign the resulting packages with the project’s GPG key and publish them to an APT repository.

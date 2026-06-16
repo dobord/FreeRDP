@@ -14,7 +14,9 @@ typedef enum {
     FRDP_IPC_SESSION_CLOSE_REQUEST = 6,
     FRDP_IPC_AGENT_INPUT = 7,
     FRDP_IPC_AGENT_FRAME_REQUEST = 8,
-    FRDP_IPC_AGENT_FRAME_RESPONSE = 9
+    FRDP_IPC_AGENT_FRAME_RESPONSE = 9,
+    FRDP_IPC_AGENT_RESIZE_REQUEST = 10,
+    FRDP_IPC_AGENT_RESIZE_RESPONSE = 11
 } frdpIpcMessageType;
 
 typedef enum {
@@ -105,6 +107,23 @@ typedef struct {
     uint32_t data_length;
     char error[128];
 } frdpAgentFrameResponse;
+
+typedef struct {
+    char correlation_id[64];
+    char session_id[64];
+    uint32_t width;
+    uint32_t height;
+    uint32_t color_depth;
+} frdpAgentResizeRequest;
+
+typedef struct {
+    char correlation_id[64];
+    char session_id[64];
+    int success;
+    uint32_t width;
+    uint32_t height;
+    char error[128];
+} frdpAgentResizeResponse;
 
 /* Connect to a UNIX domain socket at socket_path and return the fd, or -1 on error */
 int frdp_ipc_connect(const char *socket_path);

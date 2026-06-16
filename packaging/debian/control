@@ -2,7 +2,7 @@ Source: frdpd
 Section: net
 Priority: optional
 Maintainer: Example Maintainer <maintainer@example.com>
-Build-Depends: debhelper (>= 13), cmake, make, gcc, libpam-dev, libgssapi-krb5-dev, libssl-dev, uuid-dev, libx11-dev, libxtst-dev, libxdamage-dev
+Build-Depends: debhelper (>= 13), cmake, make, gcc, libpam-dev, libgssapi-krb5-dev, libssl-dev, uuid-dev, libx11-dev, libxtst-dev, libxdamage-dev, libxrandr-dev
 Standards-Version: 4.6.0
 Homepage: https://example.com/frdpd
 

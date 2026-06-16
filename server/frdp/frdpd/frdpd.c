@@ -49,6 +49,8 @@
 #define FRDPD_FRAME_INTERVAL_MS 100ULL
 #define FRDPD_FRAME_HASH_OFFSET 1469598103934665603ULL
 #define FRDPD_FRAME_HASH_PRIME 1099511628211ULL
+#define FRDPD_MAX_DESKTOP_SIZE 8192U
+#define FRDPD_MAX_MONITORS 16U
 
 typedef struct
 {
@@ -304,6 +306,80 @@ static BOOL frdpd_set_frame_ipc_timeout(int fd)
 	if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0)
 		return FALSE;
 	return TRUE;
+}
+
+static BOOL frdpd_set_resize_ipc_timeout(int fd)
+{
+	struct timeval timeout = { 0 };
+
+	timeout.tv_sec = 2;
+	timeout.tv_usec = 0;
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0)
+		return FALSE;
+	if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0)
+		return FALSE;
+	return TRUE;
+}
+
+static BOOL frdpd_send_agent_resize(frdpdPeerContext* context, UINT32 width, UINT32 height,
+                                    UINT32 color_depth)
+{
+	int fd = -1;
+	frdpIpcHeader header = { 0 };
+	frdpIpcHeader response_header = { 0 };
+	frdpAgentResizeRequest request = { 0 };
+	frdpAgentResizeResponse response = { 0 };
+	BOOL ok = FALSE;
+
+	if (!context || !context->managed_session_open || (context->agent_socket[0] == '\0') ||
+	    (width == 0) || (height == 0) || (width > FRDPD_MAX_DESKTOP_SIZE) ||
+	    (height > FRDPD_MAX_DESKTOP_SIZE))
+		return FALSE;
+
+	(void)frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
+	                          context->correlation_id);
+	(void)frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id), context->session_id);
+	request.width = width;
+	request.height = height;
+	request.color_depth = color_depth;
+
+	fd = frdp_ipc_connect(context->agent_socket);
+	if (fd < 0)
+		goto fail;
+	if (!frdpd_set_resize_ipc_timeout(fd))
+		goto fail;
+
+	header.type = FRDP_IPC_AGENT_RESIZE_REQUEST;
+	header.payload_len = sizeof(request);
+	if ((frdp_ipc_send(fd, &header, sizeof(header)) < 0) ||
+	    (frdp_ipc_send(fd, &request, sizeof(request)) < 0))
+		goto fail;
+
+	if (frdp_ipc_recv(fd, &response_header, sizeof(response_header)) !=
+	    (int)sizeof(response_header))
+		goto fail;
+	if ((response_header.type != FRDP_IPC_AGENT_RESIZE_RESPONSE) ||
+	    (response_header.payload_len != sizeof(response)))
+		goto fail;
+	if (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))
+		goto fail;
+
+	response.correlation_id[sizeof(response.correlation_id) - 1] = '\0';
+	response.session_id[sizeof(response.session_id) - 1] = '\0';
+	response.error[sizeof(response.error) - 1] = '\0';
+	if (!response.success)
+		goto fail;
+	if ((strcmp(response.session_id, context->session_id) != 0) ||
+	    (strcmp(response.correlation_id, context->correlation_id) != 0))
+		goto fail;
+	if ((response.width != width) || (response.height != height))
+		goto fail;
+	ok = TRUE;
+
+fail:
+	if (fd >= 0)
+		(void)frdp_ipc_close(fd);
+	return ok;
 }
 
 static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT32 y, UINT32 width,
@@ -1037,6 +1113,81 @@ static BOOL frdpd_peer_extended_mouse_event(rdpInput* input, UINT16 flags, UINT1
 	                             flags, x, y);
 }
 
+static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
+                                       const MONITOR_DEF* monitors)
+{
+	frdpdPeerContext* frdp_context = NULL;
+	rdpSettings* settings = NULL;
+	INT64 left = 0;
+	INT64 top = 0;
+	INT64 right = 0;
+	INT64 bottom = 0;
+	UINT32 width = 0;
+	UINT32 height = 0;
+	UINT32 old_width = 0;
+	UINT32 old_height = 0;
+	UINT32 color_depth = 0;
+
+	if (!context || !monitors || (count == 0) || (count > FRDPD_MAX_MONITORS))
+		return FALSE;
+	settings = context->settings;
+	if (!settings)
+		return FALSE;
+
+	left = monitors[0].left;
+	top = monitors[0].top;
+	right = monitors[0].right;
+	bottom = monitors[0].bottom;
+	for (UINT32 i = 0; i < count; i++)
+	{
+		if ((monitors[i].right < monitors[i].left) || (monitors[i].bottom < monitors[i].top))
+			return FALSE;
+		if (monitors[i].left < left)
+			left = monitors[i].left;
+		if (monitors[i].top < top)
+			top = monitors[i].top;
+		if (monitors[i].right > right)
+			right = monitors[i].right;
+		if (monitors[i].bottom > bottom)
+			bottom = monitors[i].bottom;
+	}
+
+	if ((right < left) || (bottom < top) || ((right - left + 1) > FRDPD_MAX_DESKTOP_SIZE) ||
+	    ((bottom - top + 1) > FRDPD_MAX_DESKTOP_SIZE))
+		return FALSE;
+	width = (UINT32)(right - left + 1);
+	height = (UINT32)(bottom - top + 1);
+	if ((width == 0) || (height == 0))
+		return FALSE;
+
+	old_width = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
+	old_height = freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
+	if ((width == old_width) && (height == old_height))
+		return TRUE;
+
+	frdp_context = (frdpdPeerContext*)context;
+	color_depth = freerdp_settings_get_uint32(settings, FreeRDP_ColorDepth);
+	if (frdp_context->managed_session_open &&
+	    !frdpd_send_agent_resize(frdp_context, width, height, color_depth))
+	{
+		WLog_WARN(TAG,
+		          "correlation_id=%s ignored display resize to %" PRIu32 "x%" PRIu32
+		          " for session_id=%s",
+		          frdp_context->correlation_id, width, height, frdp_context->session_id);
+		return TRUE;
+	}
+
+	if (!freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, width) ||
+	    !freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, height))
+		return FALSE;
+	frdpd_invalidate_framebuffer_cache(frdp_context);
+	WLog_INFO(TAG,
+	          "correlation_id=%s accepted display resize %" PRIu32 "x%" PRIu32
+	          " monitor_count=%" PRIu32,
+	          frdp_context->correlation_id, width, height, count);
+	return TRUE;
+}
+
 static BOOL frdpd_peer_refresh_rect(rdpContext* context, BYTE count, const RECTANGLE_16* areas)
 {
 	WINPR_UNUSED(count);
@@ -1109,6 +1260,14 @@ static BOOL frdpd_configure_security(freerdp_peer* client, const frdpdServerConf
 		return FALSE;
 	if (!freerdp_settings_set_bool(settings, FreeRDP_RefreshRect, TRUE))
 		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_DesktopResize, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_SupportDisplayControl, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_DynamicResolutionUpdate, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_UseMultimon, TRUE))
+		return FALSE;
 	if (!freerdp_settings_set_bool(settings, FreeRDP_HasRelativeMouseEvent, TRUE))
 		return FALSE;
 	if (!freerdp_settings_set_uint32(settings, FreeRDP_MultifragMaxRequestSize, 0xFFFFFF))
@@ -1142,6 +1301,7 @@ static void frdpd_register_callbacks(freerdp_peer* client)
 	WINPR_ASSERT(update);
 	update->RefreshRect = frdpd_peer_refresh_rect;
 	update->SuppressOutput = frdpd_peer_suppress_output;
+	update->RemoteMonitors = frdpd_peer_remote_monitors;
 }
 
 static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)

@@ -32,6 +32,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/Xdamage.h>
+#include <X11/extensions/Xrandr.h>
 #include <X11/extensions/XTest.h>
 
 #include <freerdp/input.h>
@@ -43,6 +44,7 @@
 #define FRDP_AGENT_READY_MARKER 'R'
 #define FRDP_AGENT_FRAME_TILE_MAX 120U
 #define FRDP_AGENT_DAMAGE_EVENT_LIMIT 256U
+#define FRDP_AGENT_DISPLAY_SIZE_MAX 8192U
 
 typedef struct {
     Display *display;
@@ -57,6 +59,16 @@ typedef struct {
     uint32_t dirty_rows;
     unsigned char *dirty_tiles;
 } frdpAgentFrameState;
+
+static volatile int g_x11_resize_error = 0;
+
+static int resize_error_handler(Display *display, XErrorEvent *event)
+{
+    (void)display;
+    (void)event;
+    g_x11_resize_error = 1;
+    return 0;
+}
 
 static Display *open_backend_display(const char *display_name, const char *correlation_id,
                                      const char *session_id)
@@ -743,6 +755,63 @@ static int validate_agent_ids(const char *event_correlation_id, const char *even
     return 0;
 }
 
+static int resize_backend_display(Display *display, const frdpAgentResizeRequest *request,
+                                  frdpAgentResizeResponse *response)
+{
+    int screen = 0;
+    Window root = 0;
+    int event_base = 0;
+    int error_base = 0;
+    int major = 0;
+    int minor = 0;
+    int mm_width = 0;
+    int mm_height = 0;
+    XErrorHandler previous_handler = NULL;
+
+    if (!display || !request || !response || request->width == 0 || request->height == 0 ||
+        request->width > FRDP_AGENT_DISPLAY_SIZE_MAX ||
+        request->height > FRDP_AGENT_DISPLAY_SIZE_MAX)
+        return -1;
+
+    XLockDisplay(display);
+    screen = DefaultScreen(display);
+    root = RootWindow(display, screen);
+    if (!XRRQueryExtension(display, &event_base, &error_base) ||
+        !XRRQueryVersion(display, &major, &minor) || major < 1) {
+        XUnlockDisplay(display);
+        return -1;
+    }
+
+    mm_width = DisplayWidthMM(display, screen);
+    mm_height = DisplayHeightMM(display, screen);
+    if (mm_width <= 0)
+        mm_width = (int)((request->width * 254U) / 960U);
+    if (mm_height <= 0)
+        mm_height = (int)((request->height * 254U) / 960U);
+    if (mm_width <= 0)
+        mm_width = 1;
+    if (mm_height <= 0)
+        mm_height = 1;
+
+    g_x11_resize_error = 0;
+    previous_handler = XSetErrorHandler(resize_error_handler);
+    XRRSetScreenSize(display, root, (int)request->width, (int)request->height, mm_width,
+                     mm_height);
+    XSync(display, False);
+    XSetErrorHandler(previous_handler);
+    if (g_x11_resize_error != 0 || DisplayWidth(display, screen) != (int)request->width ||
+        DisplayHeight(display, screen) != (int)request->height) {
+        XUnlockDisplay(display);
+        return -1;
+    }
+
+    response->success = 1;
+    response->width = request->width;
+    response->height = request->height;
+    XUnlockDisplay(display);
+    return 0;
+}
+
 static int handle_input_message(int fd, Display *display, uint32_t payload_len,
                                 const char *correlation_id, const char *session_id)
 {
@@ -785,6 +854,53 @@ static int send_frame_response(int fd, const frdpAgentFrameResponse *response,
             return -1;
     }
     return 0;
+}
+
+static int send_resize_response(int fd, const frdpAgentResizeResponse *response)
+{
+    frdpIpcHeader header;
+
+    memset(&header, 0, sizeof(header));
+    header.type = FRDP_IPC_AGENT_RESIZE_RESPONSE;
+    header.payload_len = sizeof(*response);
+    if (send_exact(fd, &header, sizeof(header)) != 0)
+        return -1;
+    return send_exact(fd, response, sizeof(*response));
+}
+
+static int handle_resize_message(int fd, Display *display, uint32_t payload_len,
+                                 const char *correlation_id, const char *session_id)
+{
+    frdpAgentResizeRequest request;
+    frdpAgentResizeResponse response;
+    int rc = -1;
+
+    memset(&request, 0, sizeof(request));
+    memset(&response, 0, sizeof(response));
+
+    if (payload_len != sizeof(request))
+        return -1;
+    if (recv_exact(fd, &request, sizeof(request)) != 0)
+        return -1;
+    request.correlation_id[sizeof(request.correlation_id) - 1] = '\0';
+    request.session_id[sizeof(request.session_id) - 1] = '\0';
+
+    snprintf(response.correlation_id, sizeof(response.correlation_id), "%s", correlation_id);
+    snprintf(response.session_id, sizeof(response.session_id), "%s", session_id);
+    if (validate_agent_ids(request.correlation_id, request.session_id, correlation_id,
+                           session_id) != 0) {
+        syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected mismatched resize request",
+               correlation_id, session_id);
+        snprintf(response.error, sizeof(response.error), "%s", "mismatched ids");
+    } else if (resize_backend_display(display, &request, &response) != 0) {
+        snprintf(response.error, sizeof(response.error), "%s", "resize failed");
+    } else {
+        syslog(LOG_INFO, "correlation_id=%s session_id=%s resized display to %ux%u",
+               correlation_id, session_id, response.width, response.height);
+    }
+
+    rc = send_resize_response(fd, &response);
+    return rc;
 }
 
 static int handle_frame_message(int fd, frdpAgentFrameState *frame_state, uint32_t payload_len,
@@ -839,6 +955,9 @@ static int handle_control_client(int fd, frdpAgentFrameState *frame_state, const
                                         header.payload_len, correlation_id, session_id);
         case FRDP_IPC_AGENT_FRAME_REQUEST:
             return handle_frame_message(fd, frame_state, header.payload_len, correlation_id, session_id);
+        case FRDP_IPC_AGENT_RESIZE_REQUEST:
+            return handle_resize_message(fd, frame_state ? frame_state->display : NULL,
+                                         header.payload_len, correlation_id, session_id);
         default:
             return -1;
     }
