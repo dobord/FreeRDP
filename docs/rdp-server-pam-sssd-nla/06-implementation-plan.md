@@ -143,7 +143,7 @@ Exit criteria: a domain-joined Windows client authenticates with Kerberos where 
 Deliverables:
 
 - [ ] ASAN/UBSAN builds;
-- [x] focused unit/CTest coverage for implemented static channel config parsing and capability validation;
+- [x] focused unit/CTest coverage for implemented static channel config parsing, capability validation, `drdynvc` rejection, and `max_connections` parsing;
 - [ ] fuzzing harnesses for channel parsers and selected RDP inputs;
 - [ ] protocol regression suite;
 - [ ] load testing harness;
@@ -161,7 +161,7 @@ Deliverables:
 - [ ] deb/rpm packages (draft packaging files exist, RPM CMake flags are aligned with `WITH_FRDPD`, but actual package builds are not verified);
 - [x] admin CLI `frdpctl` stub builds and installs under `WITH_FRDPD`;
 - [ ] admin CLI `frdpctl` session IPC operations;
-- [x] configuration reference, example, and partial parser integration for implemented daemon fields (`10-configuration-reference.md`, `server/frdp/config/frdpd.toml`);
+- [x] configuration reference, example, and partial parser integration for implemented daemon fields, including `max_connections` and static channel policy (`10-configuration-reference.md`, `server/frdp/config/frdpd.toml`);
 - [x] runbooks for AD join, keytab rotation, and troubleshooting (`09-runbooks.md`);
 - [ ] dashboards and alert rules;
 - [x] migration/fallback plan to xrdp (basic documented fallback in `09-runbooks.md`; rollback testing remains part of exit criteria);
