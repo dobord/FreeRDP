@@ -63,6 +63,28 @@ typedef struct {
 
 static volatile int g_x11_resize_error = 0;
 static volatile int g_x11_keyboard_error = 0;
+static volatile sig_atomic_t g_stop_requested = 0;
+
+static void agent_signal_handler(int signum)
+{
+    (void)signum;
+    g_stop_requested = 1;
+}
+
+static int install_signal_handlers(void)
+{
+    struct sigaction action;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = agent_signal_handler;
+    if (sigemptyset(&action.sa_mask) != 0)
+        return -1;
+    if (sigaction(SIGINT, &action, NULL) != 0)
+        return -1;
+    if (sigaction(SIGTERM, &action, NULL) != 0)
+        return -1;
+    return 0;
+}
 
 static char hex_digit(unsigned int value)
 {
@@ -1222,6 +1244,27 @@ static int wait_for_backend_exit(pid_t pid, int control_fd, frdpAgentFrameState 
             return status;
         }
 
+        if (g_stop_requested) {
+            kill(pid, SIGTERM);
+            for (int x = 0; x < 10; x++) {
+                const pid_t stop_rc = waitpid(pid, &status, WNOHANG);
+                if (stop_rc == pid)
+                    return status;
+                if (stop_rc < 0) {
+                    if (errno == EINTR)
+                        continue;
+                    return status;
+                }
+                usleep(100000);
+            }
+            kill(pid, SIGKILL);
+            while (waitpid(pid, &status, 0) < 0) {
+                if (errno != EINTR)
+                    break;
+            }
+            return status;
+        }
+
         if (control_fd < 0) {
             usleep(200000);
             continue;
@@ -1308,6 +1351,12 @@ int main(int argc, char **argv)
     (void)argv;
     openlog("frdp-session-agent", LOG_PID, LOG_USER);
     XInitThreads();
+
+    if (install_signal_handlers() != 0) {
+        syslog(LOG_ERR, "failed to install signal handlers");
+        closelog();
+        return 1;
+    }
 
     const char *correlation_id = getenv("FRDP_CORRELATION_ID");
     if (!correlation_id) {
