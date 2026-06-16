@@ -29,7 +29,7 @@ Rotate the service key periodically:
 - **Authentication fails**: Check `/var/log/auth.log` for PAM/SSSD errors. Verify SPN and keytab, ensure the client’s clock is within 5 minutes of the server.
 - **Sessions do not start**: Confirm that Xvfb is installed and accessible. Inspect `journalctl -u frdp-sesmand` for session errors.
 - **Performance issues**: Use the load testing harness to measure resource usage and adjust `max_connections` and session timeouts. Monitor CPU and memory with `top` or systemd metrics.
-- **Blocked channels**: Ensure the `[channels]` section of `frdpd.toml` allows required redirections. The default denies all except clipboard and audio.
+- **Blocked channels**: Channel policy is not wired yet; the current parser rejects `[channels]` until deny-by-default channel enforcement and explicit redirection allow-lists are implemented.
 
 ## Dashboards and alert rules
 

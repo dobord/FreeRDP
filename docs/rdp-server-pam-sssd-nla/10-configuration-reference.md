@@ -27,4 +27,4 @@ Planned channel policy fields. The current parser rejects `[channels]` until cha
 
 ## [audit]
 
-Planned audit fields. The current parser rejects `[audit]` until structured audit and correlation-id propagation are implemented.
+Planned audit fields. The current parser rejects `[audit]` until structured audit configuration and channel correlation are implemented; auth/session/agent correlation ids already exist on the optional IPC paths.

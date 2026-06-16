@@ -16,7 +16,7 @@ xrdp remains a mature and practical Linux RDP server. Its strengths are readines
 ## Disadvantages of the FreeRDP-based approach
 
 - The FreeRDP server side is less ready as a full Linux terminal server than xrdp.
-- Session lifecycle, desktop backend, reconnect, packaging, and operations tooling must be implemented.
+- Session lifecycle and the desktop backend are partial optional prototypes; reconnect, production lifecycle management, package-build verification, and operations tooling still need implementation.
 - Significant protocol interoperability risk with Windows clients.
 - Fuzzing, regression suites, and security review are required around NLA/CredSSP/PAM boundaries.
 - Cost of ownership is likely higher during the first 12-18 months.
@@ -43,8 +43,8 @@ xrdp remains a mature and practical Linux RDP server. Its strengths are readines
 | Readiness | High | Low at the start, improves by milestone |
 | NLA/CredSSP/Kerberos-first | Limited / not the primary profile | Target profile |
 | PAM/SSSD | Works through the session/auth stack | Designed as a core boundary |
-| Session lifecycle | Existing sesman | Must be implemented |
-| Desktop backend | Mature xorgxrdp | MVP Xorg/Xvfb, Wayland later |
+| Session lifecycle | Existing sesman | Partial optional `frdp-sesmand`; reconnect/production lifecycle pending |
+| Desktop backend | Mature xorgxrdp | Partial Xvfb/session-agent path; Wayland later |
 | Redirection policy | Features exist, policy depends on config | Deny-by-default, centralized policy |
 | Security isolation | Improving | Designed from the start |
 | Time to MVP | Faster | Longer |
