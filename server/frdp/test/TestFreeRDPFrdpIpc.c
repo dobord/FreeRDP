@@ -175,6 +175,33 @@ cleanup:
 	return rc;
 }
 
+static int test_send_recv_reject_null_buffers(void)
+{
+	int fds[2] = { -1, -1 };
+	int rc = -1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	errno = 0;
+	if (frdp_ipc_send(fds[0], NULL, 1) != -1 || errno != EINVAL)
+		goto cleanup;
+	errno = 0;
+	if (frdp_ipc_recv(fds[0], NULL, 1) != -1 || errno != EINVAL)
+		goto cleanup;
+	if (frdp_ipc_send(fds[0], NULL, 0) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv(fds[0], NULL, 0) != 0)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
 int TestFreeRDPFrdpIpc(int argc, char* argv[])
 {
 	(void)argc;
@@ -189,6 +216,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_connect_rejects_insecure_socket() != 0)
 		return -1;
 	if (test_recv_rejects_short_read() != 0)
+		return -1;
+	if (test_send_recv_reject_null_buffers() != 0)
 		return -1;
 	return 0;
 }

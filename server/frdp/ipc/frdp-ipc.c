@@ -91,6 +91,11 @@ int frdp_ipc_send(int fd, const void *buf, size_t len)
 {
     const char *p = (const char *)buf;
     size_t total = 0;
+
+    if (!buf && (len > 0)) {
+        errno = EINVAL;
+        return -1;
+    }
 #ifdef MSG_NOSIGNAL
     const int flags = MSG_NOSIGNAL;
 #else
@@ -115,6 +120,11 @@ int frdp_ipc_recv(int fd, void *buf, size_t len)
 {
     char *p = (char *)buf;
     size_t total = 0;
+
+    if (!buf && (len > 0)) {
+        errno = EINVAL;
+        return -1;
+    }
     while (total < len) {
         ssize_t n = recv(fd, p + total, len - total, 0);
         if (n < 0) {
