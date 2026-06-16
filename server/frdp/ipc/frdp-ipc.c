@@ -5,6 +5,7 @@
 #include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <string.h>
 #include <errno.h>
 #include <stdio.h>
@@ -56,6 +57,17 @@ static int frdp_ipc_set_timeouts(int fd)
     return 0;
 }
 
+static int frdp_ipc_set_cloexec(int fd)
+{
+    const int flags = fcntl(fd, F_GETFD);
+
+    if (flags < 0)
+        return -1;
+    if (fcntl(fd, F_SETFD, flags | FD_CLOEXEC) != 0)
+        return -1;
+    return 0;
+}
+
 /* Connect to a UNIX domain socket and return a file descriptor */
 int frdp_ipc_connect(const char *socket_path)
 {
@@ -64,9 +76,21 @@ int frdp_ipc_connect(const char *socket_path)
         return -1;
     }
 
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    int fd = -1;
+
+#ifdef SOCK_CLOEXEC
+    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if ((fd == -1) && (errno == EINVAL || errno == EPROTONOSUPPORT))
+#endif
+        fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd == -1)
         return -1;
+    if (frdp_ipc_set_cloexec(fd) != 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
     if (frdp_ipc_set_timeouts(fd) != 0) {
         int saved = errno;
         close(fd);

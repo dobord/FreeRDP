@@ -1,6 +1,7 @@
 #include "ipc/frdp-ipc.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,6 +81,9 @@ static int test_connect_secure_socket(void)
 		goto cleanup;
 	client_fd = frdp_ipc_connect(socket_path);
 	if (client_fd < 0)
+		goto cleanup;
+	const int flags = fcntl(client_fd, F_GETFD);
+	if (flags < 0 || (flags & FD_CLOEXEC) == 0)
 		goto cleanup;
 	accepted_fd = accept(server_fd, NULL, NULL);
 	if (accepted_fd < 0)
