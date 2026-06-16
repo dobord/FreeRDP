@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 
 #include <winpr/crt.h>
 
@@ -47,6 +48,38 @@ static BOOL frdpd_auth_copy_ipc_string(char* dst, size_t dst_size, const char* s
 	return (rc >= 0) && ((size_t)rc < dst_size);
 }
 
+typedef struct
+{
+	char* secret;
+	size_t length;
+	BOOL locked;
+} frdpdLockedSecret;
+
+static BOOL frdpd_auth_lock_secret(char* secret, size_t length, frdpdLockedSecret* locked)
+{
+	if (!secret || !locked || (length == 0))
+		return FALSE;
+
+	memset(locked, 0, sizeof(*locked));
+	locked->secret = secret;
+	locked->length = length;
+	if (mlock(secret, length) != 0)
+		return FALSE;
+	locked->locked = TRUE;
+	return TRUE;
+}
+
+static void frdpd_auth_clear_locked_secret(frdpdLockedSecret* locked)
+{
+	if (!locked || !locked->secret)
+		return;
+
+	SecureZeroMemory(locked->secret, locked->length);
+	if (locked->locked)
+		(void)munlock(locked->secret, locked->length);
+	memset(locked, 0, sizeof(*locked));
+}
+
 static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
                                             const SEC_WINNT_AUTH_IDENTITY* identity,
                                             frdpdAuthResult* result)
@@ -57,6 +90,8 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	char* pam_user = NULL;
 	BOOL ok = FALSE;
 	int fd = -1;
+	frdpdLockedSecret password_secret = { 0 };
+	frdpdLockedSecret request_password_secret = { 0 };
 	frdpAuthRequest request = { 0 };
 	frdpAuthResponse response = { 0 };
 	frdpIpcHeader header = { 0 };
@@ -71,14 +106,22 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	if (!sspi_CopyAuthIdentityFieldsA((const SEC_WINNT_AUTH_IDENTITY_INFO*)identity, &user, &domain,
 	                                  &password))
 		goto fail;
+	if (!password)
+		goto fail;
+	if (!frdpd_auth_lock_secret(password, strlen(password) + 1, &password_secret))
+		goto fail;
 	if (!frdpd_pam_build_user(user, domain, config->domain_mode, &pam_user))
 		goto fail;
 
 	if (!frdpd_auth_copy_ipc_string(request.user, sizeof(request.user), pam_user) ||
 	    !frdpd_auth_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
 	                                config->correlation_id) ||
-	    !frdpd_auth_copy_ipc_string(request.rhost, sizeof(request.rhost), config->rhost) ||
-	    !frdpd_auth_copy_ipc_string(request.password, sizeof(request.password), password))
+	    !frdpd_auth_copy_ipc_string(request.rhost, sizeof(request.rhost), config->rhost))
+		goto fail;
+	if (!frdpd_auth_lock_secret(request.password, sizeof(request.password),
+	                           &request_password_secret))
+		goto fail;
+	if (!frdpd_auth_copy_ipc_string(request.password, sizeof(request.password), password))
 		goto fail;
 
 	fd = frdp_ipc_connect(config->auth_socket);
@@ -90,7 +133,7 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	if ((frdp_ipc_send(fd, &header, sizeof(header)) < 0) ||
 	    (frdp_ipc_send(fd, &request, sizeof(request)) < 0))
 		goto fail;
-	frdpd_pam_clear_secret(request.password);
+	frdpd_auth_clear_locked_secret(&request_password_secret);
 
 	if (frdp_ipc_recv(fd, &response_header, sizeof(response_header)) !=
 	    (int)sizeof(response_header))
@@ -116,11 +159,11 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 fail:
 	if (fd >= 0)
 		(void)frdp_ipc_close(fd);
-	frdpd_pam_clear_secret(request.password);
+	frdpd_auth_clear_locked_secret(&request_password_secret);
 	free(user);
 	free(domain);
 	free(pam_user);
-	frdpd_pam_clear_secret(password);
+	frdpd_auth_clear_locked_secret(&password_secret);
 	free(password);
 	return ok;
 }
@@ -133,6 +176,7 @@ BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
 	char* password = NULL;
 	char* pam_user = NULL;
 	BOOL ok = FALSE;
+	frdpdLockedSecret password_secret = { 0 };
 	frdpdPamAuthRequest request = { 0 };
 
 	frdpd_auth_result_set(result, FRDPD_PAM_AUTH_ERROR, 0);
@@ -144,6 +188,10 @@ BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
 
 	if (!sspi_CopyAuthIdentityFieldsA((const SEC_WINNT_AUTH_IDENTITY_INFO*)identity, &user, &domain,
 	                                  &password))
+		goto fail;
+	if (!password)
+		goto fail;
+	if (!frdpd_auth_lock_secret(password, strlen(password) + 1, &password_secret))
 		goto fail;
 	if (!frdpd_pam_build_user(user, domain, config->domain_mode, &pam_user))
 		goto fail;
@@ -174,7 +222,7 @@ fail:
 	free(user);
 	free(domain);
 	free(pam_user);
-	frdpd_pam_clear_secret(password);
+	frdpd_auth_clear_locked_secret(&password_secret);
 	free(password);
 
 	return ok;
