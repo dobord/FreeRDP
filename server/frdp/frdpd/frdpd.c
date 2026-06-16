@@ -9,6 +9,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1744,6 +1745,8 @@ static void frdpd_print_usage(const char* app)
 	(void)fprintf(stderr, "Options:\n");
 	(void)fprintf(stderr, "  --bind=<address>              Bind address, default all interfaces\n");
 	(void)fprintf(stderr, "  --port=<port>                 TCP port, default 3389\n");
+	(void)fprintf(stderr,
+	              "  --max-connections=<n>         Concurrent accepted peer cap, 0 disables\n");
 	(void)fprintf(stderr, "  --cert=<path>                 TLS certificate, default server.crt\n");
 	(void)fprintf(stderr, "  --key=<path>                  TLS private key, default server.key\n");
 	(void)fprintf(stderr, "  --config=<path>               Load frdpd.toml before CLI overrides\n");
@@ -1774,6 +1777,24 @@ static BOOL frdpd_parse_port(const char* value, UINT16* port)
 		return FALSE;
 
 	*port = (UINT16)tmp;
+	return TRUE;
+}
+
+static BOOL frdpd_parse_max_connections(const char* value, UINT32* max_connections)
+{
+	char* end = NULL;
+	unsigned long tmp = 0;
+
+	WINPR_ASSERT(max_connections);
+	if (!value || (value[0] == '\0') || (value[0] == '-'))
+		return FALSE;
+
+	errno = 0;
+	tmp = strtoul(value, &end, 10);
+	if ((errno != 0) || !end || (end[0] != '\0') || (tmp > INT_MAX))
+		return FALSE;
+
+	*max_connections = (UINT32)tmp;
 	return TRUE;
 }
 
@@ -1942,6 +1963,11 @@ static BOOL frdpd_parse_args(int argc, char* argv[], frdpdOptions* options)
 		else if (strncmp(arg, "--port=", 7) == 0)
 		{
 			if (!frdpd_parse_port(&arg[7], &options->server.port))
+				return FALSE;
+		}
+		else if (strncmp(arg, "--max-connections=", 18) == 0)
+		{
+			if (!frdpd_parse_max_connections(&arg[18], &options->server.max_connections))
 				return FALSE;
 		}
 		else if (strncmp(arg, "--cert=", 7) == 0)

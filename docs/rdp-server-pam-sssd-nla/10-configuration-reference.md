@@ -7,7 +7,7 @@ This document describes the configuration options available in `frdpd.toml` (see
 - `listen` (string): IP address and port to bind. Default `0.0.0.0:3389`.
 - `security` (string): Acceptable security layer. Currently implemented value: `nla` (CredSSP/Kerberos). Default `nla`. TLS fallback remains a separate compatibility path and must not be treated as the production default.
 - `tls_cert`, `tls_key` (path): Paths to the TLS certificate and private key.
-- `max_connections` (integer): Optional cap on concurrently accepted peer workers, in the range `0..2147483647`. `0` or omission means unlimited. When the cap is reached, `frdpd` rejects new peers before authentication, channel checks, or managed-session creation.
+- `max_connections` (integer): Optional cap on concurrently accepted peer workers, in the range `0..2147483647`. `0` or omission means unlimited. The CLI override is `--max-connections=<n>`. When the cap is reached, `frdpd` rejects new peers before authentication, channel checks, or managed-session creation.
 
 ## [auth]
 
