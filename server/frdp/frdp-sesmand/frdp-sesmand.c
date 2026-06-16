@@ -61,9 +61,31 @@ static int session_count = 0;
 static int next_display = FRDP_DISPLAY_MIN;
 static const char *g_pam_service = "frdpd";
 static char g_agent_socket_dir[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
+static volatile sig_atomic_t g_stop_requested = 0;
 
 static int create_agent_socket(const char *socket_path);
 static void destroy_agent_socket(int *fd, const char *socket_path);
+
+static void sesmand_signal_handler(int signum)
+{
+    (void)signum;
+    g_stop_requested = 1;
+}
+
+static int install_signal_handlers(void)
+{
+    struct sigaction action;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = sesmand_signal_handler;
+    if (sigemptyset(&action.sa_mask) != 0)
+        return -1;
+    if (sigaction(SIGINT, &action, NULL) != 0)
+        return -1;
+    if (sigaction(SIGTERM, &action, NULL) != 0)
+        return -1;
+    return 0;
+}
 
 static char hex_digit(unsigned int value)
 {
@@ -556,6 +578,12 @@ static void cleanup_session(int idx)
     session_count--;
 }
 
+static void cleanup_all_sessions(void)
+{
+    while (session_count > 0)
+        cleanup_session(session_count - 1);
+}
+
 static int copy_ipc_string(char *dst, size_t dst_size, const char *src, size_t src_size)
 {
     size_t len = 0;
@@ -924,7 +952,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
 
     escape_log_field(socket_path, escaped_socket, sizeof(escaped_socket));
     printf("frdp-sesmand IPC server listening on %s\n", escaped_socket);
-    while (1) {
+    while (!g_stop_requested) {
         struct pollfd pfd;
         int poll_status = 0;
 
@@ -976,9 +1004,10 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
         close(cfd);
     }
 
+    cleanup_all_sessions();
     close(fd);
     unlink(socket_path);
-    return -1;
+    return g_stop_requested ? 0 : -1;
 }
 
 static void usage(const char *argv0)
@@ -1020,6 +1049,11 @@ int main(int argc, char **argv)
     }
 
     openlog("frdp-sesmand", LOG_PID, LOG_DAEMON);
+    if (install_signal_handlers() != 0) {
+        fprintf(stderr, "failed to install signal handlers\n");
+        closelog();
+        return 1;
+    }
 
     if (argc == 2 && strcmp(argv[1], "--help") == 0) {
         usage(argv[0]);
@@ -1103,8 +1137,20 @@ int main(int argc, char **argv)
     }
 
     /* Monitor for agent exits and clean up sessions accordingly. */
-    while (session_count > 0) {
-        pid_t pid = wait(NULL);
+    int wait_error = 0;
+    while ((session_count > 0) && !g_stop_requested) {
+        int status = 0;
+        pid_t pid = waitpid(-1, &status, WNOHANG);
+        if (pid == 0) {
+            usleep(200000);
+            continue;
+        }
+        if (pid < 0) {
+            if (errno == EINTR)
+                continue;
+            wait_error = 1;
+            break;
+        }
         for (int i = 0; i < session_count; i++) {
             if (sessions[i].agent_pid == pid) {
                 cleanup_session(i);
@@ -1112,7 +1158,9 @@ int main(int argc, char **argv)
             }
         }
     }
+    if ((session_count > 0) && (g_stop_requested || wait_error))
+        cleanup_all_sessions();
     syslog(LOG_INFO, "no more sessions, shutting down");
     closelog();
-    return 0;
+    return (wait_error && !g_stop_requested) ? 1 : 0;
 }
