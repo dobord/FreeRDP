@@ -397,6 +397,51 @@ static int frame_state_rect_dirty(const frdpAgentFrameState *state, int x, int y
     return 0;
 }
 
+static int frame_state_find_dirty_tile(const frdpAgentFrameState *state, uint32_t start_x,
+                                       uint32_t start_y, uint32_t *x, uint32_t *y,
+                                       uint32_t *width, uint32_t *height)
+{
+    uint32_t start_col = 0;
+    uint32_t start_row = 0;
+    size_t count = 0;
+    size_t start = 0;
+
+    if (!state || !state->dirty_tiles || state->dirty_cols == 0 || state->dirty_rows == 0 ||
+        !x || !y || !width || !height)
+        return 0;
+    if (state->dirty_cols > SIZE_MAX / state->dirty_rows)
+        return 0;
+    count = (size_t)state->dirty_cols * state->dirty_rows;
+    start_col = start_x / FRDP_AGENT_FRAME_TILE_MAX;
+    start_row = start_y / FRDP_AGENT_FRAME_TILE_MAX;
+    if (start_col >= state->dirty_cols)
+        start_col = state->dirty_cols - 1U;
+    if (start_row >= state->dirty_rows)
+        start_row = state->dirty_rows - 1U;
+    start = ((size_t)start_row * state->dirty_cols) + start_col;
+
+    for (size_t i = 0; i < count; i++) {
+        const size_t index = (start + i) % count;
+        const uint32_t col = (uint32_t)(index % state->dirty_cols);
+        const uint32_t row = (uint32_t)(index / state->dirty_cols);
+        const uint32_t tile_x = col * FRDP_AGENT_FRAME_TILE_MAX;
+        const uint32_t tile_y = row * FRDP_AGENT_FRAME_TILE_MAX;
+
+        if (!state->dirty_tiles[index])
+            continue;
+        *x = tile_x;
+        *y = tile_y;
+        *width = FRDP_AGENT_FRAME_TILE_MAX;
+        *height = FRDP_AGENT_FRAME_TILE_MAX;
+        if (*width > state->screen_width - *x)
+            *width = state->screen_width - *x;
+        if (*height > state->screen_height - *y)
+            *height = state->screen_height - *y;
+        return (*width > 0 && *height > 0) ? 1 : 0;
+    }
+    return 0;
+}
+
 static void frame_state_process_damage_events(frdpAgentFrameState *state)
 {
     XEvent event;
@@ -480,11 +525,18 @@ static int capture_frame_tile(frdpAgentFrameState *state, const frdpAgentFrameRe
     unsigned char *buffer = NULL;
     uint32_t width = 0;
     uint32_t height = 0;
+    uint32_t capture_x = 0;
+    uint32_t capture_y = 0;
+    uint32_t capture_width = 0;
+    uint32_t capture_height = 0;
 
     if (!state || !state->display || !request || !response || !pixels)
         return -1;
     *pixels = NULL;
-    if (request->flags & ~FRDP_AGENT_FRAME_REQUEST_FORCE)
+    if (request->flags & ~(FRDP_AGENT_FRAME_REQUEST_FORCE | FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
+        return -1;
+    if ((request->flags & FRDP_AGENT_FRAME_REQUEST_FORCE) &&
+        (request->flags & FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
         return -1;
     display = state->display;
     if (frame_state_refresh_geometry(state) != 0)
@@ -514,30 +566,47 @@ static int capture_frame_tile(frdpAgentFrameState *state, const frdpAgentFrameRe
     response->width = width;
     response->height = height;
     response->bpp = 32;
-    if (!(request->flags & FRDP_AGENT_FRAME_REQUEST_FORCE) && state->damage_enabled &&
-        !frame_state_rect_dirty(state, (int)request->x, (int)request->y, width, height)) {
-        response->success = 1;
-        response->flags = FRDP_AGENT_FRAME_RESPONSE_UNCHANGED;
-        return 0;
+    capture_x = request->x;
+    capture_y = request->y;
+    capture_width = width;
+    capture_height = height;
+    if (!(request->flags & FRDP_AGENT_FRAME_REQUEST_FORCE) && state->damage_enabled) {
+        if (request->flags & FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY) {
+            if (!frame_state_find_dirty_tile(state, request->x, request->y, &capture_x,
+                                            &capture_y, &capture_width, &capture_height)) {
+                response->success = 1;
+                response->flags = FRDP_AGENT_FRAME_RESPONSE_UNCHANGED;
+                return 0;
+            }
+        } else if (!frame_state_rect_dirty(state, (int)request->x, (int)request->y, width,
+                                          height)) {
+            response->success = 1;
+            response->flags = FRDP_AGENT_FRAME_RESPONSE_UNCHANGED;
+            return 0;
+        }
     }
+    response->x = capture_x;
+    response->y = capture_y;
+    response->width = capture_width;
+    response->height = capture_height;
 
-    buffer = (unsigned char *)calloc((size_t)width * height, 4);
+    buffer = (unsigned char *)calloc((size_t)capture_width * capture_height, 4);
     if (!buffer)
         return -1;
 
     XLockDisplay(display);
-    image = XGetImage(display, state->root, (int)request->x, (int)request->y,
-                      width, height, AllPlanes, ZPixmap);
+    image = XGetImage(display, state->root, (int)capture_x, (int)capture_y,
+                      capture_width, capture_height, AllPlanes, ZPixmap);
     XUnlockDisplay(display);
     if (!image) {
         free(buffer);
         return -1;
     }
 
-    for (uint32_t row = 0; row < height; row++) {
-        const uint32_t src_y = height - row - 1U;
-        unsigned char *dst = buffer + ((size_t)row * width * 4U);
-        for (uint32_t col = 0; col < width; col++) {
+    for (uint32_t row = 0; row < capture_height; row++) {
+        const uint32_t src_y = capture_height - row - 1U;
+        unsigned char *dst = buffer + ((size_t)row * capture_width * 4U);
+        for (uint32_t col = 0; col < capture_width; col++) {
             const unsigned long pixel = XGetPixel(image, (int)col, (int)src_y);
             dst[(size_t)col * 4U + 0] = extract_ximage_channel(pixel, image->blue_mask);
             dst[(size_t)col * 4U + 1] = extract_ximage_channel(pixel, image->green_mask);
@@ -546,11 +615,12 @@ static int capture_frame_tile(frdpAgentFrameState *state, const frdpAgentFrameRe
         }
     }
     XDestroyImage(image);
-    frame_state_set_dirty_rect(state, (int)request->x, (int)request->y, width, height, 0);
+    frame_state_set_dirty_rect(state, (int)capture_x, (int)capture_y, capture_width,
+                               capture_height, 0);
 
     response->success = 1;
-    response->stride = width * 4U;
-    response->data_length = response->stride * height;
+    response->stride = capture_width * 4U;
+    response->data_length = response->stride * capture_height;
     *pixels = buffer;
     return 0;
 }

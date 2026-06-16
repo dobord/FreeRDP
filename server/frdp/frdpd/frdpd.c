@@ -319,7 +319,10 @@ static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT3
 	if (!context || !response || !data || !context->managed_session_open ||
 	    (context->agent_socket[0] == '\0'))
 		return FALSE;
-	if (flags & ~FRDP_AGENT_FRAME_REQUEST_FORCE)
+	if (flags & ~(FRDP_AGENT_FRAME_REQUEST_FORCE | FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
+		return FALSE;
+	if ((flags & FRDP_AGENT_FRAME_REQUEST_FORCE) &&
+	    (flags & FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
 		return FALSE;
 	*data = NULL;
 	memset(response, 0, sizeof(*response));
@@ -367,13 +370,19 @@ static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT3
 	if ((flags & FRDP_AGENT_FRAME_REQUEST_FORCE) &&
 	    (response->flags & FRDP_AGENT_FRAME_RESPONSE_UNCHANGED))
 		goto fail;
-	if ((response->x != x) || (response->y != y) || (response->width == 0) ||
-	    (response->height == 0) || (response->width > width) || (response->height > height) ||
+	if (!(flags & FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY) &&
+	    ((response->x != x) || (response->y != y) || (response->width > width) ||
+	     (response->height > height)))
+		goto fail;
+	if ((response->width == 0) || (response->height == 0) ||
 	    (response->width > FRDPD_FRAME_TILE_SIZE) ||
 	    (response->height > FRDPD_FRAME_TILE_SIZE) || (response->bpp != 32))
 		goto fail;
 	if (response->flags & FRDP_AGENT_FRAME_RESPONSE_UNCHANGED)
 	{
+		if ((response->x != x) || (response->y != y) || (response->width > width) ||
+		    (response->height > height))
+			goto fail;
 		if ((response->stride != 0) || (response->data_length != 0))
 			goto fail;
 		ok = TRUE;
@@ -499,7 +508,8 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 	{
 		BYTE* data = NULL;
 		UINT64 tile_hash = 0;
-		UINT64* hash_slot = NULL;
+		UINT64* request_hash_slot = NULL;
+		UINT64* response_hash_slot = NULL;
 		UINT32 request_flags = 0;
 		frdpAgentFrameResponse frame = { 0 };
 		const UINT32 x = context->framebuffer_next_x;
@@ -508,9 +518,11 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 		const UINT32 height = frdpd_min_u32(FRDPD_FRAME_TILE_SIZE, desktop_height - y);
 
 		if (hash_cache_ready)
-			hash_slot = frdpd_frame_tile_hash_slot(context, x, y);
-		if (!hash_slot || (*hash_slot == 0))
+			request_hash_slot = frdpd_frame_tile_hash_slot(context, x, y);
+		if (!request_hash_slot || (*request_hash_slot == 0))
 			request_flags |= FRDP_AGENT_FRAME_REQUEST_FORCE;
+		else
+			request_flags |= FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY;
 
 		if (!frdpd_receive_agent_frame(context, x, y, width, height, request_flags, &frame,
 		                              &data))
@@ -521,6 +533,7 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 				          context->correlation_id, context->session_id);
 				context->agent_frame_warned = TRUE;
 			}
+			frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
 			return TRUE;
 		}
 		if (frame.flags & FRDP_AGENT_FRAME_RESPONSE_UNCHANGED)
@@ -529,8 +542,25 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 			frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
 			continue;
 		}
+		if ((frame.x >= desktop_width) || (frame.y >= desktop_height) ||
+		    (frame.width > desktop_width - frame.x) ||
+		    (frame.height > desktop_height - frame.y))
+		{
+			free(data);
+			if (!context->agent_frame_warned)
+			{
+				WLog_WARN(TAG,
+				          "correlation_id=%s received out-of-bounds framebuffer tile from session_id=%s",
+				          context->correlation_id, context->session_id);
+				context->agent_frame_warned = TRUE;
+			}
+			frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
+			return TRUE;
+		}
+		if (hash_cache_ready)
+			response_hash_slot = frdpd_frame_tile_hash_slot(context, frame.x, frame.y);
 		tile_hash = frdpd_hash_frame_tile(data, frame.data_length);
-		if (hash_slot && (*hash_slot == tile_hash))
+		if (response_hash_slot && (*response_hash_slot == tile_hash))
 		{
 			free(data);
 			context->agent_frame_warned = FALSE;
@@ -545,8 +575,8 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 			          context->correlation_id, context->session_id);
 			return FALSE;
 		}
-		if (hash_slot)
-			*hash_slot = tile_hash;
+		if (response_hash_slot)
+			*response_hash_slot = tile_hash;
 		free(data);
 		context->agent_frame_warned = FALSE;
 		frdpd_advance_frame_cursor(context, desktop_width, desktop_height);

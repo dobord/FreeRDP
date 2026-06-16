@@ -48,7 +48,7 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - optional `frdp-sesmand` session IPC creates a root-owned per-session agent control socket and returns it to `frdpd` for keyboard/mouse event forwarding into the session agent;
 - `--pam-auth-test` smoke-test mode for the PAM helper path;
 - process-level core dump disabling before credential handling;
-- a minimal raw-tile framebuffer pump from `frdp-session-agent` to `frdpd` using FreeRDP bitmap updates, with XDamage-backed clean-tile responses, per-peer unchanged-tile suppression, and cache invalidation for refresh/suppress-output requests.
+- a minimal raw-tile framebuffer pump from `frdp-session-agent` to `frdpd` using FreeRDP bitmap updates, with XDamage-backed dirty/clean-tile responses, per-peer unchanged-tile suppression, and cache invalidation for refresh/suppress-output requests.
 
 CMake-built helper binaries/prototypes that are not yet the default canonical runtime topology:
 
@@ -111,7 +111,7 @@ Exit criteria: the user receives a desktop session after successful authenticati
 
 Deliverables:
 
-- [ ] framebuffer/damage capture (partial: raw framebuffer tiles can be pulled from the agent and sent as bitmap updates, the agent can use XDamage to report clean tiles, and unchanged tiles are suppressed with per-peer hashes; compression and encoder scheduling are not implemented yet);
+- [ ] framebuffer/damage capture (partial: raw framebuffer tiles can be pulled from the agent and sent as bitmap updates, the agent can use XDamage to select dirty tiles or report clean tiles, and unchanged tiles are suppressed with per-peer hashes; compression and encoder scheduling are not implemented yet);
 - [x] minimal raw framebuffer tile transport from the managed session agent to FreeRDP bitmap updates;
 - [ ] basic encoder scheduling;
 - [x] keyboard/mouse input (partial: integrated callbacks forward input over optional agent control IPC and the agent injects scancode keyboard plus mouse events through XTest; Unicode/text input is not implemented yet);
