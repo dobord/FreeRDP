@@ -148,7 +148,7 @@ It is forbidden to log passwords, raw CredSSP blobs, Kerberos tickets, keytab pa
 4. Test the PAM stack with a local test helper.
 5. Verify the TLS certificate chain.
 6. Compare the client authentication mechanism: Kerberos vs NTLM.
-7. Check group-based channel policy.
+7. Check the static channel exact allow-list policy.
 8. Check Xorg/Xvfb startup logs and the user runtime directory.
 
 ## Upgrade policy
