@@ -307,8 +307,8 @@ static BOOL frdpd_set_frame_ipc_timeout(int fd)
 }
 
 static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT32 y, UINT32 width,
-                                      UINT32 height, frdpAgentFrameResponse* response,
-                                      BYTE** data)
+                                      UINT32 height, UINT32 flags,
+                                      frdpAgentFrameResponse* response, BYTE** data)
 {
 	int fd = -1;
 	frdpIpcHeader header = { 0 };
@@ -318,6 +318,8 @@ static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT3
 
 	if (!context || !response || !data || !context->managed_session_open ||
 	    (context->agent_socket[0] == '\0'))
+		return FALSE;
+	if (flags & ~FRDP_AGENT_FRAME_REQUEST_FORCE)
 		return FALSE;
 	*data = NULL;
 	memset(response, 0, sizeof(*response));
@@ -329,6 +331,7 @@ static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT3
 	request.y = y;
 	request.width = width;
 	request.height = height;
+	request.flags = flags;
 
 	fd = frdp_ipc_connect(context->agent_socket);
 	if (fd < 0)
@@ -359,11 +362,23 @@ static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT3
 	if ((strcmp(response->session_id, context->session_id) != 0) ||
 	    (strcmp(response->correlation_id, context->correlation_id) != 0))
 		goto fail;
+	if (response->flags & ~FRDP_AGENT_FRAME_RESPONSE_UNCHANGED)
+		goto fail;
+	if ((flags & FRDP_AGENT_FRAME_REQUEST_FORCE) &&
+	    (response->flags & FRDP_AGENT_FRAME_RESPONSE_UNCHANGED))
+		goto fail;
 	if ((response->x != x) || (response->y != y) || (response->width == 0) ||
 	    (response->height == 0) || (response->width > width) || (response->height > height) ||
 	    (response->width > FRDPD_FRAME_TILE_SIZE) ||
 	    (response->height > FRDPD_FRAME_TILE_SIZE) || (response->bpp != 32))
 		goto fail;
+	if (response->flags & FRDP_AGENT_FRAME_RESPONSE_UNCHANGED)
+	{
+		if ((response->stride != 0) || (response->data_length != 0))
+			goto fail;
+		ok = TRUE;
+		goto done;
+	}
 	if ((response->stride != response->width * 4U) ||
 	    (response->data_length != response->stride * response->height) ||
 	    (response->data_length == 0) || (response->data_length > UINT16_MAX))
@@ -382,6 +397,7 @@ fail:
 		free(*data);
 		*data = NULL;
 	}
+done:
 	if (fd >= 0)
 		(void)frdp_ipc_close(fd);
 	return ok;
@@ -484,13 +500,20 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 		BYTE* data = NULL;
 		UINT64 tile_hash = 0;
 		UINT64* hash_slot = NULL;
+		UINT32 request_flags = 0;
 		frdpAgentFrameResponse frame = { 0 };
 		const UINT32 x = context->framebuffer_next_x;
 		const UINT32 y = context->framebuffer_next_y;
 		const UINT32 width = frdpd_min_u32(FRDPD_FRAME_TILE_SIZE, desktop_width - x);
 		const UINT32 height = frdpd_min_u32(FRDPD_FRAME_TILE_SIZE, desktop_height - y);
 
-		if (!frdpd_receive_agent_frame(context, x, y, width, height, &frame, &data))
+		if (hash_cache_ready)
+			hash_slot = frdpd_frame_tile_hash_slot(context, x, y);
+		if (!hash_slot || (*hash_slot == 0))
+			request_flags |= FRDP_AGENT_FRAME_REQUEST_FORCE;
+
+		if (!frdpd_receive_agent_frame(context, x, y, width, height, request_flags, &frame,
+		                              &data))
 		{
 			if (!context->agent_frame_warned)
 			{
@@ -500,9 +523,13 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 			}
 			return TRUE;
 		}
+		if (frame.flags & FRDP_AGENT_FRAME_RESPONSE_UNCHANGED)
+		{
+			context->agent_frame_warned = FALSE;
+			frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
+			continue;
+		}
 		tile_hash = frdpd_hash_frame_tile(data, frame.data_length);
-		if (hash_cache_ready)
-			hash_slot = frdpd_frame_tile_hash_slot(context, frame.x, frame.y);
 		if (hash_slot && (*hash_slot == tile_hash))
 		{
 			free(data);

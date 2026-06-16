@@ -8,14 +8,16 @@
  * up graphics capture and input dispatch and enforces channel policy.  In this
  * minimal prototype launches the display server, injects validated keyboard
  * scancode and mouse input, and serves raw framebuffer tiles over a local
- * control fd; damage tracking, compression and Unicode/text input are still
- * TODO.  The display number, geometry and audit identifiers are provided via
- * environment variables from the session manager: DISPLAY or FRDP_DISPLAY,
- * FRDP_GEOMETRY, FRDP_SESSION_ID and FRDP_CORRELATION_ID.
+ * control fd with XDamage-backed dirty-tile tracking; compression and
+ * Unicode/text input are still TODO.  The display number, geometry and audit
+ * identifiers are provided via environment variables from the session manager:
+ * DISPLAY or FRDP_DISPLAY, FRDP_GEOMETRY, FRDP_SESSION_ID and
+ * FRDP_CORRELATION_ID.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <sys/wait.h>
 #include <syslog.h>
@@ -29,6 +31,7 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/Xdamage.h>
 #include <X11/extensions/XTest.h>
 
 #include <freerdp/input.h>
@@ -39,6 +42,21 @@
 
 #define FRDP_AGENT_READY_MARKER 'R'
 #define FRDP_AGENT_FRAME_TILE_MAX 120U
+#define FRDP_AGENT_DAMAGE_EVENT_LIMIT 256U
+
+typedef struct {
+    Display *display;
+    Window root;
+    int screen;
+    int damage_event;
+    Damage damage;
+    int damage_enabled;
+    uint32_t screen_width;
+    uint32_t screen_height;
+    uint32_t dirty_cols;
+    uint32_t dirty_rows;
+    unsigned char *dirty_tiles;
+} frdpAgentFrameState;
 
 static Display *open_backend_display(const char *display_name, const char *correlation_id,
                                      const char *session_id)
@@ -229,21 +247,250 @@ static unsigned char extract_ximage_channel(unsigned long pixel, unsigned long m
     return (unsigned char)((value * 255UL) / ((1UL << bits) - 1UL));
 }
 
-static int capture_frame_tile(Display *display, const frdpAgentFrameRequest *request,
+static void frame_state_set_dirty_rect(frdpAgentFrameState *state, int x, int y, uint32_t width,
+                                       uint32_t height, unsigned char dirty)
+{
+    int64_t left = x;
+    int64_t top = y;
+    int64_t right = (int64_t)x + width;
+    int64_t bottom = (int64_t)y + height;
+    uint32_t col_start = 0;
+    uint32_t col_end = 0;
+    uint32_t row_start = 0;
+    uint32_t row_end = 0;
+
+    if (!state || !state->dirty_tiles || state->dirty_cols == 0 || state->dirty_rows == 0 ||
+        width == 0 || height == 0)
+        return;
+    if (right <= 0 || bottom <= 0 || left >= state->screen_width || top >= state->screen_height)
+        return;
+    if (left < 0)
+        left = 0;
+    if (top < 0)
+        top = 0;
+    if (right > state->screen_width)
+        right = state->screen_width;
+    if (bottom > state->screen_height)
+        bottom = state->screen_height;
+    if (right <= left || bottom <= top)
+        return;
+
+    col_start = (uint32_t)left / FRDP_AGENT_FRAME_TILE_MAX;
+    col_end = ((uint32_t)right - 1U) / FRDP_AGENT_FRAME_TILE_MAX;
+    row_start = (uint32_t)top / FRDP_AGENT_FRAME_TILE_MAX;
+    row_end = ((uint32_t)bottom - 1U) / FRDP_AGENT_FRAME_TILE_MAX;
+    if (col_end >= state->dirty_cols)
+        col_end = state->dirty_cols - 1U;
+    if (row_end >= state->dirty_rows)
+        row_end = state->dirty_rows - 1U;
+
+    for (uint32_t row = row_start; row <= row_end; row++) {
+        for (uint32_t col = col_start; col <= col_end; col++) {
+            state->dirty_tiles[((size_t)row * state->dirty_cols) + col] = dirty;
+        }
+    }
+}
+
+static int frame_state_refresh_geometry(frdpAgentFrameState *state)
+{
+    int screen = 0;
+    int width = 0;
+    int height = 0;
+    uint32_t cols = 0;
+    uint32_t rows = 0;
+    size_t count = 0;
+    unsigned char *dirty_tiles = NULL;
+
+    if (!state || !state->display)
+        return -1;
+
+    XLockDisplay(state->display);
+    screen = DefaultScreen(state->display);
+    width = DisplayWidth(state->display, screen);
+    height = DisplayHeight(state->display, screen);
+    state->root = RootWindow(state->display, screen);
+    XUnlockDisplay(state->display);
+
+    if (width <= 0 || height <= 0)
+        return -1;
+    cols = ((uint32_t)width + FRDP_AGENT_FRAME_TILE_MAX - 1U) / FRDP_AGENT_FRAME_TILE_MAX;
+    rows = ((uint32_t)height + FRDP_AGENT_FRAME_TILE_MAX - 1U) / FRDP_AGENT_FRAME_TILE_MAX;
+    if (cols == 0 || rows == 0 || cols > SIZE_MAX / rows)
+        return -1;
+    count = (size_t)cols * rows;
+    if (count > SIZE_MAX / sizeof(*dirty_tiles))
+        return -1;
+    if (state->dirty_tiles && state->screen == screen && state->screen_width == (uint32_t)width &&
+        state->screen_height == (uint32_t)height && state->dirty_cols == cols &&
+        state->dirty_rows == rows)
+        return 0;
+
+    dirty_tiles = (unsigned char *)calloc(count, sizeof(*dirty_tiles));
+    if (!dirty_tiles)
+        return -1;
+    memset(dirty_tiles, 1, count);
+    free(state->dirty_tiles);
+    state->dirty_tiles = dirty_tiles;
+    state->screen = screen;
+    state->screen_width = (uint32_t)width;
+    state->screen_height = (uint32_t)height;
+    state->dirty_cols = cols;
+    state->dirty_rows = rows;
+    return 0;
+}
+
+static void frame_state_mark_all_dirty(frdpAgentFrameState *state)
+{
+    size_t count = 0;
+
+    if (!state || !state->dirty_tiles || state->dirty_cols == 0 || state->dirty_rows == 0)
+        return;
+    if (state->dirty_cols > SIZE_MAX / state->dirty_rows)
+        return;
+    count = (size_t)state->dirty_cols * state->dirty_rows;
+    memset(state->dirty_tiles, 1, count);
+}
+
+static int frame_state_rect_dirty(const frdpAgentFrameState *state, int x, int y, uint32_t width,
+                                  uint32_t height)
+{
+    int64_t left = x;
+    int64_t top = y;
+    int64_t right = (int64_t)x + width;
+    int64_t bottom = (int64_t)y + height;
+    uint32_t col_start = 0;
+    uint32_t col_end = 0;
+    uint32_t row_start = 0;
+    uint32_t row_end = 0;
+
+    if (!state || !state->dirty_tiles || state->dirty_cols == 0 || state->dirty_rows == 0 ||
+        width == 0 || height == 0)
+        return 1;
+    if (right <= 0 || bottom <= 0 || left >= state->screen_width || top >= state->screen_height)
+        return 1;
+    if (left < 0)
+        left = 0;
+    if (top < 0)
+        top = 0;
+    if (right > state->screen_width)
+        right = state->screen_width;
+    if (bottom > state->screen_height)
+        bottom = state->screen_height;
+    if (right <= left || bottom <= top)
+        return 1;
+
+    col_start = (uint32_t)left / FRDP_AGENT_FRAME_TILE_MAX;
+    col_end = ((uint32_t)right - 1U) / FRDP_AGENT_FRAME_TILE_MAX;
+    row_start = (uint32_t)top / FRDP_AGENT_FRAME_TILE_MAX;
+    row_end = ((uint32_t)bottom - 1U) / FRDP_AGENT_FRAME_TILE_MAX;
+    if (col_end >= state->dirty_cols)
+        col_end = state->dirty_cols - 1U;
+    if (row_end >= state->dirty_rows)
+        row_end = state->dirty_rows - 1U;
+
+    for (uint32_t row = row_start; row <= row_end; row++) {
+        for (uint32_t col = col_start; col <= col_end; col++) {
+            if (state->dirty_tiles[((size_t)row * state->dirty_cols) + col])
+                return 1;
+        }
+    }
+    return 0;
+}
+
+static void frame_state_process_damage_events(frdpAgentFrameState *state)
+{
+    XEvent event;
+    uint32_t processed = 0;
+
+    if (!state || !state->display || !state->damage_enabled)
+        return;
+
+    memset(&event, 0, sizeof(event));
+    XLockDisplay(state->display);
+    while (processed < FRDP_AGENT_DAMAGE_EVENT_LIMIT &&
+           XCheckTypedEvent(state->display, state->damage_event, &event)) {
+        const XDamageNotifyEvent *damage_event = (const XDamageNotifyEvent *)&event;
+        frame_state_set_dirty_rect(state, damage_event->area.x, damage_event->area.y,
+                                   damage_event->area.width, damage_event->area.height, 1);
+        XDamageSubtract(state->display, state->damage, None, None);
+        processed++;
+    }
+    if (processed >= FRDP_AGENT_DAMAGE_EVENT_LIMIT)
+        frame_state_mark_all_dirty(state);
+    XUnlockDisplay(state->display);
+}
+
+static int frame_state_init(frdpAgentFrameState *state, Display *display,
+                            const char *correlation_id, const char *session_id)
+{
+    int damage_event = 0;
+    int damage_error = 0;
+    int major = 0;
+    int minor = 0;
+
+    if (!state || !display)
+        return -1;
+    memset(state, 0, sizeof(*state));
+    state->display = display;
+    if (frame_state_refresh_geometry(state) != 0)
+        return -1;
+
+    XLockDisplay(display);
+    if (XDamageQueryExtension(display, &damage_event, &damage_error) &&
+        XDamageQueryVersion(display, &major, &minor) && major >= 1) {
+        state->damage = XDamageCreate(display, state->root, XDamageReportDeltaRectangles);
+        if (state->damage) {
+            state->damage_event = damage_event + XDamageNotify;
+            state->damage_enabled = 1;
+            XDamageSubtract(display, state->damage, None, None);
+            XSync(display, False);
+        }
+    }
+    XUnlockDisplay(display);
+
+    if (state->damage_enabled) {
+        syslog(LOG_INFO, "correlation_id=%s session_id=%s enabled XDamage dirty tile tracking",
+               correlation_id, session_id);
+    } else {
+        syslog(LOG_WARNING,
+               "correlation_id=%s session_id=%s XDamage unavailable; using capture-all tiles",
+               correlation_id, session_id);
+    }
+    return 0;
+}
+
+static void frame_state_uninit(frdpAgentFrameState *state)
+{
+    if (!state)
+        return;
+    if (state->display && state->damage) {
+        XLockDisplay(state->display);
+        XDamageDestroy(state->display, state->damage);
+        XUnlockDisplay(state->display);
+    }
+    free(state->dirty_tiles);
+    memset(state, 0, sizeof(*state));
+}
+
+static int capture_frame_tile(frdpAgentFrameState *state, const frdpAgentFrameRequest *request,
                               frdpAgentFrameResponse *response, unsigned char **pixels)
 {
+    Display *display = NULL;
     XImage *image = NULL;
     unsigned char *buffer = NULL;
-    const int screen = DefaultScreen(display);
-    const uint32_t screen_width = (uint32_t)DisplayWidth(display, screen);
-    const uint32_t screen_height = (uint32_t)DisplayHeight(display, screen);
     uint32_t width = 0;
     uint32_t height = 0;
 
-    if (!display || !request || !response || !pixels)
+    if (!state || !state->display || !request || !response || !pixels)
         return -1;
     *pixels = NULL;
-    if (request->x >= screen_width || request->y >= screen_height)
+    if (request->flags & ~FRDP_AGENT_FRAME_REQUEST_FORCE)
+        return -1;
+    display = state->display;
+    if (frame_state_refresh_geometry(state) != 0)
+        return -1;
+    frame_state_process_damage_events(state);
+    if (request->x >= state->screen_width || request->y >= state->screen_height)
         return -1;
 
     width = request->width;
@@ -254,20 +501,32 @@ static int capture_frame_tile(Display *display, const frdpAgentFrameRequest *req
         width = FRDP_AGENT_FRAME_TILE_MAX;
     if (height > FRDP_AGENT_FRAME_TILE_MAX)
         height = FRDP_AGENT_FRAME_TILE_MAX;
-    if (width > screen_width - request->x)
-        width = screen_width - request->x;
-    if (height > screen_height - request->y)
-        height = screen_height - request->y;
+    if (width > state->screen_width - request->x)
+        width = state->screen_width - request->x;
+    if (height > state->screen_height - request->y)
+        height = state->screen_height - request->y;
     if (width == 0 || height == 0 || width > UINT32_MAX / 4 ||
         height > UINT32_MAX / (width * 4U))
         return -1;
+
+    response->x = request->x;
+    response->y = request->y;
+    response->width = width;
+    response->height = height;
+    response->bpp = 32;
+    if (!(request->flags & FRDP_AGENT_FRAME_REQUEST_FORCE) && state->damage_enabled &&
+        !frame_state_rect_dirty(state, (int)request->x, (int)request->y, width, height)) {
+        response->success = 1;
+        response->flags = FRDP_AGENT_FRAME_RESPONSE_UNCHANGED;
+        return 0;
+    }
 
     buffer = (unsigned char *)calloc((size_t)width * height, 4);
     if (!buffer)
         return -1;
 
     XLockDisplay(display);
-    image = XGetImage(display, RootWindow(display, screen), (int)request->x, (int)request->y,
+    image = XGetImage(display, state->root, (int)request->x, (int)request->y,
                       width, height, AllPlanes, ZPixmap);
     XUnlockDisplay(display);
     if (!image) {
@@ -287,14 +546,10 @@ static int capture_frame_tile(Display *display, const frdpAgentFrameRequest *req
         }
     }
     XDestroyImage(image);
+    frame_state_set_dirty_rect(state, (int)request->x, (int)request->y, width, height, 0);
 
     response->success = 1;
-    response->x = request->x;
-    response->y = request->y;
-    response->width = width;
-    response->height = height;
     response->stride = width * 4U;
-    response->bpp = 32;
     response->data_length = response->stride * height;
     *pixels = buffer;
     return 0;
@@ -462,7 +717,7 @@ static int send_frame_response(int fd, const frdpAgentFrameResponse *response,
     return 0;
 }
 
-static int handle_frame_message(int fd, Display *display, uint32_t payload_len,
+static int handle_frame_message(int fd, frdpAgentFrameState *frame_state, uint32_t payload_len,
                                 const char *correlation_id, const char *session_id)
 {
     frdpAgentFrameRequest request;
@@ -487,7 +742,7 @@ static int handle_frame_message(int fd, Display *display, uint32_t payload_len,
         syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected mismatched frame request",
                correlation_id, session_id);
         snprintf(response.error, sizeof(response.error), "%s", "mismatched ids");
-    } else if (capture_frame_tile(display, &request, &response, &pixels) != 0) {
+    } else if (capture_frame_tile(frame_state, &request, &response, &pixels) != 0) {
         snprintf(response.error, sizeof(response.error), "%s", "capture failed");
     }
 
@@ -496,8 +751,8 @@ static int handle_frame_message(int fd, Display *display, uint32_t payload_len,
     return rc;
 }
 
-static int handle_control_client(int fd, Display *display, const char *correlation_id,
-                                 const char *session_id)
+static int handle_control_client(int fd, frdpAgentFrameState *frame_state, const char *correlation_id,
+                                  const char *session_id)
 {
     frdpIpcHeader header;
 
@@ -510,17 +765,18 @@ static int handle_control_client(int fd, Display *display, const char *correlati
 
     switch (header.type) {
         case FRDP_IPC_AGENT_INPUT:
-            return handle_input_message(fd, display, header.payload_len, correlation_id, session_id);
+            return handle_input_message(fd, frame_state ? frame_state->display : NULL,
+                                        header.payload_len, correlation_id, session_id);
         case FRDP_IPC_AGENT_FRAME_REQUEST:
-            return handle_frame_message(fd, display, header.payload_len, correlation_id, session_id);
+            return handle_frame_message(fd, frame_state, header.payload_len, correlation_id, session_id);
         default:
             return -1;
     }
 }
 
-static int wait_for_backend_exit(pid_t pid, int control_fd, Display *display,
-                                 const char *correlation_id,
-                                 const char *session_id)
+static int wait_for_backend_exit(pid_t pid, int control_fd, frdpAgentFrameState *frame_state,
+                                  const char *correlation_id,
+                                  const char *session_id)
 {
     int status = 0;
 
@@ -555,7 +811,7 @@ static int wait_for_backend_exit(pid_t pid, int control_fd, Display *display,
         const int cfd = accept(control_fd, NULL, NULL);
         if (cfd < 0)
             continue;
-        if (handle_control_client(cfd, display, correlation_id, session_id) != 0) {
+        if (handle_control_client(cfd, frame_state, correlation_id, session_id) != 0) {
             syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected agent control event",
                    correlation_id, session_id);
         }
@@ -737,9 +993,26 @@ int main(int argc, char **argv)
         closelog();
         return 1;
     }
+    frdpAgentFrameState frame_state;
+    if (frame_state_init(&frame_state, xdisplay, correlation_id, session_id) != 0) {
+        syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to initialize frame state",
+               correlation_id, session_id);
+        XCloseDisplay(xdisplay);
+        kill(pid, SIGTERM);
+        usleep(200000);
+        kill(pid, SIGKILL);
+        waitpid(pid, NULL, 0);
+        if (ready_fd >= 0)
+            close(ready_fd);
+        if (control_fd >= 0)
+            close(control_fd);
+        closelog();
+        return 1;
+    }
     if (notify_agent_ready(&ready_fd) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to report agent readiness",
                correlation_id, session_id);
+        frame_state_uninit(&frame_state);
         XCloseDisplay(xdisplay);
         kill(pid, SIGTERM);
         usleep(200000);
@@ -751,12 +1024,13 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* TODO: add damage tracking, compression, and update scheduling policy. */
+    /* TODO: add compression and update scheduling policy. */
     /* TODO: add Unicode/text input injection with explicit layout handling. */
     /* TODO: process clipboard/audio channels. */
 
     /* Wait for the display server to exit. */
-    int status = wait_for_backend_exit(pid, control_fd, xdisplay, correlation_id, session_id);
+    int status = wait_for_backend_exit(pid, control_fd, &frame_state, correlation_id, session_id);
+    frame_state_uninit(&frame_state);
     XCloseDisplay(xdisplay);
     if (control_fd >= 0)
         close(control_fd);

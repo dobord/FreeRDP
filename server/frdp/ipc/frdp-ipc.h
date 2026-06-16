@@ -26,6 +26,11 @@ typedef enum {
     FRDP_AGENT_INPUT_EXT_MOUSE = 6
 } frdpAgentInputType;
 
+enum {
+    FRDP_AGENT_FRAME_REQUEST_FORCE = 0x00000001U,
+    FRDP_AGENT_FRAME_RESPONSE_UNCHANGED = 0x00000001U
+};
+
 /* Common header prepended to each IPC message */
 typedef struct {
     frdpIpcMessageType type;
@@ -82,6 +87,7 @@ typedef struct {
     uint32_t y;
     uint32_t width;
     uint32_t height;
+    uint32_t flags;
 } frdpAgentFrameRequest;
 
 typedef struct {
@@ -94,6 +100,7 @@ typedef struct {
     uint32_t height;
     uint32_t stride;
     uint32_t bpp;
+    uint32_t flags;
     uint32_t data_length;
     char error[128];
 } frdpAgentFrameResponse;
