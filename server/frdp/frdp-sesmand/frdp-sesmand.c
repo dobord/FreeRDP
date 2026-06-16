@@ -63,6 +63,49 @@ static char g_agent_socket_dir[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0
 static int create_agent_socket(const char *socket_path);
 static void destroy_agent_socket(int *fd, const char *socket_path);
 
+static char hex_digit(unsigned int value)
+{
+    return (value < 10U) ? (char)('0' + value) : (char)('a' + (value - 10U));
+}
+
+static int log_char_is_safe(unsigned char c)
+{
+    return ((c >= 'A') && (c <= 'Z')) || ((c >= 'a') && (c <= 'z')) ||
+           ((c >= '0') && (c <= '9')) || (c == '.') || (c == '_') || (c == '-') ||
+           (c == ':') || (c == '@') || (c == '/') || (c == '%') || (c == '+');
+}
+
+static void escape_log_field(const char *src, char *dst, size_t dst_size)
+{
+    size_t used = 0;
+
+    if (!dst || dst_size == 0)
+        return;
+    dst[0] = '\0';
+    if (!src)
+        return;
+
+    for (const unsigned char *p = (const unsigned char *)src; (*p != '\0') && (used + 1 < dst_size);
+         p++) {
+        if (log_char_is_safe(*p)) {
+            dst[used++] = (char)*p;
+            dst[used] = '\0';
+        } else if ((*p == '\\') && (used + 2 < dst_size)) {
+            dst[used++] = '\\';
+            dst[used++] = '\\';
+            dst[used] = '\0';
+        } else if (used + 4 < dst_size) {
+            dst[used++] = '\\';
+            dst[used++] = 'x';
+            dst[used++] = hex_digit((*p >> 4U) & 0x0fU);
+            dst[used++] = hex_digit(*p & 0x0fU);
+            dst[used] = '\0';
+        } else {
+            break;
+        }
+    }
+}
+
 static int derive_parent_dir(const char *path, char *dst, size_t dst_size)
 {
     char *slash = NULL;
@@ -410,10 +453,25 @@ static int open_session(const char *user, const char *rhost, const char *correla
     snprintf(display_out, display_out_size, "%s", display_str);
     if (agent_socket_out && agent_socket_out_size > 0)
         snprintf(agent_socket_out, agent_socket_out_size, "%s", agent_socket_path);
+    char escaped_correlation_id[256] = {0};
+    char escaped_session_id[256] = {0};
+    char escaped_user[256] = {0};
+    char escaped_display[128] = {0};
+    char escaped_geometry[128] = {0};
+    char escaped_agent_socket[512] = {0};
+
+    escape_log_field(correlation_id && correlation_id[0] ? correlation_id : "unknown",
+                     escaped_correlation_id, sizeof(escaped_correlation_id));
+    escape_log_field(session_id ? session_id : "unknown", escaped_session_id,
+                     sizeof(escaped_session_id));
+    escape_log_field(user, escaped_user, sizeof(escaped_user));
+    escape_log_field(display_str, escaped_display, sizeof(escaped_display));
+    escape_log_field(geometry_str, escaped_geometry, sizeof(escaped_geometry));
+    escape_log_field(agent_socket_path[0] ? agent_socket_path : "none", escaped_agent_socket,
+                     sizeof(escaped_agent_socket));
     syslog(LOG_INFO, "correlation_id=%s created session_id=%s user=%s display=%s geometry=%s agent_socket=%s",
-           correlation_id && correlation_id[0] ? correlation_id : "unknown",
-           session_id ? session_id : "unknown", user, display_str, geometry_str,
-           agent_socket_path[0] ? agent_socket_path : "none");
+           escaped_correlation_id, escaped_session_id, escaped_user, escaped_display,
+           escaped_geometry, escaped_agent_socket);
     return 0;
 }
 
@@ -699,8 +757,14 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
         if (open_session(user, rhost, correlation_id, req.desktop_width, req.desktop_height,
                           req.color_depth, response_session_id, sizeof(response_session_id), display,
                           sizeof(display), agent_socket, sizeof(agent_socket)) != 0) {
+            char escaped_correlation_id[256] = {0};
+            char escaped_user[256] = {0};
+
+            escape_log_field(correlation_id[0] ? correlation_id : "unknown", escaped_correlation_id,
+                             sizeof(escaped_correlation_id));
+            escape_log_field(user, escaped_user, sizeof(escaped_user));
             syslog(LOG_ERR, "correlation_id=%s failed to create session for %s",
-                   correlation_id[0] ? correlation_id : "unknown", user);
+                   escaped_correlation_id, escaped_user);
             return send_session_response(fd, 0, NULL, NULL, NULL, "session open failed");
         }
         const int send_status = send_session_response(fd, 1, response_session_id, display,
@@ -708,9 +772,15 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
         if (send_status != 0) {
             const int idx = find_session_by_id(response_session_id);
             if (idx >= 0) {
+                char escaped_correlation_id[256] = {0};
+                char escaped_session_id[256] = {0};
+
+                escape_log_field(correlation_id[0] ? correlation_id : "unknown",
+                                 escaped_correlation_id, sizeof(escaped_correlation_id));
+                escape_log_field(response_session_id, escaped_session_id, sizeof(escaped_session_id));
                 syslog(LOG_WARNING,
                        "correlation_id=%s rolling back session_id=%s after response failure",
-                       correlation_id[0] ? correlation_id : "unknown", response_session_id);
+                       escaped_correlation_id, escaped_session_id);
                 cleanup_session(idx);
             }
         }
@@ -722,8 +792,16 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
 
         if (idx < 0)
             return send_session_response(fd, 0, NULL, NULL, NULL, "unknown session");
+        char escaped_correlation_id[256] = {0};
+        char escaped_session_id[256] = {0};
+        char escaped_user[256] = {0};
+
+        escape_log_field(correlation_id[0] ? correlation_id : "unknown", escaped_correlation_id,
+                         sizeof(escaped_correlation_id));
+        escape_log_field(session_id, escaped_session_id, sizeof(escaped_session_id));
+        escape_log_field(sessions[idx].user, escaped_user, sizeof(escaped_user));
         syslog(LOG_INFO, "correlation_id=%s closing session_id=%s user=%s",
-               correlation_id[0] ? correlation_id : "unknown", session_id, sessions[idx].user);
+               escaped_correlation_id, escaped_session_id, escaped_user);
         cleanup_session(idx);
         return send_session_response(fd, 1, session_id, NULL, NULL, NULL);
     }
@@ -744,11 +822,17 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
     g_pam_service = pam_service;
 
     if (prepare_socket_path(socket_path) != 0) {
-        fprintf(stderr, "refusing unsafe socket path: %s\n", socket_path ? socket_path : "(null)");
+        char escaped_socket[512] = {0};
+
+        escape_log_field(socket_path ? socket_path : "(null)", escaped_socket, sizeof(escaped_socket));
+        fprintf(stderr, "refusing unsafe socket path: %s\n", escaped_socket);
         return -1;
     }
     if (derive_parent_dir(socket_path, g_agent_socket_dir, sizeof(g_agent_socket_dir)) != 0) {
-        fprintf(stderr, "unable to derive agent socket directory from: %s\n", socket_path);
+        char escaped_socket[512] = {0};
+
+        escape_log_field(socket_path ? socket_path : "(null)", escaped_socket, sizeof(escaped_socket));
+        fprintf(stderr, "unable to derive agent socket directory from: %s\n", escaped_socket);
         return -1;
     }
 
@@ -782,7 +866,10 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
         return -1;
     }
 
-    printf("frdp-sesmand IPC server listening on %s\n", socket_path);
+    char escaped_socket[512] = {0};
+
+    escape_log_field(socket_path, escaped_socket, sizeof(escaped_socket));
+    printf("frdp-sesmand IPC server listening on %s\n", escaped_socket);
     while (1) {
         struct pollfd pfd;
         int poll_status = 0;
@@ -943,17 +1030,20 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    printf("frdp-sesmand: opening session for %s\n", standalone_user);
+    char escaped_standalone_user[512] = {0};
+
+    escape_log_field(standalone_user, escaped_standalone_user, sizeof(escaped_standalone_user));
+    printf("frdp-sesmand: opening session for %s\n", escaped_standalone_user);
 
     char session_id[64] = {0};
     char display[32] = {0};
     char agent_socket[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
     if (open_session(standalone_user, NULL, "standalone", 1024, 768, 24, session_id,
-                     sizeof(session_id), display, sizeof(display), agent_socket,
-                     sizeof(agent_socket)) == 0) {
-        syslog(LOG_INFO, "created session for %s", standalone_user);
+                      sizeof(session_id), display, sizeof(display), agent_socket,
+                      sizeof(agent_socket)) == 0) {
+        syslog(LOG_INFO, "created session for %s", escaped_standalone_user);
     } else {
-        syslog(LOG_ERR, "failed to create session for %s", standalone_user);
+        syslog(LOG_ERR, "failed to create session for %s", escaped_standalone_user);
         closelog();
         return 1;
     }

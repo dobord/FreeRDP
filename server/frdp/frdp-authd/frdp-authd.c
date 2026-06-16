@@ -79,6 +79,49 @@ static int set_no_core(void)
     return 0;
 }
 
+static char hex_digit(unsigned int value)
+{
+    return (value < 10U) ? (char)('0' + value) : (char)('a' + (value - 10U));
+}
+
+static int log_char_is_safe(unsigned char c)
+{
+    return ((c >= 'A') && (c <= 'Z')) || ((c >= 'a') && (c <= 'z')) ||
+           ((c >= '0') && (c <= '9')) || (c == '.') || (c == '_') || (c == '-') ||
+           (c == ':') || (c == '@') || (c == '/') || (c == '%') || (c == '+');
+}
+
+static void escape_log_field(const char *src, char *dst, size_t dst_size)
+{
+    size_t used = 0;
+
+    if (!dst || dst_size == 0)
+        return;
+    dst[0] = '\0';
+    if (!src)
+        return;
+
+    for (const unsigned char *p = (const unsigned char *)src; (*p != '\0') && (used + 1 < dst_size);
+         p++) {
+        if (log_char_is_safe(*p)) {
+            dst[used++] = (char)*p;
+            dst[used] = '\0';
+        } else if ((*p == '\\') && (used + 2 < dst_size)) {
+            dst[used++] = '\\';
+            dst[used++] = '\\';
+            dst[used] = '\0';
+        } else if (used + 4 < dst_size) {
+            dst[used++] = '\\';
+            dst[used++] = 'x';
+            dst[used++] = hex_digit((*p >> 4U) & 0x0fU);
+            dst[used++] = hex_digit(*p & 0x0fU);
+            dst[used] = '\0';
+        } else {
+            break;
+        }
+    }
+}
+
 static int is_uuid_hex_char(char c)
 {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
@@ -111,15 +154,17 @@ static void log_audit_event(const char *user, int success, const char *correlati
 {
     uuid_t id;
     char uuid_str[37];
+    char escaped_user[256] = {0};
 
     if (!correlation_id_is_valid(correlation_id)) {
         uuid_generate(id);
         uuid_unparse_lower(id, uuid_str);
         correlation_id = uuid_str;
     }
+    escape_log_field(user ? user : "unknown", escaped_user, sizeof(escaped_user));
     openlog("frdp-authd", LOG_PID | LOG_NDELAY, LOG_AUTH);
     syslog(success ? LOG_INFO : LOG_WARNING,
-           "correlation_id=%s user=%s result=%s", correlation_id, user,
+           "correlation_id=%s user=%s result=%s", correlation_id, escaped_user,
            success ? "success" : "failure");
     closelog();
 }
@@ -330,7 +375,10 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
     }
 
     if (prepare_socket_path(socket_path) != 0) {
-        fprintf(stderr, "refusing unsafe socket path: %s\n", socket_path ? socket_path : "(null)");
+        char escaped_socket[512] = {0};
+
+        escape_log_field(socket_path ? socket_path : "(null)", escaped_socket, sizeof(escaped_socket));
+        fprintf(stderr, "refusing unsafe socket path: %s\n", escaped_socket);
         return -1;
     }
 
@@ -363,7 +411,10 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
         unlink(socket_path);
         return -1;
     }
-    printf("frdp-authd IPC server listening on %s\n", socket_path);
+    char escaped_socket[512] = {0};
+
+    escape_log_field(socket_path, escaped_socket, sizeof(escaped_socket));
+    printf("frdp-authd IPC server listening on %s\n", escaped_socket);
     while (1) {
         int cfd = accept(fd, NULL, NULL);
         if (cfd < 0) {
