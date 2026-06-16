@@ -60,6 +60,7 @@ extern "C"
 		NSC_CONTEXT* framebuffer_nsc;
 		wStream* framebuffer_nsc_stream;
 		BOOL framebuffer_nsc_warned;
+		HANDLE vcm;
 		void* pam_handle;
 		char* pam_user;
 		BOOL pam_credentials_established;

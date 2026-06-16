@@ -27,7 +27,8 @@ pam_service = "frdpd"
 # static_deny = ""
 # dynamic_mode = "blocklist"
 # dynamic_deny = ""
-# Dynamic channel lists are preparatory until dynamic-channel open enforcement is implemented.
+# Dynamic channel lists feed the DVC authorization callback, but remain preparatory
+# while drdynvc and useful dynamic handlers stay disabled.
 # Use allowlist mode to permit only exact channel names:
 # static_mode = "allowlist"
 # static_allow = "cliprdr,rdpsnd"

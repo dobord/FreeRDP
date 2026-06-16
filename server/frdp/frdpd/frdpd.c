@@ -33,6 +33,7 @@
 #include <winpr/wtsapi.h>
 
 #include <freerdp/constants.h>
+#include <freerdp/channels/wtsvc.h>
 #include <freerdp/codec/color.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/listener.h>
@@ -1171,6 +1172,12 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 	if (!context)
 		return;
 
+	if (context->vcm && (context->vcm != INVALID_HANDLE_VALUE))
+	{
+		WTSCloseServer(context->vcm);
+		context->vcm = NULL;
+	}
+
 	(void)frdpd_close_managed_session(config, context, TRUE);
 	frdpd_reset_framebuffer_state(context);
 	(void)frdpd_pam_close_session(context->pam_handle, context->pam_user,
@@ -1183,11 +1190,27 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 	context->pam_user = NULL;
 }
 
+static BOOL frdpd_dvc_authorize(void* userdata, DWORD SessionId, const char* channelName,
+                                DWORD flags)
+{
+	frdpdPeerContext* context = (frdpdPeerContext*)userdata;
+	frdpdServerConfig* config = NULL;
+
+	WINPR_UNUSED(SessionId);
+	WINPR_UNUSED(flags);
+
+	if (!context || !context->_p.peer)
+		return FALSE;
+	config = (frdpdServerConfig*)context->_p.peer->ContextExtra;
+	if (!config)
+		return FALSE;
+	return frdp_channel_policy_dynamic_allowed(&config->channels, channelName) ? TRUE : FALSE;
+}
+
 static BOOL frdpd_peer_context_new(freerdp_peer* client, rdpContext* ctx)
 {
 	frdpdPeerContext* context = (frdpdPeerContext*)ctx;
 
-	WINPR_UNUSED(client);
 	WINPR_ASSERT(ctx);
 	if (!frdpd_generate_correlation_id(context->correlation_id,
 	                                  sizeof(context->correlation_id)))
@@ -1195,6 +1218,17 @@ static BOOL frdpd_peer_context_new(freerdp_peer* client, rdpContext* ctx)
 		WLog_ERR(TAG, "Failed to generate peer correlation id");
 		return FALSE;
 	}
+
+	context->vcm = WTSOpenServerA((LPSTR)client->context);
+	if (!context->vcm || (context->vcm == INVALID_HANDLE_VALUE))
+	{
+		context->vcm = NULL;
+		WLog_ERR(TAG, "correlation_id=%s failed to open virtual channel manager",
+		         context->correlation_id);
+		return FALSE;
+	}
+	WTSVirtualChannelManagerSetDVCChannelAuthorizationCallback(context->vcm, frdpd_dvc_authorize,
+	                                                         context);
 	return TRUE;
 }
 
@@ -1686,6 +1720,7 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 	while (g_frdpd_running)
 	{
 		HANDLE handles[MAXIMUM_WAIT_OBJECTS] = { 0 };
+		HANDLE channel_event = NULL;
 		DWORD count = 0;
 		DWORD status = 0;
 
@@ -1695,6 +1730,21 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 		{
 			WLog_ERR(TAG, "Failed to get peer event handles");
 			break;
+		}
+		if (context->vcm)
+		{
+			if (count >= ARRAYSIZE(handles))
+			{
+				WLog_ERR(TAG, "No wait handle slot for peer virtual channel manager");
+				break;
+			}
+			channel_event = WTSVirtualChannelManagerGetEventHandle(context->vcm);
+			if (!channel_event || (channel_event == INVALID_HANDLE_VALUE))
+			{
+				WLog_ERR(TAG, "Failed to get peer virtual channel manager event handle");
+				break;
+			}
+			handles[count++] = channel_event;
 		}
 
 		status = WaitForMultipleObjects(count, handles, FALSE, frdpd_peer_wait_timeout_ms(context));
@@ -1713,6 +1763,11 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 		WINPR_ASSERT(client->CheckFileDescriptor);
 		if (!client->CheckFileDescriptor(client))
 			break;
+		if (context->vcm && !WTSVirtualChannelManagerCheckFileDescriptorEx(context->vcm, FALSE))
+		{
+			WLog_ERR(TAG, "Virtual channel manager check failed for peer %s", log_hostname);
+			break;
+		}
 		if (!frdpd_pump_agent_framebuffer(client, context))
 			break;
 	}
