@@ -33,6 +33,21 @@ int frdp_channel_policy_static_allowed(const frdpChannelPolicy *policy, const ch
 	return 0;
 }
 
+int frdp_channel_policy_dynamic_allowed(const frdpChannelPolicy *policy, const char *channel)
+{
+	if (!policy || !channel || channel[0] == '\0')
+		return 0;
+	if (strcmp(channel, "drdynvc") == 0)
+		return 0;
+
+	for (uint32_t i = 0; i < policy->dynamic_allow_count; i++)
+	{
+		if (strcmp(policy->dynamic_allow[i], channel) == 0)
+			return 1;
+	}
+	return 0;
+}
+
 int frdp_channel_policy_static_channel_allowed(const frdpChannelPolicy *policy,
                                                const CHANNEL_DEF *channel, char *name,
                                                size_t name_size)

@@ -8,6 +8,8 @@
 typedef struct {
     uint32_t static_allow_count;
     char static_allow[FRDP_CONFIG_MAX_CHANNELS][FRDP_CONFIG_CHANNEL_NAME_SIZE];
+    uint32_t dynamic_allow_count;
+    char dynamic_allow[FRDP_CONFIG_MAX_CHANNELS][FRDP_CONFIG_CHANNEL_NAME_SIZE];
 } frdpChannelPolicy;
 
 /* Structure representing configuration parsed from frdpd.toml */

@@ -83,27 +83,42 @@ static int is_channel_name_valid(const char *name)
     return 1;
 }
 
-static int add_static_channel_allow(frdpConfig *config, const char *name)
+static int add_channel_allow(char allow[FRDP_CONFIG_MAX_CHANNELS][FRDP_CONFIG_CHANNEL_NAME_SIZE],
+                             uint32_t *count, const char *name)
 {
-    if (!config || !is_channel_name_valid(name))
+    if (!allow || !count || !is_channel_name_valid(name))
         return -1;
     if (strcmp(name, "drdynvc") == 0)
         return -1;
-    for (uint32_t i = 0; i < config->channels.static_allow_count; i++) {
-        if (strcmp(config->channels.static_allow[i], name) == 0)
+    for (uint32_t i = 0; i < *count; i++) {
+        if (strcmp(allow[i], name) == 0)
             return -1;
     }
-    if (config->channels.static_allow_count >= FRDP_CONFIG_MAX_CHANNELS)
+    if (*count >= FRDP_CONFIG_MAX_CHANNELS)
         return -1;
-    if (copy_string(config->channels.static_allow[config->channels.static_allow_count],
-                    sizeof(config->channels.static_allow[config->channels.static_allow_count]),
-                    name) != 0)
+    if (copy_string(allow[*count], FRDP_CONFIG_CHANNEL_NAME_SIZE, name) != 0)
         return -1;
-    config->channels.static_allow_count++;
+    (*count)++;
     return 0;
 }
 
-static int parse_static_channel_allow(frdpConfig *config, char *value)
+static int add_static_channel_allow(frdpConfig *config, const char *name)
+{
+    if (!config)
+        return -1;
+    return add_channel_allow(config->channels.static_allow, &config->channels.static_allow_count,
+                             name);
+}
+
+static int add_dynamic_channel_allow(frdpConfig *config, const char *name)
+{
+    if (!config)
+        return -1;
+    return add_channel_allow(config->channels.dynamic_allow, &config->channels.dynamic_allow_count,
+                             name);
+}
+
+static int parse_channel_allow(frdpConfig *config, char *value, int dynamic)
 {
     char *cursor = value;
 
@@ -119,11 +134,25 @@ static int parse_static_channel_allow(frdpConfig *config, char *value)
             next++;
         }
         trim(cursor);
-        if (add_static_channel_allow(config, cursor) != 0)
+        if (dynamic) {
+            if (add_dynamic_channel_allow(config, cursor) != 0)
+                return -1;
+        }
+        else if (add_static_channel_allow(config, cursor) != 0)
             return -1;
         cursor = next;
     }
     return 0;
+}
+
+static int parse_static_channel_allow(frdpConfig *config, char *value)
+{
+    return parse_channel_allow(config, value, 0);
+}
+
+static int parse_dynamic_channel_allow(frdpConfig *config, char *value)
+{
+    return parse_channel_allow(config, value, 1);
 }
 
 /* Load key/value pairs from a small fail-closed TOML subset. */
@@ -151,6 +180,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_auth_socket = 0;
     int seen_session_socket = 0;
     int seen_channel_static_allow = 0;
+    int seen_channel_dynamic_allow = 0;
     /* Set defaults */
     memset(config, 0, sizeof(*config));
     if (copy_string(config->listen, sizeof(config->listen), "0.0.0.0:3389") != 0 ||
@@ -238,7 +268,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
         trim(key);
         trim(val);
         const int allow_empty_value = (strcmp(current_section, "channels") == 0) &&
-                                      (strcmp(key, "static_allow") == 0);
+                                      ((strcmp(key, "static_allow") == 0) ||
+                                       (strcmp(key, "dynamic_allow") == 0));
         const int allow_bare_value = (strcmp(current_section, "server") == 0) &&
                                      (strcmp(key, "max_connections") == 0);
         if (allow_bare_value) {
@@ -405,6 +436,17 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 }
                 seen_channel_static_allow = 1;
                 if (parse_static_channel_allow(config, val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "dynamic_allow") == 0) {
+                if (seen_channel_dynamic_allow) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_channel_dynamic_allow = 1;
+                if (parse_dynamic_channel_allow(config, val) != 0) {
                     fclose(f);
                     return -1;
                 }

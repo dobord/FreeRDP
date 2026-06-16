@@ -26,7 +26,8 @@ pam_service = "frdpd"
 # static_allow = "" accepts no channels. Example allow-list syntax:
 # static_allow = "cliprdr,rdpsnd"
 # Allowing a name only permits negotiation; clipboard/audio handlers are not implemented yet.
-# drdynvc is rejected until dynamic virtual-channel policy is implemented.
+# dynamic_allow = "" prepares exact dynamic virtual-channel policy but does not enable drdynvc yet.
+# drdynvc is rejected until dynamic virtual-channel open enforcement is implemented.
 
 # The current parser still rejects [audit] instead of silently ignoring policy.
 ```

@@ -119,10 +119,11 @@ Deliverables:
 - [x] opportunistic framebuffer tile compression (partial: `frdpd` advertises and enforces minimum-color-loss/no-subsampling NSCodec and sends `SET_SURFACE_BITS` only when the client negotiated it and the encoded tile is smaller than the raw tile; RFX/RDPGFX and production codec policy remain open);
 - [x] keyboard/mouse/text input (partial: integrated callbacks forward input over optional agent control IPC and the agent injects scancode keyboard, Unicode BMP text, and mouse events through XTest/X11; IME/layout-safe text input and supplementary-plane Unicode are not implemented yet);
 - [x] display resize (prototype: RDP monitor-layout changes are forwarded to the agent and applied through XRandR before `frdpd` updates peer geometry; runtime interop and resize churn are not smoke-tested yet);
-- [x] static channel policy engine (`frdpd` enforces deny-by-default for client-requested static virtual channels during capability processing, supports an explicit `static_allow` list, rejects `drdynvc` until dynamic-channel policy exists, and has CTest coverage for config parsing plus `CHANNEL_DEF` validation; dynamic channel policy and channel handlers remain open);
+- [x] static channel policy engine (`frdpd` enforces deny-by-default for client-requested static virtual channels during capability processing, supports an explicit `static_allow` list, keeps `drdynvc` rejected until dynamic-channel open enforcement exists, and has CTest coverage for config parsing plus `CHANNEL_DEF` validation; useful channel handlers remain open);
+- [x] preparatory dynamic channel allow-list parsing and policy helper (`dynamic_allow` is exact-match/default-deny, but does not enable `drdynvc` yet);
 - [ ] text clipboard;
 - [ ] baseline audio output;
-- [ ] dynamic channel policy and useful channel handlers.
+- [ ] dynamic channel open enforcement and useful channel handlers.
 
 Exit criteria: daily interactive desktop use is possible in the lab with Windows and FreeRDP clients.
 
@@ -144,7 +145,7 @@ Exit criteria: a domain-joined Windows client authenticates with Kerberos where 
 Deliverables:
 
 - [ ] ASAN/UBSAN builds;
-- [x] focused unit/CTest coverage for implemented static channel config parsing, capability validation, `drdynvc` rejection, and `max_connections` parsing;
+- [x] focused unit/CTest coverage for implemented static/dynamic channel config parsing, capability validation, `drdynvc` rejection, and `max_connections` parsing;
 - [ ] fuzzing harnesses for channel parsers and selected RDP inputs;
 - [ ] protocol regression suite;
 - [ ] load testing harness;

@@ -29,7 +29,7 @@ Rotate the service key periodically:
 - **Authentication fails**: Check `/var/log/auth.log` for PAM/SSSD errors. Verify SPN and keytab, ensure the client’s clock is within 5 minutes of the server.
 - **Sessions do not start**: Confirm that Xvfb is installed and accessible. Inspect `journalctl -u frdp-sesmand` for session errors.
 - **Performance issues**: Use the load testing harness to measure resource usage and adjust `max_connections` and session timeouts. Monitor CPU and memory with `top` or systemd metrics.
-- **Blocked channels**: Static virtual channels are denied by default. Add exact static channel names to `[channels].static_allow` only after the corresponding handler is implemented and approved; allowing a name does not by itself enable clipboard/audio/device support. `drdynvc` is rejected until dynamic virtual-channel policy is implemented.
+- **Blocked channels**: Static virtual channels are denied by default. Add exact static channel names to `[channels].static_allow` only after the corresponding handler is implemented and approved; allowing a name does not by itself enable clipboard/audio/device support. `[channels].dynamic_allow` is parsed as preparatory policy only; `drdynvc` is rejected until dynamic virtual-channel open enforcement is implemented.
 
 ## Dashboards and alert rules
 
