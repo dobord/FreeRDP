@@ -1238,18 +1238,18 @@ static int wait_for_backend_exit(pid_t pid, int control_fd, frdpAgentFrameState 
         *stop_requested = 0;
 
     while (1) {
+        if (g_stop_requested) {
+            if (stop_requested)
+                *stop_requested = 1;
+            return status;
+        }
+
         const pid_t rc = waitpid(pid, &status, WNOHANG);
         if (rc == pid)
             return status;
         if (rc < 0) {
             if (errno == EINTR)
                 continue;
-            return status;
-        }
-
-        if (g_stop_requested) {
-            if (stop_requested)
-                *stop_requested = 1;
             return status;
         }
 
@@ -1541,10 +1541,12 @@ int main(int argc, char **argv)
     int stop_requested = 0;
     int status = wait_for_backend_exit(pid, control_fd, &frame_state, correlation_id, session_id,
                                        &stop_requested);
-    frame_state_uninit(&frame_state);
-    XCloseDisplay(xdisplay);
-    if (stop_requested)
+    if (stop_requested) {
         status = terminate_backend(pid);
+    } else {
+        frame_state_uninit(&frame_state);
+        XCloseDisplay(xdisplay);
+    }
     if (control_fd >= 0)
         close(control_fd);
     if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {

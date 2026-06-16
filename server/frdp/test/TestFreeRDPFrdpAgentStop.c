@@ -131,7 +131,7 @@ int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 	ready_pipe[1] = -1;
 	if (wait_for_ready(ready_pipe[0]) != 0)
 		goto cleanup;
-	if (kill(pid, SIGTERM) != 0)
+	if (kill(-pid, SIGTERM) != 0)
 		goto cleanup;
 	if (wait_for_exit(pid, &status) != 0)
 		goto cleanup;
