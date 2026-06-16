@@ -48,13 +48,13 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - optional `frdp-sesmand` session IPC creates a root-owned per-session agent control socket and returns it to `frdpd` for keyboard/mouse event forwarding into the session agent;
 - `--pam-auth-test` smoke-test mode for the PAM helper path;
 - process-level core dump disabling before credential handling;
-- a minimal raw-tile framebuffer pump from `frdp-session-agent` to `frdpd` using FreeRDP bitmap updates; refresh/suppress-output callbacks remain no-op.
+- a minimal raw-tile framebuffer pump from `frdp-session-agent` to `frdpd` using FreeRDP bitmap updates, with per-peer unchanged-tile suppression and cache invalidation for refresh/suppress-output requests.
 
 CMake-built helper binaries/prototypes that are not yet the default canonical runtime topology:
 
 - `server/frdp/frdp-authd` (optional auth/account IPC path);
 - `server/frdp/frdp-sesmand` (optional session IPC path);
-- `server/frdp/frdp-session-agent` (launched by optional `frdp-sesmand` session requests; keyboard/mouse backend injection and raw framebuffer tile capture exist, but damage tracking, compression, resize, and Unicode/text input are not implemented yet);
+- `server/frdp/frdp-session-agent` (launched by optional `frdp-sesmand` session requests; keyboard/mouse backend injection and raw framebuffer tile capture exist, but XDamage integration, compression, resize, and Unicode/text input are not implemented yet);
 - `server/frdp/frdp-krb-authd` (build-only prototype, not installed by default);
 - `tools/frdpctl`.
 
@@ -111,7 +111,7 @@ Exit criteria: the user receives a desktop session after successful authenticati
 
 Deliverables:
 
-- [ ] framebuffer/damage capture (partial: raw framebuffer tiles can be pulled from the agent and sent as bitmap updates; damage tracking and compression are not implemented yet);
+- [ ] framebuffer/damage capture (partial: raw framebuffer tiles can be pulled from the agent and sent as bitmap updates, and unchanged tiles are suppressed with per-peer hashes; XDamage integration and compression are not implemented yet);
 - [x] minimal raw framebuffer tile transport from the managed session agent to FreeRDP bitmap updates;
 - [ ] basic encoder scheduling;
 - [x] keyboard/mouse input (partial: integrated callbacks forward input over optional agent control IPC and the agent injects scancode keyboard plus mouse events through XTest; Unicode/text input is not implemented yet);

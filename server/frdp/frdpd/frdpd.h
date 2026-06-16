@@ -43,9 +43,13 @@ extern "C"
 		BOOL agent_input_warned;
 		BOOL agent_frame_warned;
 		BOOL framebuffer_active;
+		BOOL framebuffer_output_suppressed;
 		UINT32 framebuffer_next_x;
 		UINT32 framebuffer_next_y;
 		UINT64 framebuffer_last_tick;
+		UINT32 framebuffer_hash_cols;
+		UINT32 framebuffer_hash_rows;
+		UINT64* framebuffer_hashes;
 		void* pam_handle;
 		char* pam_user;
 		BOOL pam_credentials_established;

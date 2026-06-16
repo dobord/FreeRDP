@@ -47,6 +47,8 @@
 #define FRDPD_FRAME_TILE_SIZE 120U
 #define FRDPD_FRAME_TILES_PER_PUMP 1U
 #define FRDPD_FRAME_INTERVAL_MS 100ULL
+#define FRDPD_FRAME_HASH_OFFSET 1469598103934665603ULL
+#define FRDPD_FRAME_HASH_PRIME 1099511628211ULL
 
 typedef struct
 {
@@ -209,6 +211,88 @@ static UINT32 frdpd_min_u32(UINT32 a, UINT32 b)
 	return (a < b) ? a : b;
 }
 
+static void frdpd_invalidate_framebuffer_cache(frdpdPeerContext* context)
+{
+	if (!context)
+		return;
+	context->framebuffer_next_x = 0;
+	context->framebuffer_next_y = 0;
+	context->framebuffer_last_tick = 0;
+	free(context->framebuffer_hashes);
+	context->framebuffer_hashes = NULL;
+	context->framebuffer_hash_cols = 0;
+	context->framebuffer_hash_rows = 0;
+}
+
+static void frdpd_reset_framebuffer_state(frdpdPeerContext* context)
+{
+	if (!context)
+		return;
+	context->framebuffer_active = FALSE;
+	context->framebuffer_output_suppressed = FALSE;
+	frdpd_invalidate_framebuffer_cache(context);
+}
+
+static UINT64 frdpd_hash_frame_tile(const BYTE* data, UINT32 length)
+{
+	UINT64 hash = FRDPD_FRAME_HASH_OFFSET;
+
+	if (!data || (length == 0))
+		return 0;
+	for (UINT32 i = 0; i < length; i++)
+	{
+		hash ^= data[i];
+		hash *= FRDPD_FRAME_HASH_PRIME;
+	}
+	return (hash != 0) ? hash : 1;
+}
+
+static BOOL frdpd_prepare_frame_hashes(frdpdPeerContext* context, UINT32 desktop_width,
+                                       UINT32 desktop_height)
+{
+	UINT32 cols = 0;
+	UINT32 rows = 0;
+	size_t count = 0;
+	UINT64* hashes = NULL;
+
+	if (!context || (desktop_width == 0) || (desktop_height == 0))
+		return FALSE;
+	cols = (desktop_width + FRDPD_FRAME_TILE_SIZE - 1U) / FRDPD_FRAME_TILE_SIZE;
+	rows = (desktop_height + FRDPD_FRAME_TILE_SIZE - 1U) / FRDPD_FRAME_TILE_SIZE;
+	if ((cols == 0) || (rows == 0) || (cols > SIZE_MAX / rows))
+		return FALSE;
+	count = (size_t)cols * rows;
+	if (count > SIZE_MAX / sizeof(UINT64))
+		return FALSE;
+	if (context->framebuffer_hashes && (context->framebuffer_hash_cols == cols) &&
+	    (context->framebuffer_hash_rows == rows))
+		return TRUE;
+
+	hashes = (UINT64*)calloc(count, sizeof(UINT64));
+	if (!hashes)
+		return FALSE;
+	free(context->framebuffer_hashes);
+	context->framebuffer_hashes = hashes;
+	context->framebuffer_hash_cols = cols;
+	context->framebuffer_hash_rows = rows;
+	return TRUE;
+}
+
+static UINT64* frdpd_frame_tile_hash_slot(frdpdPeerContext* context, UINT32 x, UINT32 y)
+{
+	UINT32 col = 0;
+	UINT32 row = 0;
+
+	if (!context || !context->framebuffer_hashes || (context->framebuffer_hash_cols == 0) ||
+	    (context->framebuffer_hash_rows == 0))
+		return NULL;
+	col = x / FRDPD_FRAME_TILE_SIZE;
+	row = y / FRDPD_FRAME_TILE_SIZE;
+	if ((col >= context->framebuffer_hash_cols) || (row >= context->framebuffer_hash_rows))
+		return NULL;
+	return &context->framebuffer_hashes[((size_t)row * context->framebuffer_hash_cols) + col];
+}
+
 static BOOL frdpd_set_frame_ipc_timeout(int fd)
 {
 	struct timeval timeout = { 0 };
@@ -368,10 +452,12 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 	rdpSettings* settings = NULL;
 	UINT32 desktop_width = 0;
 	UINT32 desktop_height = 0;
+	BOOL hash_cache_ready = FALSE;
 	const UINT64 now = GetTickCount64();
 
 	if (!client || !client->context || !context || !context->managed_session_open ||
-	    !context->framebuffer_active || (context->agent_socket[0] == '\0'))
+	    !context->framebuffer_active || context->framebuffer_output_suppressed ||
+	    (context->agent_socket[0] == '\0'))
 		return TRUE;
 	if ((context->framebuffer_last_tick != 0) &&
 	    (now - context->framebuffer_last_tick < FRDPD_FRAME_INTERVAL_MS))
@@ -391,10 +477,13 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 		context->framebuffer_next_x = 0;
 		context->framebuffer_next_y = 0;
 	}
+	hash_cache_ready = frdpd_prepare_frame_hashes(context, desktop_width, desktop_height);
 
 	for (UINT32 i = 0; i < FRDPD_FRAME_TILES_PER_PUMP; i++)
 	{
 		BYTE* data = NULL;
+		UINT64 tile_hash = 0;
+		UINT64* hash_slot = NULL;
 		frdpAgentFrameResponse frame = { 0 };
 		const UINT32 x = context->framebuffer_next_x;
 		const UINT32 y = context->framebuffer_next_y;
@@ -411,6 +500,16 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 			}
 			return TRUE;
 		}
+		tile_hash = frdpd_hash_frame_tile(data, frame.data_length);
+		if (hash_cache_ready)
+			hash_slot = frdpd_frame_tile_hash_slot(context, frame.x, frame.y);
+		if (hash_slot && (*hash_slot == tile_hash))
+		{
+			free(data);
+			context->agent_frame_warned = FALSE;
+			frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
+			continue;
+		}
 
 		if (!frdpd_send_bitmap_frame(client, &frame, data))
 		{
@@ -419,6 +518,8 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 			          context->correlation_id, context->session_id);
 			return FALSE;
 		}
+		if (hash_slot)
+			*hash_slot = tile_hash;
 		free(data);
 		context->agent_frame_warned = FALSE;
 		frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
@@ -583,10 +684,7 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 	context->managed_session_open = TRUE;
 	context->agent_input_warned = FALSE;
 	context->agent_frame_warned = FALSE;
-	context->framebuffer_active = FALSE;
-	context->framebuffer_next_x = 0;
-	context->framebuffer_next_y = 0;
-	context->framebuffer_last_tick = 0;
+	frdpd_reset_framebuffer_state(context);
 	WLog_INFO(TAG, "correlation_id=%s opened managed session_id=%s display=%s agent_socket=%s user=%s",
 	          context->correlation_id, context->session_id,
 	          context->session_display[0] ? context->session_display : "unknown", context->agent_socket,
@@ -641,10 +739,7 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 		WLog_INFO(TAG, "correlation_id=%s scheduled close retry for managed session_id=%s",
 		          context->correlation_id, context->session_id);
 		context->managed_session_open = FALSE;
-		context->framebuffer_active = FALSE;
-		context->framebuffer_next_x = 0;
-		context->framebuffer_next_y = 0;
-		context->framebuffer_last_tick = 0;
+		frdpd_reset_framebuffer_state(context);
 		context->session_id[0] = '\0';
 		context->session_display[0] = '\0';
 		context->agent_socket[0] = '\0';
@@ -666,10 +761,7 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 	          context->session_id);
 
 	context->managed_session_open = FALSE;
-	context->framebuffer_active = FALSE;
-	context->framebuffer_next_x = 0;
-	context->framebuffer_next_y = 0;
-	context->framebuffer_last_tick = 0;
+	frdpd_reset_framebuffer_state(context);
 	context->session_id[0] = '\0';
 	context->session_display[0] = '\0';
 	context->agent_socket[0] = '\0';
@@ -685,6 +777,7 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 		return;
 
 	(void)frdpd_close_managed_session(config, context, TRUE);
+	frdpd_reset_framebuffer_state(context);
 	(void)frdpd_pam_close_session(context->pam_handle, context->pam_user,
 	                              context->pam_credentials_established,
 	                              context->pam_session_open);
@@ -831,10 +924,8 @@ static BOOL frdpd_peer_activate(freerdp_peer* client)
 	context = (frdpdPeerContext*)client->context;
 	if (context)
 	{
+		frdpd_reset_framebuffer_state(context);
 		context->framebuffer_active = TRUE;
-		context->framebuffer_next_x = 0;
-		context->framebuffer_next_y = 0;
-		context->framebuffer_last_tick = 0;
 	}
 	WLog_INFO(TAG, "correlation_id=%s client %s activated",
 	          context ? context->correlation_id : "unknown", client->hostname);
@@ -891,17 +982,23 @@ static BOOL frdpd_peer_extended_mouse_event(rdpInput* input, UINT16 flags, UINT1
 
 static BOOL frdpd_peer_refresh_rect(rdpContext* context, BYTE count, const RECTANGLE_16* areas)
 {
-	WINPR_UNUSED(context);
 	WINPR_UNUSED(count);
 	WINPR_UNUSED(areas);
+	if (context)
+		frdpd_invalidate_framebuffer_cache((frdpdPeerContext*)context);
 	return TRUE;
 }
 
 static BOOL frdpd_peer_suppress_output(rdpContext* context, BYTE allow, const RECTANGLE_16* area)
 {
-	WINPR_UNUSED(context);
-	WINPR_UNUSED(allow);
 	WINPR_UNUSED(area);
+	if (context)
+	{
+		frdpdPeerContext* frdp_context = (frdpdPeerContext*)context;
+		frdp_context->framebuffer_output_suppressed = allow ? FALSE : TRUE;
+		if (allow)
+			frdpd_invalidate_framebuffer_cache(frdp_context);
+	}
 	return TRUE;
 }
 
