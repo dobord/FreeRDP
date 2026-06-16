@@ -1,14 +1,24 @@
 /*
  * frdpctl - administration CLI for FreeRDP-based RDP server
  *
- * This stub provides basic operations: status, list-sessions, kill-session
- * and reload. In a full implementation it would communicate with the session
- * manager via IPC (e.g. unix domain sockets or D-Bus).
+ * This tool provides basic operations for the FreeRDP-based RDP server.
  */
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
+
+#include "ipc/frdp-ipc.h"
+
+#define FRDPCTL_DEFAULT_SESSION_SOCKET "/run/frdp-sesmand/sesmand.sock"
+
+typedef struct
+{
+    const char *socket_path;
+    const char *session_id;
+} frdpctlKillSessionOptions;
 
 static void usage(const char *argv0)
 {
@@ -16,8 +26,96 @@ static void usage(const char *argv0)
     printf("Commands:\n");
     printf("  status                 Show server status\n");
     printf("  list-sessions          List active sessions\n");
-    printf("  kill-session <id>      Terminate session by id\n");
+    printf("  kill-session <id> [--socket <path>]\n");
     printf("  reload                 Reload configuration\n");
+}
+
+static int copy_field(char *dst, size_t dst_size, const char *value)
+{
+    if (!dst || (dst_size == 0) || !value || (value[0] == '\0'))
+        return -1;
+    if (strlen(value) >= dst_size)
+        return -1;
+    memcpy(dst, value, strlen(value) + 1);
+    return 0;
+}
+
+static int parse_kill_session_options(int argc, char **argv, frdpctlKillSessionOptions *options)
+{
+    if (!options)
+        return -1;
+    memset(options, 0, sizeof(*options));
+    options->socket_path = FRDPCTL_DEFAULT_SESSION_SOCKET;
+
+    if (argc < 3)
+        return -1;
+    options->session_id = argv[2];
+
+    for (int i = 3; i < argc; i++) {
+        if (strcmp(argv[i], "--socket") == 0) {
+            if ((i + 1) >= argc)
+                return -1;
+            options->socket_path = argv[++i];
+            continue;
+        }
+        return -1;
+    }
+    return 0;
+}
+
+static int send_session_close_request(const char *socket_path, const char *session_id)
+{
+    int fd = -1;
+    frdpIpcHeader header;
+    frdpIpcHeader response_header;
+    frdpSessionRequest request;
+    frdpSessionResponse response;
+
+    memset(&header, 0, sizeof(header));
+    memset(&response_header, 0, sizeof(response_header));
+    memset(&request, 0, sizeof(request));
+    memset(&response, 0, sizeof(response));
+
+    if (copy_field(request.session_id, sizeof(request.session_id), session_id) != 0) {
+        fprintf(stderr, "invalid session id\n");
+        return 2;
+    }
+    snprintf(request.correlation_id, sizeof(request.correlation_id), "frdpctl-%ld", (long)getpid());
+
+    fd = frdp_ipc_connect(socket_path);
+    if (fd < 0) {
+        fprintf(stderr, "unable to connect to session manager socket %s: %s\n", socket_path,
+                strerror(errno));
+        return 3;
+    }
+
+    header.type = FRDP_IPC_SESSION_CLOSE_REQUEST;
+    header.payload_len = sizeof(request);
+    if ((frdp_ipc_send(fd, &header, sizeof(header)) != 0) ||
+        (frdp_ipc_send(fd, &request, sizeof(request)) != 0) ||
+        (frdp_ipc_recv(fd, &response_header, sizeof(response_header)) !=
+         (int)sizeof(response_header)) ||
+        (response_header.type != FRDP_IPC_SESSION_RESPONSE) ||
+        (response_header.payload_len != sizeof(response)) ||
+        (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))) {
+        fprintf(stderr, "session close IPC failed\n");
+        frdp_ipc_close(fd);
+        return 3;
+    }
+
+    response.session_id[sizeof(response.session_id) - 1] = '\0';
+    response.display[sizeof(response.display) - 1] = '\0';
+    response.agent_socket[sizeof(response.agent_socket) - 1] = '\0';
+    response.error[sizeof(response.error) - 1] = '\0';
+
+    frdp_ipc_close(fd);
+    if (!response.success) {
+        fprintf(stderr, "session close failed: %s\n", response.error[0] ? response.error : "unknown");
+        return 4;
+    }
+
+    printf("Closed session %s\n", response.session_id[0] ? response.session_id : session_id);
+    return 0;
 }
 
 int main(int argc, char **argv)
@@ -34,13 +132,13 @@ int main(int argc, char **argv)
         printf("Listing sessions: stub implementation\n");
         return 0;
     } else if (strcmp(cmd, "kill-session") == 0) {
-        if (argc < 3) {
-            fprintf(stderr, "kill-session requires an id\n");
+        frdpctlKillSessionOptions options;
+
+        if (parse_kill_session_options(argc, argv, &options) != 0) {
+            fprintf(stderr, "Usage: %s kill-session <id> [--socket <path>]\n", argv[0]);
             return 1;
         }
-        const char *id = argv[2];
-        printf("Killing session %s: stub implementation\n", id);
-        return 0;
+        return send_session_close_request(options.socket_path, options.session_id);
     } else if (strcmp(cmd, "reload") == 0) {
         printf("Reloading configuration: stub implementation\n");
         return 0;

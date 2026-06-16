@@ -55,7 +55,10 @@ add_executable(frdpd-ipc-demo
     $<TARGET_OBJECTS:frdp-ipc>)
 set_property(TARGET frdpd-ipc-demo PROPERTY FOLDER "Server/frdp")
 
-add_executable(frdpctl ${CMAKE_SOURCE_DIR}/tools/frdpctl/frdpctl.c)
+add_executable(frdpctl
+    ${CMAKE_SOURCE_DIR}/tools/frdpctl/frdpctl.c
+    $<TARGET_OBJECTS:frdp-ipc>)
+target_include_directories(frdpctl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 installwithrpath(TARGETS frdpctl DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)
 set_property(TARGET frdpctl PROPERTY FOLDER "Server/frdp")
 
