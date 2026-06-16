@@ -1,0 +1,151 @@
+#include "config/frdp-config.h"
+#include "frdpd/channel_policy.h"
+
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+static int write_config(const char* name, const char* body, char* path, size_t path_size)
+{
+	FILE* fp = NULL;
+	const int rc = snprintf(path, path_size, "%s/%s", CMAKE_CURRENT_BINARY_DIR, name);
+
+	if ((rc < 0) || ((size_t)rc >= path_size))
+		return -1;
+
+	fp = fopen(path, "w");
+	if (!fp)
+		return -1;
+	if (fputs(body, fp) < 0)
+	{
+		fclose(fp);
+		return -1;
+	}
+	if (fclose(fp) != 0)
+		return -1;
+	return 0;
+}
+
+static int load_config_body(const char* name, const char* body, frdpConfig* config)
+{
+	char path[1024] = { 0 };
+	int rc = -1;
+
+	if (write_config(name, body, path, sizeof(path)) != 0)
+		return -1;
+	rc = frdp_config_load(path, config);
+	(void)unlink(path);
+	return rc;
+}
+
+static int expect_load_failure(const char* name, const char* body)
+{
+	frdpConfig config = { 0 };
+
+	if (load_config_body(name, body, &config) == 0)
+	{
+		printf("config unexpectedly loaded: %s\n", name);
+		return -1;
+	}
+	return 0;
+}
+
+static int test_default_deny(void)
+{
+	frdpConfig config = { 0 };
+
+	if (load_config_body("frdp-default-deny.toml", "", &config) != 0)
+		return -1;
+	if (config.channels.static_allow_count != 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") != 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "rdpsnd") != 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(NULL, "cliprdr") != 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "") != 0)
+		return -1;
+	return 0;
+}
+
+static int test_empty_allow_list(void)
+{
+	frdpConfig config = { 0 };
+	const char* body = "[channels]\nstatic_allow = \"\"\n";
+
+	if (load_config_body("frdp-empty-channels.toml", body, &config) != 0)
+		return -1;
+	if (config.channels.static_allow_count != 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") != 0)
+		return -1;
+	return 0;
+}
+
+static int test_static_allow_list(void)
+{
+	frdpConfig config = { 0 };
+	const char* body = "[channels]\nstatic_allow = \"cliprdr, rdpsnd,rdpdr\"\n";
+
+	if (load_config_body("frdp-static-channels.toml", body, &config) != 0)
+		return -1;
+	if (config.channels.static_allow_count != 3)
+		return -1;
+	if (strcmp(config.channels.static_allow[0], "cliprdr") != 0)
+		return -1;
+	if (strcmp(config.channels.static_allow[1], "rdpsnd") != 0)
+		return -1;
+	if (strcmp(config.channels.static_allow[2], "rdpdr") != 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") == 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "rdpsnd") == 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "rdpdr") == 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "drdynvc") != 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "CLIPRDR") != 0)
+		return -1;
+	return 0;
+}
+
+static int test_invalid_channel_config(void)
+{
+	if (expect_load_failure("frdp-duplicate-channel.toml",
+	                        "[channels]\nstatic_allow = \"cliprdr,cliprdr\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-empty-channel-token.toml",
+	                        "[channels]\nstatic_allow = \"cliprdr,,rdpsnd\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-bad-channel-char.toml",
+	                        "[channels]\nstatic_allow = \"clip-rdr\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-long-channel-name.toml",
+	                        "[channels]\nstatic_allow = \"abcdefghi\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-unknown-channel-key.toml", "[channels]\nclipboard = \"true\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-channel-section.toml",
+	                        "[channels]\nstatic_allow = \"cliprdr\"\n[channels]\nstatic_allow = \"rdpsnd\"\n") !=
+	    0)
+		return -1;
+	return 0;
+}
+
+int TestFreeRDPFrdpConfig(int argc, char* argv[])
+{
+	(void)argc;
+	(void)argv;
+
+	if (test_default_deny() != 0)
+		return -1;
+	if (test_empty_allow_list() != 0)
+		return -1;
+	if (test_static_allow_list() != 0)
+		return -1;
+	if (test_invalid_channel_config() != 0)
+		return -1;
+	return 0;
+}

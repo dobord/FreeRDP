@@ -94,3 +94,7 @@ install(FILES ${CMAKE_SOURCE_DIR}/packaging/selinux/frdpd.te
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/apparmor/frdpd
         DESTINATION ${FRDP_SECURITY_POLICY_DIR}/apparmor
         COMPONENT server)
+
+if(BUILD_TESTING_INTERNAL OR BUILD_TESTING)
+  add_subdirectory(test)
+endif()
