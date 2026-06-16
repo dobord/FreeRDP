@@ -64,6 +64,55 @@ typedef struct {
 static volatile int g_x11_resize_error = 0;
 static volatile int g_x11_keyboard_error = 0;
 
+static char hex_digit(unsigned int value)
+{
+    return (value < 10U) ? (char)('0' + value) : (char)('a' + (value - 10U));
+}
+
+static int log_char_is_safe(unsigned char c)
+{
+    return ((c >= 'A') && (c <= 'Z')) || ((c >= 'a') && (c <= 'z')) ||
+           ((c >= '0') && (c <= '9')) || (c == '.') || (c == '_') || (c == '-') ||
+           (c == ':') || (c == '@') || (c == '/') || (c == '%') || (c == '+');
+}
+
+static void escape_log_field(const char *src, char *dst, size_t dst_size)
+{
+    size_t used = 0;
+
+    if (!dst || dst_size == 0)
+        return;
+    dst[0] = '\0';
+    if (!src)
+        return;
+
+    for (const unsigned char *p = (const unsigned char *)src; (*p != '\0') && (used + 1 < dst_size);
+         p++) {
+        if (log_char_is_safe(*p)) {
+            dst[used++] = (char)*p;
+            dst[used] = '\0';
+        } else if (used + 4 < dst_size) {
+            dst[used++] = '\\';
+            dst[used++] = 'x';
+            dst[used++] = hex_digit((*p >> 4U) & 0x0fU);
+            dst[used++] = hex_digit(*p & 0x0fU);
+            dst[used] = '\0';
+        } else {
+            break;
+        }
+    }
+}
+
+static void escape_log_ids(const char *correlation_id, const char *session_id,
+                           char *escaped_correlation_id, size_t escaped_correlation_id_size,
+                           char *escaped_session_id, size_t escaped_session_id_size)
+{
+    escape_log_field(correlation_id ? correlation_id : "unknown", escaped_correlation_id,
+                     escaped_correlation_id_size);
+    escape_log_field(session_id ? session_id : "unknown", escaped_session_id,
+                     escaped_session_id_size);
+}
+
 static int resize_error_handler(Display *display, XErrorEvent *event)
 {
     (void)display;
@@ -92,8 +141,17 @@ static Display *open_backend_display(const char *display_name, const char *corre
         usleep(100000);
     }
     if (!display) {
+        char escaped_correlation_id[256] = { 0 };
+        char escaped_session_id[256] = { 0 };
+        char escaped_display[256] = { 0 };
+
+        escape_log_ids(correlation_id, session_id, escaped_correlation_id,
+                       sizeof(escaped_correlation_id), escaped_session_id,
+                       sizeof(escaped_session_id));
+        escape_log_field(display_name ? display_name : "unknown", escaped_display,
+                         sizeof(escaped_display));
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to open display %s",
-               correlation_id, session_id, display_name ? display_name : "unknown");
+               escaped_correlation_id, escaped_session_id, escaped_display);
         return NULL;
     }
 
@@ -102,8 +160,17 @@ static Display *open_backend_display(const char *display_name, const char *corre
     int major = 0;
     int minor = 0;
     if (!XTestQueryExtension(display, &event_base, &error_base, &major, &minor)) {
+        char escaped_correlation_id[256] = { 0 };
+        char escaped_session_id[256] = { 0 };
+        char escaped_display[256] = { 0 };
+
+        escape_log_ids(correlation_id, session_id, escaped_correlation_id,
+                       sizeof(escaped_correlation_id), escaped_session_id,
+                       sizeof(escaped_session_id));
+        escape_log_field(display_name ? display_name : "unknown", escaped_display,
+                         sizeof(escaped_display));
         syslog(LOG_ERR, "correlation_id=%s session_id=%s display %s lacks XTest",
-               correlation_id, session_id, display_name ? display_name : "unknown");
+               escaped_correlation_id, escaped_session_id, escaped_display);
         XCloseDisplay(display);
         return NULL;
     }
@@ -652,13 +719,18 @@ static int frame_state_init(frdpAgentFrameState *state, Display *display,
     }
     XUnlockDisplay(display);
 
+    char escaped_correlation_id[256] = { 0 };
+    char escaped_session_id[256] = { 0 };
+
+    escape_log_ids(correlation_id, session_id, escaped_correlation_id,
+                   sizeof(escaped_correlation_id), escaped_session_id, sizeof(escaped_session_id));
     if (state->damage_enabled) {
         syslog(LOG_INFO, "correlation_id=%s session_id=%s enabled XDamage dirty tile tracking",
-               correlation_id, session_id);
+               escaped_correlation_id, escaped_session_id);
     } else {
         syslog(LOG_WARNING,
                "correlation_id=%s session_id=%s XDamage unavailable; using capture-all tiles",
-               correlation_id, session_id);
+               escaped_correlation_id, escaped_session_id);
     }
     return 0;
 }
@@ -974,8 +1046,14 @@ static int handle_input_message(int fd, Display *display, uint32_t payload_len,
     event.correlation_id[sizeof(event.correlation_id) - 1] = '\0';
     event.session_id[sizeof(event.session_id) - 1] = '\0';
     if (validate_agent_ids(event.correlation_id, event.session_id, correlation_id, session_id) != 0) {
+        char escaped_correlation_id[256] = { 0 };
+        char escaped_session_id[256] = { 0 };
+
+        escape_log_ids(correlation_id, session_id, escaped_correlation_id,
+                       sizeof(escaped_correlation_id), escaped_session_id,
+                       sizeof(escaped_session_id));
         syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected mismatched input event",
-               correlation_id, session_id);
+               escaped_correlation_id, escaped_session_id);
         return -1;
     }
 
@@ -1036,14 +1114,26 @@ static int handle_resize_message(int fd, Display *display, uint32_t payload_len,
     snprintf(response.session_id, sizeof(response.session_id), "%s", session_id);
     if (validate_agent_ids(request.correlation_id, request.session_id, correlation_id,
                            session_id) != 0) {
+        char escaped_correlation_id[256] = { 0 };
+        char escaped_session_id[256] = { 0 };
+
+        escape_log_ids(correlation_id, session_id, escaped_correlation_id,
+                       sizeof(escaped_correlation_id), escaped_session_id,
+                       sizeof(escaped_session_id));
         syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected mismatched resize request",
-               correlation_id, session_id);
+               escaped_correlation_id, escaped_session_id);
         snprintf(response.error, sizeof(response.error), "%s", "mismatched ids");
     } else if (resize_backend_display(display, &request, &response) != 0) {
         snprintf(response.error, sizeof(response.error), "%s", "resize failed");
     } else {
+        char escaped_correlation_id[256] = { 0 };
+        char escaped_session_id[256] = { 0 };
+
+        escape_log_ids(correlation_id, session_id, escaped_correlation_id,
+                       sizeof(escaped_correlation_id), escaped_session_id,
+                       sizeof(escaped_session_id));
         syslog(LOG_INFO, "correlation_id=%s session_id=%s resized display to %ux%u",
-               correlation_id, session_id, response.width, response.height);
+               escaped_correlation_id, escaped_session_id, response.width, response.height);
     }
 
     rc = send_resize_response(fd, &response);
@@ -1072,8 +1162,14 @@ static int handle_frame_message(int fd, frdpAgentFrameState *frame_state, uint32
     snprintf(response.session_id, sizeof(response.session_id), "%s", session_id);
     if (validate_agent_ids(request.correlation_id, request.session_id, correlation_id,
                            session_id) != 0) {
+        char escaped_correlation_id[256] = { 0 };
+        char escaped_session_id[256] = { 0 };
+
+        escape_log_ids(correlation_id, session_id, escaped_correlation_id,
+                       sizeof(escaped_correlation_id), escaped_session_id,
+                       sizeof(escaped_session_id));
         syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected mismatched frame request",
-               correlation_id, session_id);
+               escaped_correlation_id, escaped_session_id);
         snprintf(response.error, sizeof(response.error), "%s", "mismatched ids");
     } else if (capture_frame_tile(frame_state, &request, &response, &pixels) != 0) {
         snprintf(response.error, sizeof(response.error), "%s", "capture failed");
@@ -1148,8 +1244,14 @@ static int wait_for_backend_exit(pid_t pid, int control_fd, frdpAgentFrameState 
         if (cfd < 0)
             continue;
         if (handle_control_client(cfd, frame_state, correlation_id, session_id) != 0) {
+            char escaped_correlation_id[256] = { 0 };
+            char escaped_session_id[256] = { 0 };
+
+            escape_log_ids(correlation_id, session_id, escaped_correlation_id,
+                           sizeof(escaped_correlation_id), escaped_session_id,
+                           sizeof(escaped_session_id));
             syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected agent control event",
-                   correlation_id, session_id);
+                   escaped_correlation_id, escaped_session_id);
         }
         close(cfd);
     }
@@ -1215,10 +1317,15 @@ int main(int argc, char **argv)
     if (!session_id) {
         session_id = "unknown";
     }
+    char escaped_correlation_id[256] = { 0 };
+    char escaped_session_id[256] = { 0 };
+
+    escape_log_ids(correlation_id, session_id, escaped_correlation_id,
+                   sizeof(escaped_correlation_id), escaped_session_id, sizeof(escaped_session_id));
     int ready_fd = parse_ready_fd();
     if (ready_fd >= 0 && set_cloexec(ready_fd) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to mark ready fd close-on-exec",
-               correlation_id, session_id);
+               escaped_correlation_id, escaped_session_id);
         close(ready_fd);
         closelog();
         return 1;
@@ -1226,7 +1333,7 @@ int main(int argc, char **argv)
     int control_fd = parse_control_fd();
     if (control_fd >= 0 && set_cloexec(control_fd) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to mark control fd close-on-exec",
-               correlation_id, session_id);
+               escaped_correlation_id, escaped_session_id);
         if (ready_fd >= 0)
             close(ready_fd);
         closelog();
@@ -1245,14 +1352,19 @@ int main(int argc, char **argv)
     if (!geometry) {
         geometry = "1024x768x24";
     }
+    char escaped_display[256] = { 0 };
+    char escaped_geometry[256] = { 0 };
+
+    escape_log_field(display, escaped_display, sizeof(escaped_display));
+    escape_log_field(geometry, escaped_geometry, sizeof(escaped_geometry));
 
     syslog(LOG_INFO, "correlation_id=%s session_id=%s display=%s geometry=%s session agent starting",
-           correlation_id, session_id, display, geometry);
+           escaped_correlation_id, escaped_session_id, escaped_display, escaped_geometry);
 
     int exec_pipe[2] = {-1, -1};
     if (pipe(exec_pipe) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to create backend exec pipe",
-               correlation_id, session_id);
+               escaped_correlation_id, escaped_session_id);
         if (ready_fd >= 0)
             close(ready_fd);
         if (control_fd >= 0)
@@ -1262,7 +1374,7 @@ int main(int argc, char **argv)
     }
     if (fcntl(exec_pipe[1], F_SETFD, FD_CLOEXEC) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to mark backend exec pipe",
-               correlation_id, session_id);
+               escaped_correlation_id, escaped_session_id);
         close(exec_pipe[0]);
         close(exec_pipe[1]);
         if (ready_fd >= 0)
@@ -1276,7 +1388,7 @@ int main(int argc, char **argv)
     pid_t pid = fork();
     if (pid < 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to fork for backend",
-               correlation_id, session_id);
+               escaped_correlation_id, escaped_session_id);
         close(exec_pipe[0]);
         close(exec_pipe[1]);
         if (ready_fd >= 0)
@@ -1303,7 +1415,7 @@ int main(int argc, char **argv)
     if (wait_for_backend_exec(exec_pipe[0], pid) != 0) {
         close(exec_pipe[0]);
         syslog(LOG_ERR, "correlation_id=%s session_id=%s backend failed to start",
-               correlation_id, session_id);
+               escaped_correlation_id, escaped_session_id);
         if (ready_fd >= 0)
             close(ready_fd);
         if (control_fd >= 0)
@@ -1313,8 +1425,8 @@ int main(int argc, char **argv)
     }
     close(exec_pipe[0]);
 
-    syslog(LOG_INFO, "correlation_id=%s session_id=%s backend started", correlation_id,
-           session_id);
+    syslog(LOG_INFO, "correlation_id=%s session_id=%s backend started", escaped_correlation_id,
+           escaped_session_id);
 
     Display *xdisplay = open_backend_display(display, correlation_id, session_id);
     if (!xdisplay) {
@@ -1332,7 +1444,7 @@ int main(int argc, char **argv)
     frdpAgentFrameState frame_state;
     if (frame_state_init(&frame_state, xdisplay, correlation_id, session_id) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to initialize frame state",
-               correlation_id, session_id);
+               escaped_correlation_id, escaped_session_id);
         XCloseDisplay(xdisplay);
         kill(pid, SIGTERM);
         usleep(200000);
@@ -1347,7 +1459,7 @@ int main(int argc, char **argv)
     }
     if (notify_agent_ready(&ready_fd) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to report agent readiness",
-               correlation_id, session_id);
+               escaped_correlation_id, escaped_session_id);
         frame_state_uninit(&frame_state);
         XCloseDisplay(xdisplay);
         kill(pid, SIGTERM);
@@ -1372,10 +1484,10 @@ int main(int argc, char **argv)
         close(control_fd);
     if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s display server exited with status %d",
-               correlation_id, session_id, WEXITSTATUS(status));
+               escaped_correlation_id, escaped_session_id, WEXITSTATUS(status));
     }
     syslog(LOG_INFO, "correlation_id=%s session_id=%s display server exited, terminating agent",
-           correlation_id, session_id);
+           escaped_correlation_id, escaped_session_id);
     closelog();
     return 0;
 }
