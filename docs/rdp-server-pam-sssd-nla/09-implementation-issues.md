@@ -70,6 +70,7 @@ but the host RPM macro set does not provide `%cmake`, and `packaging/debian` cur
 - `frdpctl` now escapes IPC-supplied session ids, users, display names, session-manager errors, and session-manager socket paths before writing them to the admin terminal.
 - `frdp-sesmand` display allocation now skips display numbers already present in its session registry or visible through local X lock/socket paths, but allocation is still in-memory and not reconnect-aware.
 - `frdp-sesmand` now handles SIGINT/SIGTERM by stopping the IPC accept loop and cleaning up tracked agent process groups, PAM sessions, and runtime sockets before exit.
+- `frdpd` and `frdp-sesmand` install explicit non-restarting SIGINT/SIGTERM handlers so stop requests are observed by their main loops and fail closed if handler installation fails.
 
 ## Remaining issues
 

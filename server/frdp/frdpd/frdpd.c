@@ -105,6 +105,20 @@ static void frdpd_signal_handler(int signum)
 	g_frdpd_running = 0;
 }
 
+static BOOL frdpd_install_signal_handlers(void)
+{
+	struct sigaction action = { 0 };
+
+	action.sa_handler = frdpd_signal_handler;
+	if (sigemptyset(&action.sa_mask) != 0)
+		return FALSE;
+	if (sigaction(SIGINT, &action, NULL) != 0)
+		return FALSE;
+	if (sigaction(SIGTERM, &action, NULL) != 0)
+		return FALSE;
+	return TRUE;
+}
+
 static void frdpd_escape_log_string(char* dst, size_t dst_size, const char* src)
 {
 	size_t out = 0;
@@ -2212,8 +2226,11 @@ static int frdpd_run_server(const frdpdOptions* options)
 		return -1;
 	}
 
-	(void)signal(SIGINT, frdpd_signal_handler);
-	(void)signal(SIGTERM, frdpd_signal_handler);
+	if (!frdpd_install_signal_handlers())
+	{
+		WLog_ERR(TAG, "Failed to install signal handlers");
+		return -1;
+	}
 
 	if (!winpr_InitializeSSL(WINPR_SSL_INIT_DEFAULT))
 		return -1;
