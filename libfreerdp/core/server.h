@@ -87,6 +87,8 @@ struct WTSVirtualChannelManager
 
 	WINPR_ATTR_NODISCARD psDVCCreationStatusCallback dvc_creation_status;
 	void* dvc_creation_status_userdata;
+	WINPR_ATTR_NODISCARD psDVCChannelAuthorizationCallback dvc_channel_authorization;
+	void* dvc_channel_authorization_userdata;
 
 	wHashTable* dynamicVirtualChannels;
 };

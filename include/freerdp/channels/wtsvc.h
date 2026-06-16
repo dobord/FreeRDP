@@ -54,6 +54,12 @@ extern "C"
 
 	typedef BOOL (*psDVCCreationStatusCallback)(void* userdata, UINT32 channelId,
 	                                            INT32 creationStatus);
+	/* Called synchronously by WTSVirtualChannelOpenEx while the server handle table is
+	 * locked. The callback must be fast, non-blocking, and must not call WTS server
+	 * or virtual-channel manager APIs. Return FALSE to fail WTSVirtualChannelOpenEx
+	 * with ERROR_ACCESS_DENIED before a dynamic-channel CREATE_REQUEST is sent. */
+	typedef BOOL (*psDVCChannelAuthorizationCallback)(void* userdata, DWORD SessionId,
+	                                                 const char* channelName, DWORD flags);
 
 	/**
 	 * WTSVirtualChannelManager functions are FreeRDP extensions to the API.
@@ -84,6 +90,9 @@ extern "C"
 	FREERDP_API void WTSVirtualChannelManagerSetDVCCreationCallback(HANDLE hServer,
 	                                                                psDVCCreationStatusCallback cb,
 	                                                                void* userdata);
+
+	FREERDP_API void WTSVirtualChannelManagerSetDVCChannelAuthorizationCallback(
+	    HANDLE hServer, psDVCChannelAuthorizationCallback cb, void* userdata);
 
 	/**
 	 * Extended FreeRDP WTS functions for channel handling

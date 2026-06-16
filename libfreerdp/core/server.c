@@ -730,6 +730,17 @@ void WTSVirtualChannelManagerSetDVCCreationCallback(HANDLE hServer, psDVCCreatio
 	vcm->dvc_creation_status_userdata = userdata;
 }
 
+void WTSVirtualChannelManagerSetDVCChannelAuthorizationCallback(
+    HANDLE hServer, psDVCChannelAuthorizationCallback cb, void* userdata)
+{
+	WTSVirtualChannelManager* vcm = hServer;
+
+	WINPR_ASSERT(vcm);
+
+	vcm->dvc_channel_authorization = cb;
+	vcm->dvc_channel_authorization_userdata = userdata;
+}
+
 UINT16 WTSChannelGetId(freerdp_peer* client, const char* channel_name)
 {
 	rdpMcsChannel* channel = nullptr;
@@ -1512,6 +1523,14 @@ HANDLE WINAPI FreeRDP_WTSVirtualChannelOpenEx(DWORD SessionId, LPSTR pVirtualNam
 	if (!vcm->drdynvc_channel || (vcm->drdynvc_state != DRDYNVC_STATE_READY))
 	{
 		SetLastError(ERROR_NOT_READY);
+		goto end;
+	}
+
+	if (vcm->dvc_channel_authorization &&
+	    !vcm->dvc_channel_authorization(vcm->dvc_channel_authorization_userdata, SessionId,
+	                                    pVirtualName, flags))
+	{
+		SetLastError(ERROR_ACCESS_DENIED);
 		goto end;
 	}
 

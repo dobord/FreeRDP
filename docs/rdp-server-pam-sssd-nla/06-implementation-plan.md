@@ -121,9 +121,10 @@ Deliverables:
 - [x] display resize (prototype: RDP monitor-layout changes are forwarded to the agent and applied through XRandR before `frdpd` updates peer geometry; runtime interop and resize churn are not smoke-tested yet);
 - [x] static channel policy engine (`frdpd` filters client-requested static virtual channels during capability processing with configurable blocklist/allowlist modes, defaults to empty blocklist mode, keeps `drdynvc` guard-denied until dynamic-channel open enforcement exists, and has CTest coverage for config parsing plus `CHANNEL_DEF` validation; useful channel handlers remain open);
 - [x] preparatory dynamic channel filter parsing and policy helper (`dynamic_mode` plus `dynamic_allow`/`dynamic_deny` support exact-match blocklist/allowlist semantics in config/tests, but dynamic-channel open enforcement remains open);
+- [x] server-side WTS dynamic-channel authorization hook (`WTSVirtualChannelManagerSetDVCChannelAuthorizationCallback` can deny a server-created DVC before the `CREATE_REQUEST` is sent, but `frdpd` has not wired a VCM or useful handlers yet);
 - [ ] text clipboard;
 - [ ] baseline audio output;
-- [ ] dynamic channel open enforcement and useful channel handlers.
+- [ ] `frdpd` dynamic channel open enforcement and useful channel handlers.
 
 Exit criteria: daily interactive desktop use is possible in the lab with Windows and FreeRDP clients.
 
