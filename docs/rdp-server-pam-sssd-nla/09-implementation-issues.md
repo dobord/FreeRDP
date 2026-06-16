@@ -1,6 +1,6 @@
 # 09. Implementation issues
 
-Analysis date: 2026-06-15.
+Analysis date: 2026-06-16.
 
 Build and syntax checks used for this pass:
 
@@ -8,6 +8,8 @@ Build and syntax checks used for this pass:
 cmake -S . -B /tmp/opencode/freerdp-current-build -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SAMPLE=OFF
 cmake --build /tmp/opencode/freerdp-current-build --target frdpd frdp-authd frdp-sesmand frdp-session-agent frdpd-ipc-demo frdpctl frdp-krb-authd -j2
 cmake --build /tmp/opencode/freerdp-current-build --target frdpd frdp-authd frdpd-ipc-demo -j2
+cmake -S . -B /tmp/opencode/freerdp-current-build -DWITH_SERVER=ON -DWITH_FRDPD=ON -DWITH_SAMPLE=OFF -DWITH_SHADOW=OFF -DWITH_PROXY=OFF
+cmake --build /tmp/opencode/freerdp-current-build --target frdpd frdp-sesmand frdp-session-agent -j2
 cmake -S . -B /tmp/opencode/freerdp-frdp-install-build -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SAMPLE=OFF -DWITH_SHADOW=OFF -DWITH_PROXY=OFF
 cmake --build /tmp/opencode/freerdp-frdp-install-build --target frdpd frdp-authd frdp-sesmand frdp-session-agent frdpctl frdp-krb-authd -j2
 cmake --install /tmp/opencode/freerdp-frdp-install-build --component server --prefix /tmp/opencode/freerdp-install-frdp
@@ -83,6 +85,6 @@ but the host RPM macro set does not provide `%cmake`, and `packaging/debian` cur
 
 - The integrated `frdpd` target and helper targets build successfully in `/tmp/opencode/freerdp-current-build`.
 - The isolated `server` component install check succeeds for FRDP binaries/config when unrelated shadow/proxy server targets are disabled.
-- The standalone prototypes and newly touched config/IPC files pass syntax-only checks.
+- The focused `frdpd`, `frdp-sesmand`, and `frdp-session-agent` targets build successfully after the XTest input and raw framebuffer tile changes.
 - The build emits existing FreeRDP deprecation warnings unrelated to the new PAM/SSSD/NLA prototype.
-- No package build, PAM login, AD/SSSD lab, agent input runtime smoke, or RDP client interoperability test was run in this pass.
+- No package build, PAM login, AD/SSSD lab, agent input/framebuffer runtime smoke, or RDP client interoperability test was run in this pass.

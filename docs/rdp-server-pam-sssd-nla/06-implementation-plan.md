@@ -7,7 +7,7 @@ items, this means the code is integrated into the repository CMake build unless 
 names a documentation deliverable. Unchecked items may still have standalone prototype code or draft
 documentation, but they are not complete MVP behavior.
 
-Current analysis date: 2026-06-15.
+Current analysis date: 2026-06-16.
 
 Verified commands:
 
@@ -15,6 +15,8 @@ Verified commands:
 cmake -S . -B /tmp/opencode/freerdp-current-build -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SAMPLE=OFF
 cmake --build /tmp/opencode/freerdp-current-build --target frdpd frdp-authd frdp-sesmand frdp-session-agent frdpd-ipc-demo frdpctl frdp-krb-authd -j2
 cmake --build /tmp/opencode/freerdp-current-build --target frdpd frdp-authd frdpd-ipc-demo -j2
+cmake -S . -B /tmp/opencode/freerdp-current-build -DWITH_SERVER=ON -DWITH_FRDPD=ON -DWITH_SAMPLE=OFF -DWITH_SHADOW=OFF -DWITH_PROXY=OFF
+cmake --build /tmp/opencode/freerdp-current-build --target frdpd frdp-sesmand frdp-session-agent -j2
 cmake -S . -B /tmp/opencode/freerdp-frdp-install-build -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SAMPLE=OFF -DWITH_SHADOW=OFF -DWITH_PROXY=OFF
 cmake --build /tmp/opencode/freerdp-frdp-install-build --target frdpd frdp-authd frdp-sesmand frdp-session-agent frdpctl frdp-krb-authd -j2
 cmake --install /tmp/opencode/freerdp-frdp-install-build --component server --prefix /tmp/opencode/freerdp-install-frdp
@@ -110,6 +112,7 @@ Exit criteria: the user receives a desktop session after successful authenticati
 Deliverables:
 
 - [ ] framebuffer/damage capture (partial: raw framebuffer tiles can be pulled from the agent and sent as bitmap updates; damage tracking and compression are not implemented yet);
+- [x] minimal raw framebuffer tile transport from the managed session agent to FreeRDP bitmap updates;
 - [ ] basic encoder scheduling;
 - [x] keyboard/mouse input (partial: integrated callbacks forward input over optional agent control IPC and the agent injects scancode keyboard plus mouse events through XTest; Unicode/text input is not implemented yet);
 - [ ] display resize;
