@@ -98,7 +98,12 @@ int frdp_ipc_send(int fd, const void *buf, size_t len)
 #endif
     while (total < len) {
         ssize_t n = send(fd, p + total, len - total, flags);
-        if (n <= 0)
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            return -1;
+        }
+        if (n == 0)
             return -1;
         total += n;
     }
@@ -112,7 +117,12 @@ int frdp_ipc_recv(int fd, void *buf, size_t len)
     size_t total = 0;
     while (total < len) {
         ssize_t n = recv(fd, p + total, len - total, 0);
-        if (n <= 0)
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            return -1;
+        }
+        if (n == 0)
             return -1;
         total += n;
     }
