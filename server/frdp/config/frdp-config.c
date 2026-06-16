@@ -48,7 +48,65 @@ static int unquote_value(char *value)
     return 0;
 }
 
-/* Load key/value pairs from a simple TOML-like file. This parser ignores unknown sections and keys. */
+static int is_channel_name_valid(const char *name)
+{
+    size_t len = 0;
+
+    if (!name)
+        return 0;
+    len = strlen(name);
+    if (len == 0 || len >= FRDP_CONFIG_CHANNEL_NAME_SIZE)
+        return 0;
+    for (size_t i = 0; i < len; i++) {
+        const unsigned char c = (unsigned char)name[i];
+        if (!isalnum(c) && c != '_')
+            return 0;
+    }
+    return 1;
+}
+
+static int add_static_channel_allow(frdpConfig *config, const char *name)
+{
+    if (!config || !is_channel_name_valid(name))
+        return -1;
+    for (uint32_t i = 0; i < config->channels.static_allow_count; i++) {
+        if (strcmp(config->channels.static_allow[i], name) == 0)
+            return -1;
+    }
+    if (config->channels.static_allow_count >= FRDP_CONFIG_MAX_CHANNELS)
+        return -1;
+    if (copy_string(config->channels.static_allow[config->channels.static_allow_count],
+                    sizeof(config->channels.static_allow[config->channels.static_allow_count]),
+                    name) != 0)
+        return -1;
+    config->channels.static_allow_count++;
+    return 0;
+}
+
+static int parse_static_channel_allow(frdpConfig *config, char *value)
+{
+    char *cursor = value;
+
+    if (!config || !value)
+        return -1;
+    if (value[0] == '\0')
+        return 0;
+    while (cursor) {
+        char *next = strchr(cursor, ',');
+
+        if (next) {
+            *next = '\0';
+            next++;
+        }
+        trim(cursor);
+        if (add_static_channel_allow(config, cursor) != 0)
+            return -1;
+        cursor = next;
+    }
+    return 0;
+}
+
+/* Load key/value pairs from a small fail-closed TOML subset. */
 int frdp_config_load(const char *path, frdpConfig *config)
 {
     if (!path || !config)
@@ -62,6 +120,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_server_section = 0;
     int seen_auth_section = 0;
     int seen_session_section = 0;
+    int seen_channels_section = 0;
     int seen_listen = 0;
     int seen_security = 0;
     int seen_tls_cert = 0;
@@ -70,6 +129,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_pam_service = 0;
     int seen_auth_socket = 0;
     int seen_session_socket = 0;
+    int seen_channel_static_allow = 0;
     /* Set defaults */
     memset(config, 0, sizeof(*config));
     if (copy_string(config->listen, sizeof(config->listen), "0.0.0.0:3389") != 0 ||
@@ -109,7 +169,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
             }
             if ((strcmp(current_section, "server") != 0) &&
                 (strcmp(current_section, "auth") != 0) &&
-                (strcmp(current_section, "session") != 0)) {
+                (strcmp(current_section, "session") != 0) &&
+                (strcmp(current_section, "channels") != 0)) {
                 fclose(f);
                 return -1;
             }
@@ -131,6 +192,12 @@ int frdp_config_load(const char *path, frdpConfig *config)
                     return -1;
                 }
                 seen_session_section = 1;
+            } else if (strcmp(current_section, "channels") == 0) {
+                if (seen_channels_section) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_channels_section = 1;
             }
             continue;
         }
@@ -149,11 +216,13 @@ int frdp_config_load(const char *path, frdpConfig *config)
         }
         trim(key);
         trim(val);
+        const int allow_empty_value = (strcmp(current_section, "channels") == 0) &&
+                                      (strcmp(key, "static_allow") == 0);
         if (unquote_value(val) != 0) {
             fclose(f);
             return -1;
         }
-        if (val[0] == '\0') {
+        if (val[0] == '\0' && !allow_empty_value) {
             fclose(f);
             return -1;
         }
@@ -293,8 +362,23 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 fclose(f);
                 return -1;
             }
-        } else if ((strcmp(current_section, "channels") == 0) ||
-                   (strcmp(current_section, "audit") == 0)) {
+        } else if (strcmp(current_section, "channels") == 0) {
+            if (strcmp(key, "static_allow") == 0) {
+                if (seen_channel_static_allow) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_channel_static_allow = 1;
+                if (parse_static_channel_allow(config, val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else {
+                fclose(f);
+                return -1;
+            }
+        } else if (strcmp(current_section, "audit") == 0) {
             fclose(f);
             return -1;
         } else if (current_section[0] != '\0') {

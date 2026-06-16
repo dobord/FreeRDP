@@ -14,6 +14,7 @@
 #include <freerdp/freerdp.h>
 #include <freerdp/peer.h>
 
+#include "../config/frdp-config.h"
 #include "frdpd_pam.h"
 
 #ifdef __cplusplus
@@ -33,6 +34,7 @@ extern "C"
 		BOOL allow_tls_fallback;
 		BOOL open_pam_session;
 		frdpdDomainMode domain_mode;
+		frdpChannelPolicy channels;
 	} frdpdServerConfig;
 
 	typedef struct

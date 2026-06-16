@@ -20,8 +20,13 @@ pam_service = "frdpd"
 # [session]
 # session_socket = "/run/frdp-sesmand/sesmand.sock"
 
-# Channel and audit sections are omitted until the daemon enforces them.
-# The current parser rejects [channels] and [audit] instead of silently ignoring policy.
+# [channels]
+# Deny all client-requested static virtual channels by default.
+# static_allow = "" accepts no channels. Example allow-list syntax:
+# static_allow = "cliprdr,rdpsnd"
+# Allowing a name only permits negotiation; clipboard/audio handlers are not implemented yet.
+
+# The current parser still rejects [audit] instead of silently ignoring policy.
 ```
 
 ## PAM

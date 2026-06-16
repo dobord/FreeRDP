@@ -2,6 +2,14 @@
 #define FRDP_CONFIG_H
 #include <stdint.h>
 
+#define FRDP_CONFIG_MAX_CHANNELS 31
+#define FRDP_CONFIG_CHANNEL_NAME_SIZE 9
+
+typedef struct {
+    uint32_t static_allow_count;
+    char static_allow[FRDP_CONFIG_MAX_CHANNELS][FRDP_CONFIG_CHANNEL_NAME_SIZE];
+} frdpChannelPolicy;
+
 /* Structure representing configuration parsed from frdpd.toml */
 typedef struct {
     char listen[64];
@@ -12,6 +20,7 @@ typedef struct {
     char pam_service[64];
     char auth_socket[108];
     char session_socket[108];
+    frdpChannelPolicy channels;
 } frdpConfig;
 
 /* Load configuration from a TOML file into the provided struct. Returns 0 on success. */

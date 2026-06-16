@@ -18,12 +18,12 @@ This document describes the configuration options available in `frdpd.toml` (see
 
 ## [session]
 
-- `session_socket` (path): Optional absolute Unix socket path for the `frdp-sesmand` IPC service. Relative paths and unsafe socket locations are rejected. The installed helper unit listens on `/run/frdp-sesmand/sesmand.sock`. This path requires `--no-pam-session`; on successful authentication `frdpd` sends session open and close requests to `frdp-sesmand` and fails the login closed if session creation fails.
+- `session_socket` (path): Optional absolute Unix socket path for the `frdp-sesmand` IPC service. Relative paths and unsafe socket locations are rejected. The installed helper unit listens on `/run/frdp-sesmand/sesmand.sock`. This path requires `--no-pam-session`; after authentication and static-channel policy checks pass, `frdpd` sends session open and close requests to `frdp-sesmand` and fails the login closed if session creation fails.
 - Other session lifecycle fields remain planned. Unknown `[session]` keys are rejected until the daemon enforces them.
 
 ## [channels]
 
-Planned channel policy fields. The current parser rejects `[channels]` until channel policy is enforced in the daemon and channel-open path.
+- `static_allow` (string): Optional comma-separated exact RDP static virtual channel names to allow during client capability processing, for example `"cliprdr,rdpsnd"`. Default deny-all. Allowing a name only permits negotiation; clipboard/audio/device channel handlers are not implemented yet. Dynamic channel policy is not implemented, so do not allow `drdynvc` for production use.
 
 ## [audit]
 

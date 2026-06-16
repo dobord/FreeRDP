@@ -28,6 +28,7 @@
 #include <winpr/synch.h>
 #include <winpr/sysinfo.h>
 #include <winpr/winsock.h>
+#include <winpr/wtsapi.h>
 
 #include <freerdp/constants.h>
 #include <freerdp/codec/color.h>
@@ -41,6 +42,7 @@
 
 #include "../config/frdp-config.h"
 #include "../ipc/frdp-ipc.h"
+#include "channel_policy.h"
 #include "frdpd.h"
 #include "frdpd_auth.h"
 
@@ -913,6 +915,8 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 
 	if (!config || !context || !config->session_socket || (config->session_socket[0] == '\0'))
 		return TRUE;
+	if (context->managed_session_open)
+		return TRUE;
 	if (!client || !context->pam_user)
 		return FALSE;
 
@@ -1186,8 +1190,6 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	WLog_INFO(TAG, "correlation_id=%s PAM accepted RDP login for %s from %s",
 	          context->correlation_id, context->pam_user ? context->pam_user : "unknown",
 	          client->hostname[0] != '\0' ? client->hostname : "unknown");
-	if (!frdpd_open_managed_session(client, config, context))
-		return FALSE;
 	return TRUE;
 }
 
@@ -1229,6 +1231,88 @@ static BOOL frdpd_peer_activate(freerdp_peer* client)
 	WLog_INFO(TAG, "correlation_id=%s client %s activated",
 	          context ? context->correlation_id : "unknown", client->hostname);
 	return TRUE;
+}
+
+static void frdpd_channel_name(char* dst, size_t dst_size, const CHANNEL_DEF* channel)
+{
+	size_t len = 0;
+
+	if (!dst || (dst_size == 0))
+		return;
+	dst[0] = '\0';
+	if (!channel)
+		return;
+	len = strnlen(channel->name, sizeof(channel->name));
+	if (len >= dst_size)
+		len = dst_size - 1;
+	memcpy(dst, channel->name, len);
+	dst[len] = '\0';
+}
+
+static void frdpd_escape_log_string(char* dst, size_t dst_size, const char* src)
+{
+	size_t out = 0;
+
+	if (!dst || (dst_size == 0))
+		return;
+	dst[0] = '\0';
+	if (!src)
+		return;
+
+	for (size_t i = 0; (src[i] != '\0') && (out + 1U < dst_size); i++)
+	{
+		const unsigned char c = (unsigned char)src[i];
+
+		if ((c >= 0x20U) && (c <= 0x7eU) && (c != '\\'))
+			dst[out++] = (char)c;
+		else if (out + 4U < dst_size)
+		{
+			(void)snprintf(&dst[out], dst_size - out, "\\x%02X", c);
+			out += 4U;
+		}
+		else
+			break;
+	}
+	dst[out] = '\0';
+}
+
+static BOOL frdpd_peer_client_capabilities(freerdp_peer* client)
+{
+	frdpdPeerContext* context = NULL;
+	frdpdServerConfig* config = NULL;
+	rdpSettings* settings = NULL;
+	UINT32 channel_count = 0;
+
+	if (!client || !client->context)
+		return FALSE;
+	context = (frdpdPeerContext*)client->context;
+	config = (frdpdServerConfig*)client->ContextExtra;
+	settings = client->context->settings;
+	if (!config || !settings)
+		return FALSE;
+
+	channel_count = freerdp_settings_get_uint32(settings, FreeRDP_ChannelCount);
+	for (UINT32 i = 0; i < channel_count; i++)
+	{
+		char name[CHANNEL_NAME_LEN + 2] = { 0 };
+		char log_name[((CHANNEL_NAME_LEN + 1) * 4) + 1] = { 0 };
+		const CHANNEL_DEF* channel =
+		    (const CHANNEL_DEF*)freerdp_settings_get_pointer_array(settings,
+		                                                          FreeRDP_ChannelDefArray, i);
+
+		frdpd_channel_name(name, sizeof(name), channel);
+		frdpd_escape_log_string(log_name, sizeof(log_name), name);
+		if ((name[0] == '\0') || !frdp_channel_policy_static_allowed(&config->channels, name))
+		{
+			WLog_WARN(TAG,
+			          "correlation_id=%s rejected static virtual channel '%s' from client %s",
+			          context ? context->correlation_id : "unknown",
+			          (log_name[0] != '\0') ? log_name : "invalid", client->hostname);
+			return FALSE;
+		}
+	}
+
+	return frdpd_open_managed_session(client, config, context);
 }
 
 static BOOL frdpd_peer_synchronize_event(rdpInput* input, UINT32 flags)
@@ -1459,6 +1543,7 @@ static void frdpd_register_callbacks(freerdp_peer* client)
 	WINPR_ASSERT(client->context);
 
 	client->Logon = frdpd_peer_logon;
+	client->ClientCapabilities = frdpd_peer_client_capabilities;
 	client->PostConnect = frdpd_peer_post_connect;
 	client->Activate = frdpd_peer_activate;
 
@@ -1737,6 +1822,7 @@ static BOOL frdpd_apply_file_config(frdpdOptions* options)
 			return FALSE;
 		options->server.session_socket = config->session_socket;
 	}
+	options->server.channels = config->channels;
 
 	if (_stricmp(config->security, "nla") == 0)
 		options->server.allow_tls_fallback = FALSE;

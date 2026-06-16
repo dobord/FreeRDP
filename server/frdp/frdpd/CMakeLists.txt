@@ -11,6 +11,8 @@ set(SRCS
     frdpd.h
     frdpd_auth.c
     frdpd_auth.h
+    channel_policy.c
+    channel_policy.h
     frdpd_pam.c
     frdpd_pam.h
     ../ipc/frdp-ipc.c
