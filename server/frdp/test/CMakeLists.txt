@@ -4,7 +4,7 @@ set(MODULE_PREFIX "TEST_FREERDP_FRDP")
 disable_warnings_for_directory(${CMAKE_CURRENT_BINARY_DIR})
 
 set(${MODULE_PREFIX}_DRIVER ${MODULE_NAME}.c)
-set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpCtlIpc.c
+set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFreeRDPFrdpCtlIpc.c
                          TestFreeRDPFrdpHelperStop.c)
 find_program(XVFB_EXECUTABLE Xvfb)
 if(XVFB_EXECUTABLE)
@@ -17,6 +17,8 @@ add_executable(${MODULE_NAME}
     ${${MODULE_PREFIX}_SRCS}
     ../config/frdp-config.c
     ../config/frdp-config.h
+    ../ipc/frdp-ipc.c
+    ../ipc/frdp-ipc.h
     ../frdpd/channel_policy.c
     ../frdpd/channel_policy.h)
 add_dependencies(${MODULE_NAME} frdpctl frdp-authd frdp-sesmand frdp-session-agent)
