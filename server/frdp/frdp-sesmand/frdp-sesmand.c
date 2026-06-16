@@ -54,9 +54,11 @@ typedef struct {
 
 #define MAX_SESSIONS 64
 #define FRDP_AGENT_READY_MARKER 'R'
+#define FRDP_DISPLAY_MIN 100
+#define FRDP_DISPLAY_MAX 65535
 static session sessions[MAX_SESSIONS];
 static int session_count = 0;
-static int next_display = 100;
+static int next_display = FRDP_DISPLAY_MIN;
 static const char *g_pam_service = "frdpd";
 static char g_agent_socket_dir[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
 
@@ -282,6 +284,52 @@ static void session_id_to_string(const session *s, char *dst, size_t dst_size)
     snprintf(dst, dst_size, "%s", uuid_str);
 }
 
+static int path_exists_or_unknown(const char *path)
+{
+    struct stat st;
+
+    if (!path || path[0] == '\0')
+        return 1;
+    if (lstat(path, &st) == 0)
+        return 1;
+    return (errno == ENOENT) ? 0 : 1;
+}
+
+static int display_number_in_use(int display)
+{
+    char lock_path[64] = {0};
+    char socket_path[64] = {0};
+
+    for (int x = 0; x < session_count; x++) {
+        if (sessions[x].display_number == display)
+            return 1;
+    }
+
+    if ((snprintf(lock_path, sizeof(lock_path), "/tmp/.X%d-lock", display) < 0) ||
+        (snprintf(socket_path, sizeof(socket_path), "/tmp/.X11-unix/X%d", display) < 0))
+        return 1;
+    return path_exists_or_unknown(lock_path) || path_exists_or_unknown(socket_path);
+}
+
+static int allocate_display_number(int *display)
+{
+    if (!display)
+        return -1;
+
+    for (int attempts = 0; attempts <= (FRDP_DISPLAY_MAX - FRDP_DISPLAY_MIN); attempts++) {
+        const int candidate = next_display;
+
+        next_display++;
+        if (next_display > FRDP_DISPLAY_MAX)
+            next_display = FRDP_DISPLAY_MIN;
+        if (!display_number_in_use(candidate)) {
+            *display = candidate;
+            return 0;
+        }
+    }
+    return -1;
+}
+
 /* Open a session for the specified user.  This starts a PAM session, forks
  * a child to run the per-user agent and returns 0 on success. */
 static int open_session(const char *user, const char *rhost, const char *correlation_id,
@@ -336,7 +384,13 @@ static int open_session(const char *user, const char *rhost, const char *correla
     }
 
     /* Allocate display number and build display string */
-    int display = next_display++;
+    int display = 0;
+    if (allocate_display_number(&display) != 0) {
+        pam_close_session(pamh, 0);
+        pam_setcred(pamh, PAM_DELETE_CRED);
+        pam_end(pamh, PAM_SUCCESS);
+        return -1;
+    }
     char display_str[16];
     snprintf(display_str, sizeof display_str, ":%d", display);
     uuid_generate(new_id);
