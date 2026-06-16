@@ -33,7 +33,7 @@ static void usage(const char *argv0)
     printf("  status [--socket <path>]\n");
     printf("  list-sessions [--socket <path>]\n");
     printf("  kill-session <id> [--socket <path>]\n");
-    printf("  reload                 Reload configuration\n");
+    printf("  reload                 Reload configuration (not implemented)\n");
 }
 
 static int copy_field(char *dst, size_t dst_size, const char *value)
@@ -249,8 +249,8 @@ int main(int argc, char **argv)
         }
         return send_session_close_request(options.socket_path, options.session_id);
     } else if (strcmp(cmd, "reload") == 0) {
-        printf("Reloading configuration: stub implementation\n");
-        return 0;
+        fprintf(stderr, "reload is not implemented\n");
+        return 2;
     } else {
         fprintf(stderr, "Unknown command: %s\n", cmd);
         usage(argv[0]);
