@@ -12,7 +12,9 @@ typedef enum {
     FRDP_IPC_SESSION_RESPONSE = 4,
     FRDP_IPC_AUTH_REQUEST_V2 = 5,
     FRDP_IPC_SESSION_CLOSE_REQUEST = 6,
-    FRDP_IPC_AGENT_INPUT = 7
+    FRDP_IPC_AGENT_INPUT = 7,
+    FRDP_IPC_AGENT_FRAME_REQUEST = 8,
+    FRDP_IPC_AGENT_FRAME_RESPONSE = 9
 } frdpIpcMessageType;
 
 typedef enum {
@@ -73,13 +75,36 @@ typedef struct {
     int32_t param2;
 } frdpAgentInputEvent;
 
+typedef struct {
+    char correlation_id[64];
+    char session_id[64];
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+} frdpAgentFrameRequest;
+
+typedef struct {
+    char correlation_id[64];
+    char session_id[64];
+    int success;
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+    uint32_t stride;
+    uint32_t bpp;
+    uint32_t data_length;
+    char error[128];
+} frdpAgentFrameResponse;
+
 /* Connect to a UNIX domain socket at socket_path and return the fd, or -1 on error */
 int frdp_ipc_connect(const char *socket_path);
 
 /* Send len bytes of data on fd. Returns 0 on success, -1 on error */
 int frdp_ipc_send(int fd, const void *buf, size_t len);
 
-/* Receive up to len bytes of data on fd. Returns number of bytes read or -1 on error */
+/* Receive exactly len bytes of data on fd. Returns number of bytes read or -1 on error */
 int frdp_ipc_recv(int fd, void *buf, size_t len);
 
 /* Close a previously opened fd */

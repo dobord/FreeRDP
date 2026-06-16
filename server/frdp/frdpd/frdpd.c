@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/time.h>
 #ifdef __linux__
 #include <sys/prctl.h>
 #endif
@@ -25,6 +26,7 @@
 #include <winpr/rpc.h>
 #include <winpr/ssl.h>
 #include <winpr/synch.h>
+#include <winpr/sysinfo.h>
 #include <winpr/winsock.h>
 
 #include <freerdp/constants.h>
@@ -42,6 +44,9 @@
 #include "frdpd_auth.h"
 
 #define TAG SERVER_TAG("frdpd")
+#define FRDPD_FRAME_TILE_SIZE 120U
+#define FRDPD_FRAME_TILES_PER_PUMP 1U
+#define FRDPD_FRAME_INTERVAL_MS 100ULL
 
 typedef struct
 {
@@ -158,7 +163,7 @@ fail:
 }
 
 static BOOL frdpd_send_agent_input(frdpdPeerContext* context, frdpAgentInputType type,
-                                   UINT32 flags, INT32 param1, INT32 param2)
+                                    UINT32 flags, INT32 param1, INT32 param2)
 {
 	int fd = -1;
 	frdpIpcHeader header = { 0 };
@@ -197,6 +202,229 @@ fail:
 		context->agent_input_warned = TRUE;
 	}
 	return ok;
+}
+
+static UINT32 frdpd_min_u32(UINT32 a, UINT32 b)
+{
+	return (a < b) ? a : b;
+}
+
+static BOOL frdpd_set_frame_ipc_timeout(int fd)
+{
+	struct timeval timeout = { 0 };
+
+	timeout.tv_sec = 0;
+	timeout.tv_usec = 200000;
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0)
+		return FALSE;
+	if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0)
+		return FALSE;
+	return TRUE;
+}
+
+static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT32 y, UINT32 width,
+                                      UINT32 height, frdpAgentFrameResponse* response,
+                                      BYTE** data)
+{
+	int fd = -1;
+	frdpIpcHeader header = { 0 };
+	frdpIpcHeader response_header = { 0 };
+	frdpAgentFrameRequest request = { 0 };
+	BOOL ok = FALSE;
+
+	if (!context || !response || !data || !context->managed_session_open ||
+	    (context->agent_socket[0] == '\0'))
+		return FALSE;
+	*data = NULL;
+	memset(response, 0, sizeof(*response));
+
+	(void)frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
+	                          context->correlation_id);
+	(void)frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id), context->session_id);
+	request.x = x;
+	request.y = y;
+	request.width = width;
+	request.height = height;
+
+	fd = frdp_ipc_connect(context->agent_socket);
+	if (fd < 0)
+		goto fail;
+	if (!frdpd_set_frame_ipc_timeout(fd))
+		goto fail;
+
+	header.type = FRDP_IPC_AGENT_FRAME_REQUEST;
+	header.payload_len = sizeof(request);
+	if ((frdp_ipc_send(fd, &header, sizeof(header)) < 0) ||
+	    (frdp_ipc_send(fd, &request, sizeof(request)) < 0))
+		goto fail;
+
+	if (frdp_ipc_recv(fd, &response_header, sizeof(response_header)) !=
+	    (int)sizeof(response_header))
+		goto fail;
+	if ((response_header.type != FRDP_IPC_AGENT_FRAME_RESPONSE) ||
+	    (response_header.payload_len != sizeof(*response)))
+		goto fail;
+	if (frdp_ipc_recv(fd, response, sizeof(*response)) != (int)sizeof(*response))
+		goto fail;
+
+	response->correlation_id[sizeof(response->correlation_id) - 1] = '\0';
+	response->session_id[sizeof(response->session_id) - 1] = '\0';
+	response->error[sizeof(response->error) - 1] = '\0';
+	if (!response->success)
+		goto fail;
+	if ((strcmp(response->session_id, context->session_id) != 0) ||
+	    (strcmp(response->correlation_id, context->correlation_id) != 0))
+		goto fail;
+	if ((response->x != x) || (response->y != y) || (response->width == 0) ||
+	    (response->height == 0) || (response->width > width) || (response->height > height) ||
+	    (response->width > FRDPD_FRAME_TILE_SIZE) ||
+	    (response->height > FRDPD_FRAME_TILE_SIZE) || (response->bpp != 32))
+		goto fail;
+	if ((response->stride != response->width * 4U) ||
+	    (response->data_length != response->stride * response->height) ||
+	    (response->data_length == 0) || (response->data_length > UINT16_MAX))
+		goto fail;
+
+	*data = (BYTE*)malloc(response->data_length);
+	if (!*data)
+		goto fail;
+	if (frdp_ipc_recv(fd, *data, response->data_length) != (int)response->data_length)
+		goto fail;
+	ok = TRUE;
+
+fail:
+	if (!ok)
+	{
+		free(*data);
+		*data = NULL;
+	}
+	if (fd >= 0)
+		(void)frdp_ipc_close(fd);
+	return ok;
+}
+
+static BOOL frdpd_send_bitmap_frame(freerdp_peer* client, const frdpAgentFrameResponse* frame,
+                                    BYTE* data)
+{
+	BITMAP_DATA bitmap = { 0 };
+	BITMAP_UPDATE update_cmd = { 0 };
+	rdpUpdate* update = NULL;
+	BOOL ok = FALSE;
+
+	if (!client || !client->context || !frame || !data)
+		return FALSE;
+	if ((frame->x > UINT16_MAX) || (frame->y > UINT16_MAX) ||
+	    (frame->width == 0) || (frame->height == 0) ||
+	    (frame->x + frame->width - 1U > UINT16_MAX) ||
+	    (frame->y + frame->height - 1U > UINT16_MAX) ||
+	    (frame->data_length > UINT16_MAX))
+		return FALSE;
+
+	update = client->context->update;
+	if (!update || !update->BitmapUpdate)
+		return FALSE;
+
+	bitmap.destLeft = frame->x;
+	bitmap.destTop = frame->y;
+	bitmap.destRight = frame->x + frame->width - 1U;
+	bitmap.destBottom = frame->y + frame->height - 1U;
+	bitmap.width = frame->width;
+	bitmap.height = frame->height;
+	bitmap.bitsPerPixel = 32;
+	bitmap.bitmapLength = frame->data_length;
+	bitmap.cbScanWidth = frame->stride;
+	bitmap.cbUncompressedSize = frame->data_length;
+	bitmap.bitmapDataStream = data;
+	bitmap.compressed = FALSE;
+
+	update_cmd.number = 1;
+	update_cmd.rectangles = &bitmap;
+	update_cmd.skipCompression = FALSE;
+
+	rdp_update_lock(update);
+	ok = update->BitmapUpdate(update->context, &update_cmd);
+	rdp_update_unlock(update);
+	return ok;
+}
+
+static void frdpd_advance_frame_cursor(frdpdPeerContext* context, UINT32 desktop_width,
+                                       UINT32 desktop_height)
+{
+	if (!context || (desktop_width == 0) || (desktop_height == 0))
+		return;
+
+	context->framebuffer_next_x += FRDPD_FRAME_TILE_SIZE;
+	if (context->framebuffer_next_x >= desktop_width)
+	{
+		context->framebuffer_next_x = 0;
+		context->framebuffer_next_y += FRDPD_FRAME_TILE_SIZE;
+		if (context->framebuffer_next_y >= desktop_height)
+			context->framebuffer_next_y = 0;
+	}
+}
+
+static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext* context)
+{
+	rdpSettings* settings = NULL;
+	UINT32 desktop_width = 0;
+	UINT32 desktop_height = 0;
+	const UINT64 now = GetTickCount64();
+
+	if (!client || !client->context || !context || !context->managed_session_open ||
+	    !context->framebuffer_active || (context->agent_socket[0] == '\0'))
+		return TRUE;
+	if ((context->framebuffer_last_tick != 0) &&
+	    (now - context->framebuffer_last_tick < FRDPD_FRAME_INTERVAL_MS))
+		return TRUE;
+	context->framebuffer_last_tick = now;
+
+	settings = client->context->settings;
+	if (!settings)
+		return TRUE;
+	desktop_width = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
+	desktop_height = freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
+	if ((desktop_width == 0) || (desktop_height == 0))
+		return TRUE;
+	if ((context->framebuffer_next_x >= desktop_width) ||
+	    (context->framebuffer_next_y >= desktop_height))
+	{
+		context->framebuffer_next_x = 0;
+		context->framebuffer_next_y = 0;
+	}
+
+	for (UINT32 i = 0; i < FRDPD_FRAME_TILES_PER_PUMP; i++)
+	{
+		BYTE* data = NULL;
+		frdpAgentFrameResponse frame = { 0 };
+		const UINT32 x = context->framebuffer_next_x;
+		const UINT32 y = context->framebuffer_next_y;
+		const UINT32 width = frdpd_min_u32(FRDPD_FRAME_TILE_SIZE, desktop_width - x);
+		const UINT32 height = frdpd_min_u32(FRDPD_FRAME_TILE_SIZE, desktop_height - y);
+
+		if (!frdpd_receive_agent_frame(context, x, y, width, height, &frame, &data))
+		{
+			if (!context->agent_frame_warned)
+			{
+				WLog_WARN(TAG, "correlation_id=%s failed to receive framebuffer from session_id=%s",
+				          context->correlation_id, context->session_id);
+				context->agent_frame_warned = TRUE;
+			}
+			return TRUE;
+		}
+
+		if (!frdpd_send_bitmap_frame(client, &frame, data))
+		{
+			free(data);
+			WLog_WARN(TAG, "correlation_id=%s failed to send framebuffer tile for session_id=%s",
+			          context->correlation_id, context->session_id);
+			return FALSE;
+		}
+		free(data);
+		context->agent_frame_warned = FALSE;
+		frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
+	}
+
+	return TRUE;
 }
 
 typedef struct
@@ -277,7 +505,7 @@ static BOOL frdpd_schedule_session_close_retry(const frdpdServerConfig* config,
 }
 
 static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerConfig* config,
-                                       frdpdPeerContext* context)
+                                        frdpdPeerContext* context)
 {
 	rdpSettings* settings = NULL;
 	frdpSessionRequest request = { 0 };
@@ -354,6 +582,11 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 
 	context->managed_session_open = TRUE;
 	context->agent_input_warned = FALSE;
+	context->agent_frame_warned = FALSE;
+	context->framebuffer_active = FALSE;
+	context->framebuffer_next_x = 0;
+	context->framebuffer_next_y = 0;
+	context->framebuffer_last_tick = 0;
 	WLog_INFO(TAG, "correlation_id=%s opened managed session_id=%s display=%s agent_socket=%s user=%s",
 	          context->correlation_id, context->session_id,
 	          context->session_display[0] ? context->session_display : "unknown", context->agent_socket,
@@ -408,6 +641,10 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 		WLog_INFO(TAG, "correlation_id=%s scheduled close retry for managed session_id=%s",
 		          context->correlation_id, context->session_id);
 		context->managed_session_open = FALSE;
+		context->framebuffer_active = FALSE;
+		context->framebuffer_next_x = 0;
+		context->framebuffer_next_y = 0;
+		context->framebuffer_last_tick = 0;
 		context->session_id[0] = '\0';
 		context->session_display[0] = '\0';
 		context->agent_socket[0] = '\0';
@@ -429,6 +666,10 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 	          context->session_id);
 
 	context->managed_session_open = FALSE;
+	context->framebuffer_active = FALSE;
+	context->framebuffer_next_x = 0;
+	context->framebuffer_next_y = 0;
+	context->framebuffer_last_tick = 0;
 	context->session_id[0] = '\0';
 	context->session_display[0] = '\0';
 	context->agent_socket[0] = '\0';
@@ -588,6 +829,13 @@ static BOOL frdpd_peer_activate(freerdp_peer* client)
 
 	WINPR_ASSERT(client);
 	context = (frdpdPeerContext*)client->context;
+	if (context)
+	{
+		context->framebuffer_active = TRUE;
+		context->framebuffer_next_x = 0;
+		context->framebuffer_next_y = 0;
+		context->framebuffer_last_tick = 0;
+	}
 	WLog_INFO(TAG, "correlation_id=%s client %s activated",
 	          context ? context->correlation_id : "unknown", client->hostname);
 	return TRUE;
@@ -783,7 +1031,11 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 
 		status = WaitForMultipleObjects(count, handles, FALSE, 250);
 		if (status == WAIT_TIMEOUT)
+		{
+			if (!frdpd_pump_agent_framebuffer(client, context))
+				break;
 			continue;
+		}
 		if (status == WAIT_FAILED)
 		{
 			WLog_ERR(TAG, "WaitForMultipleObjects failed for peer %s", client->hostname);
@@ -792,6 +1044,8 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 
 		WINPR_ASSERT(client->CheckFileDescriptor);
 		if (!client->CheckFileDescriptor(client))
+			break;
+		if (!frdpd_pump_agent_framebuffer(client, context))
 			break;
 	}
 

@@ -6,11 +6,12 @@
  * This component runs in the security context of an authenticated user.  It
  * launches the headless desktop backend (for example Xvfb or Wayland), sets
  * up graphics capture and input dispatch and enforces channel policy.  In this
- * minimal prototype launches the display server and injects validated keyboard
- * scancode and mouse input over a local control fd; framebuffer capture and
- * Unicode/text input are still TODO.  The display number, geometry and audit
- * identifiers are provided via environment variables from the session manager:
- * DISPLAY or FRDP_DISPLAY, FRDP_GEOMETRY, FRDP_SESSION_ID and FRDP_CORRELATION_ID.
+ * minimal prototype launches the display server, injects validated keyboard
+ * scancode and mouse input, and serves raw framebuffer tiles over a local
+ * control fd; damage tracking, compression and Unicode/text input are still
+ * TODO.  The display number, geometry and audit identifiers are provided via
+ * environment variables from the session manager: DISPLAY or FRDP_DISPLAY,
+ * FRDP_GEOMETRY, FRDP_SESSION_ID and FRDP_CORRELATION_ID.
  */
 
 #include <stdio.h>
@@ -27,6 +28,7 @@
 #include <sys/time.h>
 
 #include <X11/Xlib.h>
+#include <X11/Xutil.h>
 #include <X11/extensions/XTest.h>
 
 #include <freerdp/input.h>
@@ -36,6 +38,7 @@
 #include "../ipc/frdp-ipc.h"
 
 #define FRDP_AGENT_READY_MARKER 'R'
+#define FRDP_AGENT_FRAME_TILE_MAX 120U
 
 static Display *open_backend_display(const char *display_name, const char *correlation_id,
                                      const char *session_id)
@@ -203,6 +206,100 @@ static int inject_input_event(Display *display, const frdpAgentInputEvent *event
     return rc;
 }
 
+static unsigned char extract_ximage_channel(unsigned long pixel, unsigned long mask)
+{
+    const unsigned int max_bits = (unsigned int)(sizeof(unsigned long) * 8U);
+    unsigned int shift = 0;
+    unsigned int bits = 0;
+    unsigned long value = 0;
+
+    if (mask == 0)
+        return 0;
+    while (shift < max_bits && ((mask >> shift) & 1UL) == 0)
+        shift++;
+    if (shift == max_bits)
+        return 0;
+    value = (pixel & mask) >> shift;
+    while ((shift + bits) < max_bits && ((mask >> (shift + bits)) & 1UL) != 0)
+        bits++;
+    if (bits == 0)
+        return 0;
+    if (bits >= 8)
+        return (unsigned char)(value >> (bits - 8));
+    return (unsigned char)((value * 255UL) / ((1UL << bits) - 1UL));
+}
+
+static int capture_frame_tile(Display *display, const frdpAgentFrameRequest *request,
+                              frdpAgentFrameResponse *response, unsigned char **pixels)
+{
+    XImage *image = NULL;
+    unsigned char *buffer = NULL;
+    const int screen = DefaultScreen(display);
+    const uint32_t screen_width = (uint32_t)DisplayWidth(display, screen);
+    const uint32_t screen_height = (uint32_t)DisplayHeight(display, screen);
+    uint32_t width = 0;
+    uint32_t height = 0;
+
+    if (!display || !request || !response || !pixels)
+        return -1;
+    *pixels = NULL;
+    if (request->x >= screen_width || request->y >= screen_height)
+        return -1;
+
+    width = request->width;
+    height = request->height;
+    if (width == 0 || height == 0)
+        return -1;
+    if (width > FRDP_AGENT_FRAME_TILE_MAX)
+        width = FRDP_AGENT_FRAME_TILE_MAX;
+    if (height > FRDP_AGENT_FRAME_TILE_MAX)
+        height = FRDP_AGENT_FRAME_TILE_MAX;
+    if (width > screen_width - request->x)
+        width = screen_width - request->x;
+    if (height > screen_height - request->y)
+        height = screen_height - request->y;
+    if (width == 0 || height == 0 || width > UINT32_MAX / 4 ||
+        height > UINT32_MAX / (width * 4U))
+        return -1;
+
+    buffer = (unsigned char *)calloc((size_t)width * height, 4);
+    if (!buffer)
+        return -1;
+
+    XLockDisplay(display);
+    image = XGetImage(display, RootWindow(display, screen), (int)request->x, (int)request->y,
+                      width, height, AllPlanes, ZPixmap);
+    XUnlockDisplay(display);
+    if (!image) {
+        free(buffer);
+        return -1;
+    }
+
+    for (uint32_t row = 0; row < height; row++) {
+        const uint32_t src_y = height - row - 1U;
+        unsigned char *dst = buffer + ((size_t)row * width * 4U);
+        for (uint32_t col = 0; col < width; col++) {
+            const unsigned long pixel = XGetPixel(image, (int)col, (int)src_y);
+            dst[(size_t)col * 4U + 0] = extract_ximage_channel(pixel, image->blue_mask);
+            dst[(size_t)col * 4U + 1] = extract_ximage_channel(pixel, image->green_mask);
+            dst[(size_t)col * 4U + 2] = extract_ximage_channel(pixel, image->red_mask);
+            dst[(size_t)col * 4U + 3] = 0xFF;
+        }
+    }
+    XDestroyImage(image);
+
+    response->success = 1;
+    response->x = request->x;
+    response->y = request->y;
+    response->width = width;
+    response->height = height;
+    response->stride = width * 4U;
+    response->bpp = 32;
+    response->data_length = response->stride * height;
+    *pixels = buffer;
+    return 0;
+}
+
 static int parse_env_fd(const char *name)
 {
     char *end = NULL;
@@ -292,35 +389,133 @@ static int recv_exact(int fd, void *buf, size_t len)
     return 0;
 }
 
-static int handle_control_client(int fd, Display *display, const char *correlation_id,
-                                 const char *session_id)
+static int send_exact(int fd, const void *buf, size_t len)
 {
-    frdpIpcHeader header;
+    const char *p = (const char *)buf;
+    size_t total = 0;
+#ifdef MSG_NOSIGNAL
+    const int flags = MSG_NOSIGNAL;
+#else
+    const int flags = 0;
+#endif
+
+    while (total < len) {
+        const ssize_t rc = send(fd, p + total, len - total, flags);
+        if (rc <= 0)
+            return -1;
+        total += (size_t)rc;
+    }
+    return 0;
+}
+
+static int validate_agent_ids(const char *event_correlation_id, const char *event_session_id,
+                              const char *correlation_id, const char *session_id)
+{
+    if (strcmp(event_session_id, session_id) != 0)
+        return -1;
+    if (strcmp(correlation_id, "unknown") != 0 && strcmp(event_correlation_id, correlation_id) != 0)
+        return -1;
+    return 0;
+}
+
+static int handle_input_message(int fd, Display *display, uint32_t payload_len,
+                                const char *correlation_id, const char *session_id)
+{
     frdpAgentInputEvent event;
 
-    memset(&header, 0, sizeof(header));
     memset(&event, 0, sizeof(event));
 
-    if (set_control_timeouts(fd) != 0 || verify_control_peer(fd) != 0)
-        return -1;
-    if (recv_exact(fd, &header, sizeof(header)) != 0)
-        return -1;
-    if (header.type != FRDP_IPC_AGENT_INPUT || header.payload_len != sizeof(event))
+    if (payload_len != sizeof(event))
         return -1;
     if (recv_exact(fd, &event, sizeof(event)) != 0)
         return -1;
 
     event.correlation_id[sizeof(event.correlation_id) - 1] = '\0';
     event.session_id[sizeof(event.session_id) - 1] = '\0';
-    if (strcmp(event.session_id, session_id) != 0 ||
-        (strcmp(correlation_id, "unknown") != 0 &&
-         strcmp(event.correlation_id, correlation_id) != 0)) {
+    if (validate_agent_ids(event.correlation_id, event.session_id, correlation_id, session_id) != 0) {
         syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected mismatched input event",
                correlation_id, session_id);
         return -1;
     }
 
     return inject_input_event(display, &event);
+}
+
+static int send_frame_response(int fd, const frdpAgentFrameResponse *response,
+                               const unsigned char *pixels)
+{
+    frdpIpcHeader header;
+
+    memset(&header, 0, sizeof(header));
+    header.type = FRDP_IPC_AGENT_FRAME_RESPONSE;
+    header.payload_len = sizeof(*response);
+    if (send_exact(fd, &header, sizeof(header)) != 0)
+        return -1;
+    if (send_exact(fd, response, sizeof(*response)) != 0)
+        return -1;
+    if (response->success && response->data_length > 0) {
+        if (!pixels)
+            return -1;
+        if (send_exact(fd, pixels, response->data_length) != 0)
+            return -1;
+    }
+    return 0;
+}
+
+static int handle_frame_message(int fd, Display *display, uint32_t payload_len,
+                                const char *correlation_id, const char *session_id)
+{
+    frdpAgentFrameRequest request;
+    frdpAgentFrameResponse response;
+    unsigned char *pixels = NULL;
+    int rc = -1;
+
+    memset(&request, 0, sizeof(request));
+    memset(&response, 0, sizeof(response));
+
+    if (payload_len != sizeof(request))
+        return -1;
+    if (recv_exact(fd, &request, sizeof(request)) != 0)
+        return -1;
+    request.correlation_id[sizeof(request.correlation_id) - 1] = '\0';
+    request.session_id[sizeof(request.session_id) - 1] = '\0';
+
+    snprintf(response.correlation_id, sizeof(response.correlation_id), "%s", correlation_id);
+    snprintf(response.session_id, sizeof(response.session_id), "%s", session_id);
+    if (validate_agent_ids(request.correlation_id, request.session_id, correlation_id,
+                           session_id) != 0) {
+        syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected mismatched frame request",
+               correlation_id, session_id);
+        snprintf(response.error, sizeof(response.error), "%s", "mismatched ids");
+    } else if (capture_frame_tile(display, &request, &response, &pixels) != 0) {
+        snprintf(response.error, sizeof(response.error), "%s", "capture failed");
+    }
+
+    rc = send_frame_response(fd, &response, pixels);
+    free(pixels);
+    return rc;
+}
+
+static int handle_control_client(int fd, Display *display, const char *correlation_id,
+                                 const char *session_id)
+{
+    frdpIpcHeader header;
+
+    memset(&header, 0, sizeof(header));
+
+    if (set_control_timeouts(fd) != 0 || verify_control_peer(fd) != 0)
+        return -1;
+    if (recv_exact(fd, &header, sizeof(header)) != 0)
+        return -1;
+
+    switch (header.type) {
+        case FRDP_IPC_AGENT_INPUT:
+            return handle_input_message(fd, display, header.payload_len, correlation_id, session_id);
+        case FRDP_IPC_AGENT_FRAME_REQUEST:
+            return handle_frame_message(fd, display, header.payload_len, correlation_id, session_id);
+        default:
+            return -1;
+    }
 }
 
 static int wait_for_backend_exit(pid_t pid, int control_fd, Display *display,
@@ -556,7 +751,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* TODO: capture framebuffer updates and forward to the client via FreeRDP. */
+    /* TODO: add damage tracking, compression, and update scheduling policy. */
     /* TODO: add Unicode/text input injection with explicit layout handling. */
     /* TODO: process clipboard/audio channels. */
 
