@@ -924,6 +924,52 @@ static int set_cloexec(int fd)
     return fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
 }
 
+static int create_cloexec_pipe(int pipefd[2])
+{
+    if (!pipefd)
+        return -1;
+
+#if defined(__linux__) && defined(O_CLOEXEC)
+    if (pipe2(pipefd, O_CLOEXEC) == 0)
+        return 0;
+    if (errno != EINVAL && errno != ENOSYS)
+        return -1;
+#endif
+
+    if (pipe(pipefd) != 0)
+        return -1;
+    if (set_cloexec(pipefd[0]) != 0 || set_cloexec(pipefd[1]) != 0) {
+        int saved = errno;
+        close(pipefd[0]);
+        close(pipefd[1]);
+        pipefd[0] = -1;
+        pipefd[1] = -1;
+        errno = saved;
+        return -1;
+    }
+    return 0;
+}
+
+static int accept_cloexec(int fd)
+{
+    int cfd = -1;
+
+#if defined(__linux__) && defined(SOCK_CLOEXEC)
+    cfd = accept4(fd, NULL, NULL, SOCK_CLOEXEC);
+    if ((cfd == -1) && (errno == EINVAL || errno == ENOSYS))
+#endif
+        cfd = accept(fd, NULL, NULL);
+    if (cfd < 0)
+        return -1;
+    if (set_cloexec(cfd) != 0) {
+        int saved = errno;
+        close(cfd);
+        errno = saved;
+        return -1;
+    }
+    return cfd;
+}
+
 static int set_control_timeouts(int fd)
 {
     struct timeval timeout;
@@ -1271,7 +1317,7 @@ static int wait_for_backend_exit(pid_t pid, int control_fd, frdpAgentFrameState 
         if (poll_status == 0 || (pfd.revents & POLLIN) == 0)
             continue;
 
-        const int cfd = accept(control_fd, NULL, NULL);
+        const int cfd = accept_cloexec(control_fd);
         if (cfd < 0)
             continue;
         if (handle_control_client(cfd, frame_state, correlation_id, session_id) != 0) {
@@ -1423,7 +1469,7 @@ int main(int argc, char **argv)
            escaped_correlation_id, escaped_session_id, escaped_display, escaped_geometry);
 
     int exec_pipe[2] = {-1, -1};
-    if (pipe(exec_pipe) != 0) {
+    if (create_cloexec_pipe(exec_pipe) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to create backend exec pipe",
                escaped_correlation_id, escaped_session_id);
         if (ready_fd >= 0)
@@ -1433,19 +1479,6 @@ int main(int argc, char **argv)
         closelog();
         return 1;
     }
-    if (fcntl(exec_pipe[1], F_SETFD, FD_CLOEXEC) != 0) {
-        syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to mark backend exec pipe",
-               escaped_correlation_id, escaped_session_id);
-        close(exec_pipe[0]);
-        close(exec_pipe[1]);
-        if (ready_fd >= 0)
-            close(ready_fd);
-        if (control_fd >= 0)
-            close(control_fd);
-        closelog();
-        return 1;
-    }
-
     pid_t pid = fork();
     if (pid < 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to fork for backend",
