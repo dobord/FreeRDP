@@ -486,6 +486,34 @@ static int send_session_response(int fd, int success, const char *session_id,
     return frdp_ipc_send(fd, &resp, sizeof(resp));
 }
 
+static int send_session_list_response(int fd)
+{
+    frdpIpcHeader hdr;
+    frdpSessionListResponse resp;
+
+    memset(&hdr, 0, sizeof(hdr));
+    memset(&resp, 0, sizeof(resp));
+
+    resp.success = 1;
+    resp.count = (session_count > 0) ? (uint32_t)session_count : 0;
+    if (resp.count > FRDP_IPC_MAX_SESSION_LIST_ENTRIES)
+        resp.count = FRDP_IPC_MAX_SESSION_LIST_ENTRIES;
+    for (uint32_t i = 0; i < resp.count; i++) {
+        session_id_to_string(&sessions[i], resp.entries[i].session_id,
+                             sizeof(resp.entries[i].session_id));
+        snprintf(resp.entries[i].user, sizeof(resp.entries[i].user), "%s", sessions[i].user);
+        snprintf(resp.entries[i].display, sizeof(resp.entries[i].display), ":%d",
+                 sessions[i].display_number);
+        resp.entries[i].agent_pid = sessions[i].agent_pid;
+    }
+
+    hdr.type = FRDP_IPC_SESSION_LIST_RESPONSE;
+    hdr.payload_len = sizeof(resp);
+    if (frdp_ipc_send(fd, &hdr, sizeof(hdr)) != 0)
+        return -1;
+    return frdp_ipc_send(fd, &resp, sizeof(resp));
+}
+
 static int verify_peer(int fd)
 {
 #ifdef __linux__
@@ -795,7 +823,9 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
             close(cfd);
             continue;
         }
-        if ((hdr.payload_len == sizeof(frdpSessionRequest)) &&
+        if ((hdr.type == FRDP_IPC_SESSION_LIST_REQUEST) && (hdr.payload_len == 0)) {
+            (void)send_session_list_response(cfd);
+        } else if ((hdr.payload_len == sizeof(frdpSessionRequest)) &&
             ((hdr.type == FRDP_IPC_SESSION_REQUEST) ||
              (hdr.type == FRDP_IPC_SESSION_CLOSE_REQUEST))) {
             (void)handle_session_request(cfd, hdr.type);

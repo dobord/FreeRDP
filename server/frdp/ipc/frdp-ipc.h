@@ -16,7 +16,9 @@ typedef enum {
     FRDP_IPC_AGENT_FRAME_REQUEST = 8,
     FRDP_IPC_AGENT_FRAME_RESPONSE = 9,
     FRDP_IPC_AGENT_RESIZE_REQUEST = 10,
-    FRDP_IPC_AGENT_RESIZE_RESPONSE = 11
+    FRDP_IPC_AGENT_RESIZE_RESPONSE = 11,
+    FRDP_IPC_SESSION_LIST_REQUEST = 12,
+    FRDP_IPC_SESSION_LIST_RESPONSE = 13
 } frdpIpcMessageType;
 
 typedef enum {
@@ -73,6 +75,22 @@ typedef struct {
     char agent_socket[108];
     char error[128];
 } frdpSessionResponse;
+
+#define FRDP_IPC_MAX_SESSION_LIST_ENTRIES 64U
+
+typedef struct {
+    char session_id[64];
+    char user[64];
+    char display[32];
+    int32_t agent_pid;
+} frdpSessionListEntry;
+
+typedef struct {
+    int success;
+    uint32_t count;
+    frdpSessionListEntry entries[FRDP_IPC_MAX_SESSION_LIST_ENTRIES];
+    char error[128];
+} frdpSessionListResponse;
 
 typedef struct {
     char correlation_id[64];
