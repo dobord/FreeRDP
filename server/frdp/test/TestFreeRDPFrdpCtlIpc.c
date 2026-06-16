@@ -109,6 +109,25 @@ static int send_list_response(int fd)
 	return write_all(fd, &response, sizeof(response));
 }
 
+static int send_control_list_response(int fd)
+{
+	frdpIpcHeader response_header = { 0 };
+	frdpSessionListResponse response = { 0 };
+
+	response.success = 1;
+	response.count = 1;
+	snprintf(response.entries[0].session_id, sizeof(response.entries[0].session_id), "session\n1");
+	snprintf(response.entries[0].user, sizeof(response.entries[0].user), "al\tice");
+	snprintf(response.entries[0].display, sizeof(response.entries[0].display), ":\\20");
+	response.entries[0].agent_pid = 1003;
+
+	response_header.type = FRDP_IPC_SESSION_LIST_RESPONSE;
+	response_header.payload_len = sizeof(response);
+	if (write_all(fd, &response_header, sizeof(response_header)) != 0)
+		return -1;
+	return write_all(fd, &response, sizeof(response));
+}
+
 static int handle_list_request(int fd)
 {
 	frdpIpcHeader header = { 0 };
@@ -120,6 +139,19 @@ static int handle_list_request(int fd)
 	if (header.payload_len != 0)
 		return -1;
 	return send_list_response(fd);
+}
+
+static int handle_control_list_request(int fd)
+{
+	frdpIpcHeader header = { 0 };
+
+	if (read_exact(fd, &header, sizeof(header)) != 0)
+		return -1;
+	if (header.type != FRDP_IPC_SESSION_LIST_REQUEST)
+		return -1;
+	if (header.payload_len != 0)
+		return -1;
+	return send_control_list_response(fd);
 }
 
 static int handle_close_request(int fd)
@@ -146,6 +178,56 @@ static int handle_close_request(int fd)
 
 	response.success = 1;
 	snprintf(response.session_id, sizeof(response.session_id), "%s", request.session_id);
+	response_header.type = FRDP_IPC_SESSION_RESPONSE;
+	response_header.payload_len = sizeof(response);
+	if (write_all(fd, &response_header, sizeof(response_header)) != 0)
+		return -1;
+	return write_all(fd, &response, sizeof(response));
+}
+
+static int handle_close_control_success_request(int fd)
+{
+	frdpIpcHeader header = { 0 };
+	frdpIpcHeader response_header = { 0 };
+	frdpSessionRequest request = { 0 };
+	frdpSessionResponse response = { 0 };
+
+	if (read_exact(fd, &header, sizeof(header)) != 0)
+		return -1;
+	if (header.type != FRDP_IPC_SESSION_CLOSE_REQUEST)
+		return -1;
+	if (header.payload_len != sizeof(request))
+		return -1;
+	if (read_exact(fd, &request, sizeof(request)) != 0)
+		return -1;
+
+	response.success = 1;
+	snprintf(response.session_id, sizeof(response.session_id), "session\n1");
+	response_header.type = FRDP_IPC_SESSION_RESPONSE;
+	response_header.payload_len = sizeof(response);
+	if (write_all(fd, &response_header, sizeof(response_header)) != 0)
+		return -1;
+	return write_all(fd, &response, sizeof(response));
+}
+
+static int handle_close_failure_request(int fd)
+{
+	frdpIpcHeader header = { 0 };
+	frdpIpcHeader response_header = { 0 };
+	frdpSessionRequest request = { 0 };
+	frdpSessionResponse response = { 0 };
+
+	if (read_exact(fd, &header, sizeof(header)) != 0)
+		return -1;
+	if (header.type != FRDP_IPC_SESSION_CLOSE_REQUEST)
+		return -1;
+	if (header.payload_len != sizeof(request))
+		return -1;
+	if (read_exact(fd, &request, sizeof(request)) != 0)
+		return -1;
+
+	response.success = 0;
+	snprintf(response.error, sizeof(response.error), "denied\nbad\\path");
 	response_header.type = FRDP_IPC_SESSION_RESPONSE;
 	response_header.payload_len = sizeof(response);
 	if (write_all(fd, &response_header, sizeof(response_header)) != 0)
@@ -338,6 +420,27 @@ static int test_list_sessions(void)
 	return 0;
 }
 
+static int test_list_sessions_escapes_fields(void)
+{
+	frdpctlRunResult result = { 0 };
+	char expected[1024] = { 0 };
+	char* argv[] = { FRDPCTL_BINARY, "list-sessions", "--socket", NULL, NULL };
+
+	if (run_with_server(argv, 3, handle_control_list_request, &result) != 0)
+		return -1;
+	if (result.status != 0)
+		return -1;
+	snprintf(expected, sizeof(expected), "%-36s  %-20s  %-8s  %-8s\n", "SESSION", "USER",
+	         "DISPLAY", "PID");
+	snprintf(expected + strlen(expected), sizeof(expected) - strlen(expected),
+	         "%-36s  %-20s  %-8s  %-8d\n", "session\\x0a1", "al\\x09ice", ":\\\\20", 1003);
+	if (strcmp(result.stdout_data, expected) != 0)
+		return -1;
+	if (strcmp(result.stderr_data, "") != 0)
+		return -1;
+	return 0;
+}
+
 static int test_kill_session(void)
 {
 	frdpctlRunResult result = { 0 };
@@ -354,6 +457,38 @@ static int test_kill_session(void)
 	return 0;
 }
 
+static int test_kill_session_escapes_success(void)
+{
+	frdpctlRunResult result = { 0 };
+	char* argv[] = { FRDPCTL_BINARY, "kill-session", "session-1", "--socket", NULL, NULL };
+
+	if (run_with_server(argv, 4, handle_close_control_success_request, &result) != 0)
+		return -1;
+	if (result.status != 0)
+		return -1;
+	if (strcmp(result.stdout_data, "Closed session session\\x0a1\n") != 0)
+		return -1;
+	if (strcmp(result.stderr_data, "") != 0)
+		return -1;
+	return 0;
+}
+
+static int test_kill_session_escapes_error(void)
+{
+	frdpctlRunResult result = { 0 };
+	char* argv[] = { FRDPCTL_BINARY, "kill-session", "session-1", "--socket", NULL, NULL };
+
+	if (run_with_server(argv, 4, handle_close_failure_request, &result) != 0)
+		return -1;
+	if (result.status != 4)
+		return -1;
+	if (strcmp(result.stdout_data, "") != 0)
+		return -1;
+	if (strcmp(result.stderr_data, "session close failed: denied\\x0abad\\\\path\n") != 0)
+		return -1;
+	return 0;
+}
+
 int TestFreeRDPFrdpCtlIpc(int argc, char* argv[])
 {
 	(void)argc;
@@ -363,7 +498,13 @@ int TestFreeRDPFrdpCtlIpc(int argc, char* argv[])
 		return -1;
 	if (test_list_sessions() != 0)
 		return -1;
+	if (test_list_sessions_escapes_fields() != 0)
+		return -1;
 	if (test_kill_session() != 0)
+		return -1;
+	if (test_kill_session_escapes_success() != 0)
+		return -1;
+	if (test_kill_session_escapes_error() != 0)
 		return -1;
 	return 0;
 }

@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include "ipc/frdp-ipc.h"
@@ -44,6 +45,42 @@ static int copy_field(char *dst, size_t dst_size, const char *value)
         return -1;
     memcpy(dst, value, strlen(value) + 1);
     return 0;
+}
+
+static char hex_digit(unsigned int value)
+{
+    return (value < 10U) ? (char)('0' + value) : (char)('a' + (value - 10U));
+}
+
+static void escape_text(const char *src, char *dst, size_t dst_size)
+{
+    size_t used = 0;
+
+    if (!dst || (dst_size == 0))
+        return;
+    dst[0] = '\0';
+    if (!src)
+        return;
+
+    for (const unsigned char *p = (const unsigned char *)src; (*p != '\0') && (used + 1 < dst_size);
+         p++) {
+        if ((*p >= 0x20U) && (*p <= 0x7eU) && (*p != '\\')) {
+            dst[used++] = (char)*p;
+            dst[used] = '\0';
+        } else if ((*p == '\\') && (used + 2 < dst_size)) {
+            dst[used++] = '\\';
+            dst[used++] = '\\';
+            dst[used] = '\0';
+        } else if (used + 4 < dst_size) {
+            dst[used++] = '\\';
+            dst[used++] = 'x';
+            dst[used++] = hex_digit((*p >> 4U) & 0x0fU);
+            dst[used++] = hex_digit(*p & 0x0fU);
+            dst[used] = '\0';
+        } else {
+            break;
+        }
+    }
 }
 
 static int parse_kill_session_options(int argc, char **argv, frdpctlKillSessionOptions *options)
@@ -113,7 +150,10 @@ static int send_session_list_request(const char *socket_path, int status_only)
 
     fd = frdp_ipc_connect(socket_path);
     if (fd < 0) {
-        fprintf(stderr, "unable to connect to session manager socket %s: %s\n", socket_path,
+        char escaped_socket[sizeof(((struct sockaddr_un *)0)->sun_path) * 4] = { 0 };
+
+        escape_text(socket_path, escaped_socket, sizeof(escaped_socket));
+        fprintf(stderr, "unable to connect to session manager socket %s: %s\n", escaped_socket,
                 strerror(errno));
         return 3;
     }
@@ -134,7 +174,10 @@ static int send_session_list_request(const char *socket_path, int status_only)
     frdp_ipc_close(fd);
     terminate_session_list_response_strings(&response);
     if (!response.success) {
-        fprintf(stderr, "session list failed: %s\n", response.error[0] ? response.error : "unknown");
+        char escaped_error[sizeof(response.error) * 4] = { 0 };
+
+        escape_text(response.error[0] ? response.error : "unknown", escaped_error, sizeof(escaped_error));
+        fprintf(stderr, "session list failed: %s\n", escaped_error);
         return 4;
     }
     if (response.count > FRDP_IPC_MAX_SESSION_LIST_ENTRIES) {
@@ -155,9 +198,15 @@ static int send_session_list_request(const char *socket_path, int status_only)
 
     printf("%-36s  %-20s  %-8s  %-8s\n", "SESSION", "USER", "DISPLAY", "PID");
     for (uint32_t i = 0; i < response.count; i++) {
-        printf("%-36s  %-20s  %-8s  %-8d\n", response.entries[i].session_id,
-               response.entries[i].user, response.entries[i].display,
-               (int)response.entries[i].agent_pid);
+        char escaped_session_id[sizeof(response.entries[i].session_id) * 4] = { 0 };
+        char escaped_user[sizeof(response.entries[i].user) * 4] = { 0 };
+        char escaped_display[sizeof(response.entries[i].display) * 4] = { 0 };
+
+        escape_text(response.entries[i].session_id, escaped_session_id, sizeof(escaped_session_id));
+        escape_text(response.entries[i].user, escaped_user, sizeof(escaped_user));
+        escape_text(response.entries[i].display, escaped_display, sizeof(escaped_display));
+        printf("%-36s  %-20s  %-8s  %-8d\n", escaped_session_id, escaped_user,
+               escaped_display, (int)response.entries[i].agent_pid);
     }
     return 0;
 }
@@ -183,7 +232,10 @@ static int send_session_close_request(const char *socket_path, const char *sessi
 
     fd = frdp_ipc_connect(socket_path);
     if (fd < 0) {
-        fprintf(stderr, "unable to connect to session manager socket %s: %s\n", socket_path,
+        char escaped_socket[sizeof(((struct sockaddr_un *)0)->sun_path) * 4] = { 0 };
+
+        escape_text(socket_path, escaped_socket, sizeof(escaped_socket));
+        fprintf(stderr, "unable to connect to session manager socket %s: %s\n", escaped_socket,
                 strerror(errno));
         return 3;
     }
@@ -209,11 +261,18 @@ static int send_session_close_request(const char *socket_path, const char *sessi
 
     frdp_ipc_close(fd);
     if (!response.success) {
-        fprintf(stderr, "session close failed: %s\n", response.error[0] ? response.error : "unknown");
+        char escaped_error[sizeof(response.error) * 4] = { 0 };
+
+        escape_text(response.error[0] ? response.error : "unknown", escaped_error, sizeof(escaped_error));
+        fprintf(stderr, "session close failed: %s\n", escaped_error);
         return 4;
     }
 
-    printf("Closed session %s\n", response.session_id[0] ? response.session_id : session_id);
+    char escaped_session_id[sizeof(response.session_id) * 4] = { 0 };
+
+    escape_text(response.session_id[0] ? response.session_id : session_id, escaped_session_id,
+                sizeof(escaped_session_id));
+    printf("Closed session %s\n", escaped_session_id);
     return 0;
 }
 
