@@ -61,6 +61,7 @@ but the host RPM macro set does not provide `%cmake`, and `packaging/debian` cur
 - `frdp-session-agent` now reports readiness only after Xvfb `exec()`, X display open, and XTest checks pass, and `frdp-sesmand` fails session creation if agent readiness is not reported.
 - Optional session IPC now creates a root-owned per-session agent control socket, returns the path to `frdpd`, forwards keyboard/mouse/synchronize input events to `frdp-session-agent`, and has the agent validate root peer credentials plus session ids before injecting scancode keyboard and mouse events into Xvfb through XTest.
 - `frdpd` now pulls bounded raw framebuffer tiles from the session agent over the same root-only control socket, the agent uses XDamage-backed dirty-tile state to return selected dirty tiles or clean-tile responses when available, `frdpd` suppresses unchanged tiles with per-peer hashes, and changed tiles are sent to the RDP client as FreeRDP bitmap updates; compression remains a TODO.
+- Optional `frdp-sesmand` session IPC now performs POSIX account lookup, child `initgroups()`/uid/gid drop, PAM session ownership, and agent process-group cleanup on close requests.
 
 ## Remaining issues
 

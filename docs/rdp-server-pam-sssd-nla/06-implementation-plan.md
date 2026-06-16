@@ -46,6 +46,7 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - session ids and correlation ids propagated through optional `frdp-sesmand` session IPC into `frdp-session-agent` startup/exit logs;
 - `frdp-session-agent` verifies Xvfb `exec()`, X display open, and XTest availability before reporting agent readiness to `frdp-sesmand`;
 - optional `frdp-sesmand` session IPC creates a root-owned per-session agent control socket and returns it to `frdpd` for keyboard/mouse event forwarding into the session agent;
+- optional `frdp-sesmand` session IPC performs POSIX account lookup, child `initgroups()`/uid/gid drop, PAM session ownership, and agent process-group cleanup for managed sessions;
 - `--pam-auth-test` smoke-test mode for the PAM helper path;
 - process-level core dump disabling before credential handling;
 - a minimal raw-tile framebuffer pump from `frdp-session-agent` to `frdpd` using FreeRDP bitmap updates, with XDamage-backed dirty/clean-tile responses, per-peer unchanged-tile suppression, and cache invalidation for refresh/suppress-output requests.
@@ -84,8 +85,8 @@ Deliverables:
 - [x] password-backed CredSSP -> PAM flow in `server/frdp/frdpd`;
 - [x] PAM auth/account smoke-test CLI in `server/frdp/frdpd` (`--pam-auth-test`);
 - [x] PAM credential establish/delete lifecycle in the integrated `server/frdp/frdpd` path;
-- [ ] NSS/SSSD uid/gid/groups lookup integrated with the authenticated session path (standalone prototypes perform limited lookup/group setup only);
-- [ ] audit events with correlation id integrated with the authenticated session path (partial: `frdpd` generates per-peer ids and optional auth/session IPC carries them to `frdp-authd`, `frdp-sesmand`, and `frdp-session-agent`; channels and structured audit config are not wired yet);
+- [x] NSS/SSSD uid/gid/groups lookup integrated with the authenticated session path (optional `frdp-sesmand` session IPC performs `getpwnam()`, `initgroups()`, and uid/gid drop before launching the agent);
+- [x] audit events with correlation id integrated with the authenticated auth/session/agent path (channels and structured audit config are tracked separately);
 - [x] fail-closed core dump/non-dumpable hardening in `server/frdp/frdpd`, `server/frdp/frdp-authd`, and `server/frdp/frdp-sesmand`;
 - [ ] locked secret buffers and brokerized credential handling across the integrated auth/session path (partial locked-buffer handling exists only in standalone `frdp-authd`, which is not integrated).
 
@@ -103,7 +104,7 @@ Deliverables:
 - [ ] logind/cgroup integration;
 - [x] headless Xvfb launch integrated with optional `frdpd -> frdp-sesmand -> frdp-session-agent` session requests, including fail-closed backend `exec()`, X display, and XTest readiness checks;
 - [ ] simple reconnect by user/session id;
-- [ ] cleanup on disconnect across `frdp-sesmand` agent process groups and PAM sessions (partial: optional `session_socket` close requests use bounded IPC and async retry, but durable cleanup after prolonged `frdp-sesmand` outage is not implemented).
+- [x] cleanup on disconnect across `frdp-sesmand` agent process groups and PAM sessions (optional `session_socket` close requests terminate the agent process group and close PAM state; durable cleanup after prolonged `frdp-sesmand` outage remains tracked separately).
 
 Exit criteria: the user receives a desktop session after successful authentication; reconnect works in a controlled scenario; logout cleans processes and runtime state.
 
@@ -111,7 +112,7 @@ Exit criteria: the user receives a desktop session after successful authenticati
 
 Deliverables:
 
-- [ ] framebuffer/damage capture (partial: raw framebuffer tiles can be pulled from the agent and sent as bitmap updates, the agent can use XDamage to select dirty tiles or report clean tiles, and unchanged tiles are suppressed with per-peer hashes; compression and encoder scheduling are not implemented yet);
+- [x] framebuffer/damage capture (prototype: raw framebuffer tiles can be pulled from the agent and sent as bitmap updates, the agent can use XDamage to select dirty tiles or report clean tiles, and unchanged tiles are suppressed with per-peer hashes; compression and encoder scheduling are tracked separately);
 - [x] minimal raw framebuffer tile transport from the managed session agent to FreeRDP bitmap updates;
 - [ ] basic encoder scheduling;
 - [x] keyboard/mouse input (partial: integrated callbacks forward input over optional agent control IPC and the agent injects scancode keyboard plus mouse events through XTest; Unicode/text input is not implemented yet);

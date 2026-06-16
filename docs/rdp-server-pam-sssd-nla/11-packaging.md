@@ -20,7 +20,7 @@ The `packaging/rpm/frdpd.spec` file is a starting point for building an RPM. It 
 3. Run `rpmbuild -ba frdpd.spec` to produce binary and source RPMs.
 4. Import the project’s RPM signing key and sign the packages using `rpm --addsign`.
 
-The `%files` section installs the daemons (`frdpd`, `frdp-authd`, `frdp-sesmand`, `frdp-session-agent`, `frdp-krb-authd`), the administrative tool `frdpctl`, configuration files under `/etc/frdpd`, and documentation.
+The `%files` section installs the daemons (`frdpd`, `frdp-authd`, `frdp-sesmand`, `frdp-session-agent`), the administrative tool `frdpctl`, configuration files under `/etc/frdpd`, and documentation. `frdp-krb-authd` remains a build-only prototype until the Kerberos acceptor path is implemented.
 
 ## Reproducible builds and signing
 
