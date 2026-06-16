@@ -1229,10 +1229,13 @@ static int handle_control_client(int fd, frdpAgentFrameState *frame_state, const
 }
 
 static int wait_for_backend_exit(pid_t pid, int control_fd, frdpAgentFrameState *frame_state,
-                                  const char *correlation_id,
-                                  const char *session_id)
+                                 const char *correlation_id,
+                                 const char *session_id, int *stop_requested)
 {
     int status = 0;
+
+    if (stop_requested)
+        *stop_requested = 0;
 
     while (1) {
         const pid_t rc = waitpid(pid, &status, WNOHANG);
@@ -1245,23 +1248,8 @@ static int wait_for_backend_exit(pid_t pid, int control_fd, frdpAgentFrameState 
         }
 
         if (g_stop_requested) {
-            kill(pid, SIGTERM);
-            for (int x = 0; x < 10; x++) {
-                const pid_t stop_rc = waitpid(pid, &status, WNOHANG);
-                if (stop_rc == pid)
-                    return status;
-                if (stop_rc < 0) {
-                    if (errno == EINTR)
-                        continue;
-                    return status;
-                }
-                usleep(100000);
-            }
-            kill(pid, SIGKILL);
-            while (waitpid(pid, &status, 0) < 0) {
-                if (errno != EINTR)
-                    break;
-            }
+            if (stop_requested)
+                *stop_requested = 1;
             return status;
         }
 
@@ -1298,6 +1286,30 @@ static int wait_for_backend_exit(pid_t pid, int control_fd, frdpAgentFrameState 
         }
         close(cfd);
     }
+}
+
+static int terminate_backend(pid_t pid)
+{
+    int status = 0;
+
+    kill(pid, SIGTERM);
+    for (int x = 0; x < 10; x++) {
+        const pid_t stop_rc = waitpid(pid, &status, WNOHANG);
+        if (stop_rc == pid)
+            return status;
+        if (stop_rc < 0) {
+            if (errno == EINTR)
+                continue;
+            return status;
+        }
+        usleep(100000);
+    }
+    kill(pid, SIGKILL);
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR)
+            break;
+    }
+    return status;
 }
 
 static void backend_exec_failed(int fd)
@@ -1526,9 +1538,13 @@ int main(int argc, char **argv)
     /* TODO: process clipboard/audio channels. */
 
     /* Wait for the display server to exit. */
-    int status = wait_for_backend_exit(pid, control_fd, &frame_state, correlation_id, session_id);
+    int stop_requested = 0;
+    int status = wait_for_backend_exit(pid, control_fd, &frame_state, correlation_id, session_id,
+                                       &stop_requested);
     frame_state_uninit(&frame_state);
     XCloseDisplay(xdisplay);
+    if (stop_requested)
+        status = terminate_backend(pid);
     if (control_fd >= 0)
         close(control_fd);
     if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
