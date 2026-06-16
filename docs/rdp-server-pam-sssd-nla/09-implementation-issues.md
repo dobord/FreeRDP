@@ -45,7 +45,7 @@ but the host RPM macro set does not provide `%cmake`, and `packaging/debian` cur
 - `frdp-sesmand` now includes `<grp.h>` and passes a strict syntax-only check.
 - The standalone `frdp-sesmand` prototype now keeps the PAM handle for the session lifetime, runs `initgroups()` in the child after `fork()`, and records a process group for cleanup.
 - The standalone `frdp-session-agent` now fails fast when `Xvfb` exec fails instead of entering an infinite sleep loop.
-- `server/frdp` now builds and installs `frdp-authd`, `frdp-sesmand`, `frdp-session-agent`, and `frdpctl`; `frdpctl list-sessions` / `kill-session` can use `frdp-sesmand` session IPC. It also builds `frdpd-ipc-demo`, builds but does not install the `frdp-krb-authd` prototype when GSSAPI is available, and installs `frdpd.toml`.
+- `server/frdp` now builds and installs `frdp-authd`, `frdp-sesmand`, `frdp-session-agent`, and `frdpctl`; `frdpctl status` / `list-sessions` / `kill-session` can use `frdp-sesmand` session IPC. It also builds `frdpd-ipc-demo`, builds but does not install the `frdp-krb-authd` prototype when GSSAPI is available, and installs `frdpd.toml`.
 - `server/frdp` now installs a dedicated non-interactive PAM service example at `/etc/pam.d/frdpd` through the CMake `server` component.
 - `server/frdp` now installs `frdpd`, `frdp-authd`, and `frdp-sesmand` systemd service examples plus inactive SELinux/AppArmor draft policy examples through the CMake `server` component.
 - Integrated `frdpd` now calls `pam_setcred(PAM_ESTABLISH_CRED)` after successful auth/account checks and `pam_setcred(PAM_DELETE_CRED)` during cleanup.

@@ -5,6 +5,7 @@
  */
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -29,8 +30,8 @@ static void usage(const char *argv0)
 {
     printf("Usage: %s <command> [options]\n", argv0);
     printf("Commands:\n");
-    printf("  status                 Show server status\n");
-    printf("  list-sessions          List active sessions\n");
+    printf("  status [--socket <path>]\n");
+    printf("  list-sessions [--socket <path>]\n");
     printf("  kill-session <id> [--socket <path>]\n");
     printf("  reload                 Reload configuration\n");
 }
@@ -99,7 +100,7 @@ static void terminate_session_list_response_strings(frdpSessionListResponse *res
     }
 }
 
-static int send_session_list_request(const char *socket_path)
+static int send_session_list_request(const char *socket_path, int status_only)
 {
     int fd = -1;
     frdpIpcHeader header;
@@ -139,6 +140,12 @@ static int send_session_list_request(const char *socket_path)
     if (response.count > FRDP_IPC_MAX_SESSION_LIST_ENTRIES) {
         fprintf(stderr, "session list response is invalid\n");
         return 3;
+    }
+
+    if (status_only) {
+        printf("Session manager: reachable\n");
+        printf("Active sessions: %" PRIu32 "\n", response.count);
+        return 0;
     }
 
     if (response.count == 0) {
@@ -218,8 +225,13 @@ int main(int argc, char **argv)
     }
     const char *cmd = argv[1];
     if (strcmp(cmd, "status") == 0) {
-        printf("Server status: stub implementation\n");
-        return 0;
+        frdpctlListSessionsOptions options;
+
+        if (parse_list_sessions_options(argc, argv, &options) != 0) {
+            fprintf(stderr, "Usage: %s status [--socket <path>]\n", argv[0]);
+            return 1;
+        }
+        return send_session_list_request(options.socket_path, 1);
     } else if (strcmp(cmd, "list-sessions") == 0) {
         frdpctlListSessionsOptions options;
 
@@ -227,7 +239,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "Usage: %s list-sessions [--socket <path>]\n", argv[0]);
             return 1;
         }
-        return send_session_list_request(options.socket_path);
+        return send_session_list_request(options.socket_path, 0);
     } else if (strcmp(cmd, "kill-session") == 0) {
         frdpctlKillSessionOptions options;
 
