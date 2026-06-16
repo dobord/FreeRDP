@@ -6,11 +6,11 @@
  * This component runs in the security context of an authenticated user.  It
  * launches the headless desktop backend (for example Xvfb or Wayland), sets
  * up graphics capture and input dispatch and enforces channel policy.  In this
- * minimal prototype launches the display server, injects validated keyboard
- * scancode and mouse input, and serves raw framebuffer tiles over a local
- * control fd with XDamage-backed dirty-tile tracking; compression and
- * Unicode/text input are still TODO.  The display number, geometry and audit
- * identifiers are provided via environment variables from the session manager:
+ * minimal prototype launches the display server, injects validated keyboard,
+ * Unicode BMP text and mouse input, and serves raw framebuffer tiles over a
+ * local control fd with XDamage-backed dirty-tile tracking.  The display
+ * number, geometry and audit identifiers are provided via environment variables
+ * from the session manager:
  * DISPLAY or FRDP_DISPLAY, FRDP_GEOMETRY, FRDP_SESSION_ID and
  * FRDP_CORRELATION_ID.
  */
@@ -30,6 +30,7 @@
 #include <sys/time.h>
 
 #include <X11/Xlib.h>
+#include <X11/keysym.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/Xdamage.h>
 #include <X11/extensions/Xrandr.h>
@@ -61,12 +62,21 @@ typedef struct {
 } frdpAgentFrameState;
 
 static volatile int g_x11_resize_error = 0;
+static volatile int g_x11_keyboard_error = 0;
 
 static int resize_error_handler(Display *display, XErrorEvent *event)
 {
     (void)display;
     (void)event;
     g_x11_resize_error = 1;
+    return 0;
+}
+
+static int keyboard_error_handler(Display *display, XErrorEvent *event)
+{
+    (void)display;
+    (void)event;
+    g_x11_keyboard_error = 1;
     return 0;
 }
 
@@ -120,6 +130,143 @@ static int inject_keyboard_event(Display *display, const frdpAgentInputEvent *ev
     XTestFakeKeyEvent(display, keycode, (event->flags & KBD_FLAGS_RELEASE) ? False : True,
                       CurrentTime);
     return 0;
+}
+
+static KeySym unicode_to_keysym(uint32_t codepoint)
+{
+    switch (codepoint) {
+        case 0x08:
+            return XK_BackSpace;
+        case 0x09:
+            return XK_Tab;
+        case 0x0D:
+            return XK_Return;
+        case 0x1B:
+            return XK_Escape;
+        case 0x7F:
+            return XK_Delete;
+        default:
+            break;
+    }
+
+    if ((codepoint < 0x20) || (codepoint > 0xFFFF) ||
+        ((codepoint >= 0xD800) && (codepoint <= 0xDFFF)))
+        return NoSymbol;
+    if (codepoint <= 0xFF)
+        return (KeySym)codepoint;
+    return (KeySym)(0x01000000UL | codepoint);
+}
+
+static int find_unused_keycode(Display *display, int *min_keycode, int *keysyms_per_keycode,
+                               KeySym **mapping)
+{
+    int max_keycode = 0;
+    int count = 0;
+
+    if (!display || !min_keycode || !keysyms_per_keycode || !mapping)
+        return 0;
+    XDisplayKeycodes(display, min_keycode, &max_keycode);
+    if ((*min_keycode <= 0) || (max_keycode < *min_keycode))
+        return 0;
+
+    count = max_keycode - *min_keycode + 1;
+    *mapping = XGetKeyboardMapping(display, (KeyCode)*min_keycode, count, keysyms_per_keycode);
+    if (!*mapping || (*keysyms_per_keycode <= 0))
+        return 0;
+
+    for (int keycode = max_keycode; keycode >= *min_keycode; keycode--) {
+        int used = 0;
+        KeySym *entry = &(*mapping)[(keycode - *min_keycode) * (*keysyms_per_keycode)];
+
+        for (int i = 0; i < *keysyms_per_keycode; i++) {
+            if (entry[i] != NoSymbol) {
+                used = 1;
+                break;
+            }
+        }
+        if (!used)
+            return keycode;
+    }
+    return 0;
+}
+
+static int inject_keysym_once(Display *display, KeySym keysym)
+{
+    int rc = -1;
+    int min_keycode = 0;
+    int keycode = 0;
+    int keysyms_per_keycode = 0;
+    KeySym *mapping = NULL;
+    KeySym *original = NULL;
+    KeySym *replacement = NULL;
+    XErrorHandler previous_handler = NULL;
+    int handler_set = 0;
+
+    if (!display || (keysym == NoSymbol))
+        return -1;
+
+    /* Avoid layout/modifier ambiguity by sending the symbol through a spare keycode. */
+    keycode = find_unused_keycode(display, &min_keycode, &keysyms_per_keycode, &mapping);
+    if ((keycode == 0) || !mapping || (keysyms_per_keycode <= 0))
+        goto out;
+
+    original = (KeySym *)calloc((size_t)keysyms_per_keycode, sizeof(KeySym));
+    replacement = (KeySym *)calloc((size_t)keysyms_per_keycode, sizeof(KeySym));
+    if (!original || !replacement)
+        goto out;
+
+    memcpy(original, &mapping[(keycode - min_keycode) * keysyms_per_keycode],
+           (size_t)keysyms_per_keycode * sizeof(KeySym));
+    replacement[0] = keysym;
+
+    g_x11_keyboard_error = 0;
+    previous_handler = XSetErrorHandler(keyboard_error_handler);
+    handler_set = 1;
+
+    XChangeKeyboardMapping(display, keycode, keysyms_per_keycode, replacement, 1);
+    XSync(display, False);
+    if (g_x11_keyboard_error)
+        goto restore;
+
+    if (!XTestFakeKeyEvent(display, (KeyCode)keycode, True, CurrentTime) ||
+        !XTestFakeKeyEvent(display, (KeyCode)keycode, False, CurrentTime))
+        goto restore;
+    XSync(display, False);
+    if (!g_x11_keyboard_error)
+        rc = 0;
+
+restore:
+    g_x11_keyboard_error = 0;
+    XChangeKeyboardMapping(display, keycode, keysyms_per_keycode, original, 1);
+    XSync(display, False);
+    if (g_x11_keyboard_error)
+        rc = -1;
+
+out:
+    if (handler_set)
+        XSetErrorHandler(previous_handler);
+    free(replacement);
+    free(original);
+    if (mapping)
+        XFree(mapping);
+    return rc;
+}
+
+static int inject_unicode_event(Display *display, const frdpAgentInputEvent *event)
+{
+    KeySym keysym = NoSymbol;
+    uint32_t codepoint = 0;
+
+    if (!display || !event)
+        return -1;
+    if (event->flags & KBD_FLAGS_RELEASE)
+        return 0;
+
+    codepoint = (uint32_t)(event->param1 & 0xFFFF);
+    keysym = unicode_to_keysym(codepoint);
+    if (keysym == NoSymbol)
+        return -1;
+    return inject_keysym_once(display, keysym);
 }
 
 static void inject_button_event(Display *display, unsigned int button, Bool down)
@@ -215,7 +362,7 @@ static int inject_input_event(Display *display, const frdpAgentInputEvent *event
             rc = inject_keyboard_event(display, event);
             break;
         case FRDP_AGENT_INPUT_UNICODE:
-            rc = 0;
+            rc = inject_unicode_event(display, event);
             break;
         case FRDP_AGENT_INPUT_MOUSE:
             rc = inject_mouse_event(display, event);

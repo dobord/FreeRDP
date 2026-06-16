@@ -55,7 +55,7 @@ CMake-built helper binaries/prototypes that are not yet the default canonical ru
 
 - `server/frdp/frdp-authd` (optional auth/account IPC path);
 - `server/frdp/frdp-sesmand` (optional session IPC path);
-- `server/frdp/frdp-session-agent` (launched by optional `frdp-sesmand` session requests; keyboard/mouse backend injection, raw framebuffer tile capture with XDamage-backed dirty-tile tracking, and XRandR-backed display resize exist, but Unicode/text input and production channel features are not implemented yet);
+- `server/frdp/frdp-session-agent` (launched by optional `frdp-sesmand` session requests; keyboard/mouse/Unicode BMP text backend injection, raw framebuffer tile capture with XDamage-backed dirty-tile tracking, and XRandR-backed display resize exist, but IME/layout-safe text input and production channel features are not implemented yet);
 - `server/frdp/frdp-krb-authd` (build-only prototype, not installed by default);
 - `tools/frdpctl`.
 
@@ -116,7 +116,7 @@ Deliverables:
 - [x] minimal raw framebuffer tile transport from the managed session agent to FreeRDP bitmap updates;
 - [x] basic framebuffer output scheduling (bounded raw-tile pump budget and shorter peer wait interval; production compression/encoder scheduling remains open);
 - [x] opportunistic framebuffer tile compression (partial: `frdpd` advertises and enforces minimum-color-loss/no-subsampling NSCodec and sends `SET_SURFACE_BITS` only when the client negotiated it and the encoded tile is smaller than the raw tile; RFX/RDPGFX and production codec policy remain open);
-- [x] keyboard/mouse input (partial: integrated callbacks forward input over optional agent control IPC and the agent injects scancode keyboard plus mouse events through XTest; Unicode/text input is not implemented yet);
+- [x] keyboard/mouse/text input (partial: integrated callbacks forward input over optional agent control IPC and the agent injects scancode keyboard, Unicode BMP text, and mouse events through XTest/X11; IME/layout-safe text input and supplementary-plane Unicode are not implemented yet);
 - [x] display resize (prototype: RDP monitor-layout changes are forwarded to the agent and applied through XRandR before `frdpd` updates peer geometry; runtime interop and resize churn are not smoke-tested yet);
 - [ ] text clipboard;
 - [ ] baseline audio output;
