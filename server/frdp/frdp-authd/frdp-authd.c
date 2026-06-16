@@ -27,6 +27,8 @@
 #include <uuid/uuid.h>
 #include <sys/types.h>
 #include <errno.h>
+#include <poll.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 
@@ -42,6 +44,29 @@
  * emit structured audit events.  Sensitive memory is locked and wiped
  * explicitly to reduce the risk of credential leakage.
  */
+
+static volatile sig_atomic_t g_stop_requested = 0;
+
+static void authd_signal_handler(int signum)
+{
+    (void)signum;
+    g_stop_requested = 1;
+}
+
+static int install_signal_handlers(void)
+{
+    struct sigaction action;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = authd_signal_handler;
+    if (sigemptyset(&action.sa_mask) != 0)
+        return -1;
+    if (sigaction(SIGINT, &action, NULL) != 0)
+        return -1;
+    if (sigaction(SIGTERM, &action, NULL) != 0)
+        return -1;
+    return 0;
+}
 
 static int pam_conversation(int num_msg, const struct pam_message **msg,
                             struct pam_response **resp, void *appdata_ptr)
@@ -368,11 +393,18 @@ static int pam_service_is_valid(const char *service)
 static int run_ipc_server(const char *socket_path, const char *pam_service)
 {
     mode_t old_umask;
+    int fd = -1;
 
     if (!pam_service_is_valid(pam_service)) {
         fprintf(stderr, "invalid PAM service name\n");
         return -1;
     }
+    if (install_signal_handlers() != 0) {
+        fprintf(stderr, "failed to install signal handlers\n");
+        return -1;
+    }
+    if (g_stop_requested)
+        return 0;
 
     if (prepare_socket_path(socket_path) != 0) {
         char escaped_socket[512] = {0};
@@ -382,7 +414,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
         return -1;
     }
 
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) {
         perror("socket");
         return -1;
@@ -411,13 +443,41 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
         unlink(socket_path);
         return -1;
     }
+    if (g_stop_requested) {
+        close(fd);
+        unlink(socket_path);
+        return 0;
+    }
     char escaped_socket[512] = {0};
 
     escape_log_field(socket_path, escaped_socket, sizeof(escaped_socket));
     printf("frdp-authd IPC server listening on %s\n", escaped_socket);
-    while (1) {
+    while (!g_stop_requested) {
+        struct pollfd pfd;
+
+        memset(&pfd, 0, sizeof(pfd));
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        const int poll_status = poll(&pfd, 1, 1000);
+        if (poll_status < 0) {
+            if (errno == EINTR)
+                continue;
+            perror("poll");
+            break;
+        }
+        if (poll_status == 0)
+            continue;
+        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            perror("poll");
+            break;
+        }
+        if ((pfd.revents & POLLIN) == 0)
+            continue;
+
         int cfd = accept(fd, NULL, NULL);
         if (cfd < 0) {
+            if (errno == EINTR)
+                continue;
             perror("accept");
             continue;
         }
@@ -464,7 +524,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
     }
     close(fd);
     unlink(socket_path);
-    return 0;
+    return g_stop_requested ? 0 : -1;
 }
 
 static void usage(const char *argv0)
