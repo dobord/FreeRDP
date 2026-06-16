@@ -1233,22 +1233,6 @@ static BOOL frdpd_peer_activate(freerdp_peer* client)
 	return TRUE;
 }
 
-static void frdpd_channel_name(char* dst, size_t dst_size, const CHANNEL_DEF* channel)
-{
-	size_t len = 0;
-
-	if (!dst || (dst_size == 0))
-		return;
-	dst[0] = '\0';
-	if (!channel)
-		return;
-	len = strnlen(channel->name, sizeof(channel->name));
-	if (len >= dst_size)
-		len = dst_size - 1;
-	memcpy(dst, channel->name, len);
-	dst[len] = '\0';
-}
-
 static void frdpd_escape_log_string(char* dst, size_t dst_size, const char* src)
 {
 	size_t out = 0;
@@ -1300,9 +1284,10 @@ static BOOL frdpd_peer_client_capabilities(freerdp_peer* client)
 		    (const CHANNEL_DEF*)freerdp_settings_get_pointer_array(settings,
 		                                                          FreeRDP_ChannelDefArray, i);
 
-		frdpd_channel_name(name, sizeof(name), channel);
+		const int allowed = frdp_channel_policy_static_channel_allowed(&config->channels, channel,
+		                                                              name, sizeof(name));
 		frdpd_escape_log_string(log_name, sizeof(log_name), name);
-		if ((name[0] == '\0') || !frdp_channel_policy_static_allowed(&config->channels, name))
+		if (!allowed)
 		{
 			WLog_WARN(TAG,
 			          "correlation_id=%s rejected static virtual channel '%s' from client %s",

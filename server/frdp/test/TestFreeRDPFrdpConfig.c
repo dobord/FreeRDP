@@ -87,6 +87,8 @@ static int test_static_allow_list(void)
 {
 	frdpConfig config = { 0 };
 	const char* body = "[channels]\nstatic_allow = \"cliprdr, rdpsnd,rdpdr\"\n";
+	CHANNEL_DEF channel = { 0 };
+	char name[CHANNEL_NAME_LEN + 2] = { 0 };
 
 	if (load_config_body("frdp-static-channels.toml", body, &config) != 0)
 		return -1;
@@ -107,6 +109,26 @@ static int test_static_allow_list(void)
 	if (frdp_channel_policy_static_allowed(&config.channels, "drdynvc") != 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "CLIPRDR") != 0)
+		return -1;
+	memcpy(channel.name, "cliprdr", sizeof("cliprdr"));
+	if (frdp_channel_policy_static_channel_allowed(&config.channels, &channel, name, sizeof(name)) == 0)
+		return -1;
+	if (strcmp(name, "cliprdr") != 0)
+		return -1;
+	memset(&channel, 0, sizeof(channel));
+	memset(name, 0, sizeof(name));
+	memcpy(channel.name, "drdynvc", sizeof("drdynvc"));
+	if (frdp_channel_policy_static_channel_allowed(&config.channels, &channel, name, sizeof(name)) != 0)
+		return -1;
+	if (strcmp(name, "drdynvc") != 0)
+		return -1;
+	memset(&channel, 0, sizeof(channel));
+	memset(name, 0xff, sizeof(name));
+	if (frdp_channel_policy_static_channel_allowed(&config.channels, &channel, name, sizeof(name)) != 0)
+		return -1;
+	if (name[0] != '\0')
+		return -1;
+	if (frdp_channel_policy_static_channel_allowed(&config.channels, NULL, name, sizeof(name)) != 0)
 		return -1;
 	return 0;
 }
