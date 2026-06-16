@@ -49,7 +49,7 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - optional `frdp-sesmand` session IPC performs POSIX account lookup, child `initgroups()`/uid/gid drop, PAM session ownership, and agent process-group cleanup for managed sessions;
 - `--pam-auth-test` smoke-test mode for the PAM helper path;
 - process-level core dump disabling before credential handling;
-- a minimal raw-tile framebuffer pump from `frdp-session-agent` to `frdpd` using FreeRDP bitmap updates, with XDamage-backed dirty/clean-tile responses, per-peer unchanged-tile suppression, cache invalidation for refresh/suppress-output requests, and XRandR-backed resize requests from RDP monitor layout changes.
+- a minimal raw-tile framebuffer pump from `frdp-session-agent` to `frdpd` using FreeRDP bitmap updates, with XDamage-backed dirty/clean-tile responses, per-peer unchanged-tile suppression, bounded tile pump scheduling, cache invalidation for refresh/suppress-output requests, and XRandR-backed resize requests from RDP monitor layout changes.
 
 CMake-built helper binaries/prototypes that are not yet the default canonical runtime topology:
 
@@ -112,9 +112,9 @@ Exit criteria: the user receives a desktop session after successful authenticati
 
 Deliverables:
 
-- [x] framebuffer/damage capture (prototype: raw framebuffer tiles can be pulled from the agent and sent as bitmap updates, the agent can use XDamage to select dirty tiles or report clean tiles, and unchanged tiles are suppressed with per-peer hashes; compression and encoder scheduling are tracked separately);
+- [x] framebuffer/damage capture (prototype: raw framebuffer tiles can be pulled from the agent and sent as bitmap updates, the agent can use XDamage to select dirty tiles or report clean tiles, and unchanged tiles are suppressed with per-peer hashes; compression is tracked separately);
 - [x] minimal raw framebuffer tile transport from the managed session agent to FreeRDP bitmap updates;
-- [ ] basic encoder scheduling;
+- [x] basic framebuffer output scheduling (bounded raw-tile pump budget and shorter peer wait interval; production compression/encoder scheduling remains open);
 - [x] keyboard/mouse input (partial: integrated callbacks forward input over optional agent control IPC and the agent injects scancode keyboard plus mouse events through XTest; Unicode/text input is not implemented yet);
 - [x] display resize (prototype: RDP monitor-layout changes are forwarded to the agent and applied through XRandR before `frdpd` updates peer geometry; runtime interop and resize churn are not smoke-tested yet);
 - [ ] text clipboard;

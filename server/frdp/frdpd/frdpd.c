@@ -45,12 +45,16 @@
 
 #define TAG SERVER_TAG("frdpd")
 #define FRDPD_FRAME_TILE_SIZE 120U
-#define FRDPD_FRAME_TILES_PER_PUMP 1U
-#define FRDPD_FRAME_INTERVAL_MS 100ULL
+#define FRDPD_FRAME_TILES_PER_PUMP 2U
+#define FRDPD_FRAME_INTERVAL_MS 50ULL
+#define FRDPD_FRAME_PUMP_BUDGET_MS 30ULL
+#define FRDPD_FRAME_IPC_TIMEOUT_US 100000
 #define FRDPD_FRAME_HASH_OFFSET 1469598103934665603ULL
 #define FRDPD_FRAME_HASH_PRIME 1099511628211ULL
 #define FRDPD_MAX_DESKTOP_SIZE 8192U
 #define FRDPD_MAX_MONITORS 16U
+#define FRDPD_PEER_ACTIVE_WAIT_TIMEOUT_MS 50
+#define FRDPD_PEER_IDLE_WAIT_TIMEOUT_MS 250
 
 typedef struct
 {
@@ -295,12 +299,27 @@ static UINT64* frdpd_frame_tile_hash_slot(frdpdPeerContext* context, UINT32 x, U
 	return &context->framebuffer_hashes[((size_t)row * context->framebuffer_hash_cols) + col];
 }
 
+static BOOL frdpd_frame_pump_budget_exhausted(UINT64 pump_started, UINT32 completed_tiles)
+{
+	if (completed_tiles >= FRDPD_FRAME_TILES_PER_PUMP)
+		return TRUE;
+	return (GetTickCount64() - pump_started) >= FRDPD_FRAME_PUMP_BUDGET_MS;
+}
+
+static DWORD frdpd_peer_wait_timeout_ms(const frdpdPeerContext* context)
+{
+	if (context && context->managed_session_open && context->framebuffer_active &&
+	    !context->framebuffer_output_suppressed && (context->agent_socket[0] != '\0'))
+		return FRDPD_PEER_ACTIVE_WAIT_TIMEOUT_MS;
+	return FRDPD_PEER_IDLE_WAIT_TIMEOUT_MS;
+}
+
 static BOOL frdpd_set_frame_ipc_timeout(int fd)
 {
 	struct timeval timeout = { 0 };
 
 	timeout.tv_sec = 0;
-	timeout.tv_usec = 200000;
+	timeout.tv_usec = FRDPD_FRAME_IPC_TIMEOUT_US;
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0)
 		return FALSE;
 	if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0)
@@ -555,6 +574,7 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 	UINT32 desktop_height = 0;
 	BOOL hash_cache_ready = FALSE;
 	const UINT64 now = GetTickCount64();
+	const UINT64 pump_started = now;
 
 	if (!client || !client->context || !context || !context->managed_session_open ||
 	    !context->framebuffer_active || context->framebuffer_output_suppressed ||
@@ -616,6 +636,9 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 		{
 			context->agent_frame_warned = FALSE;
 			frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
+			if ((i + 1U < FRDPD_FRAME_TILES_PER_PUMP) &&
+			    frdpd_frame_pump_budget_exhausted(pump_started, i + 1U))
+				break;
 			continue;
 		}
 		if ((frame.x >= desktop_width) || (frame.y >= desktop_height) ||
@@ -641,6 +664,9 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 			free(data);
 			context->agent_frame_warned = FALSE;
 			frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
+			if ((i + 1U < FRDPD_FRAME_TILES_PER_PUMP) &&
+			    frdpd_frame_pump_budget_exhausted(pump_started, i + 1U))
+				break;
 			continue;
 		}
 
@@ -656,6 +682,9 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 		free(data);
 		context->agent_frame_warned = FALSE;
 		frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
+		if ((i + 1U < FRDPD_FRAME_TILES_PER_PUMP) &&
+		    frdpd_frame_pump_budget_exhausted(pump_started, i + 1U))
+			break;
 	}
 
 	return TRUE;
@@ -1343,7 +1372,7 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 			break;
 		}
 
-		status = WaitForMultipleObjects(count, handles, FALSE, 250);
+		status = WaitForMultipleObjects(count, handles, FALSE, frdpd_peer_wait_timeout_ms(context));
 		if (status == WAIT_TIMEOUT)
 		{
 			if (!frdpd_pump_agent_framebuffer(client, context))
