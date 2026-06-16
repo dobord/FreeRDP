@@ -249,6 +249,10 @@ int main(int argc, char **argv)
         }
         return send_session_close_request(options.socket_path, options.session_id);
     } else if (strcmp(cmd, "reload") == 0) {
+        if (argc != 2) {
+            fprintf(stderr, "Usage: %s reload\n", argv[0]);
+            return 1;
+        }
         fprintf(stderr, "reload is not implemented\n");
         return 2;
     } else {
