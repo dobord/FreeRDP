@@ -23,7 +23,7 @@ This document describes the configuration options available in `frdpd.toml` (see
 
 ## [channels]
 
-- `static_allow` (string): Optional comma-separated exact RDP static virtual channel names to allow during client capability processing, for example `"cliprdr,rdpsnd"`. Default deny-all. Allowing a name only permits negotiation; clipboard/audio/device channel handlers are not implemented yet. Dynamic channel policy is not implemented, so do not allow `drdynvc` for production use.
+- `static_allow` (string): Optional comma-separated exact RDP static virtual channel names to allow during client capability processing, for example `"cliprdr,rdpsnd"`. Default deny-all. Allowing a name only permits negotiation; clipboard/audio/device channel handlers are not implemented yet. `drdynvc` is rejected until dynamic channel policy is implemented.
 
 ## [audit]
 

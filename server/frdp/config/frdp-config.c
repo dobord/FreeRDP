@@ -87,6 +87,8 @@ static int add_static_channel_allow(frdpConfig *config, const char *name)
 {
     if (!config || !is_channel_name_valid(name))
         return -1;
+    if (strcmp(name, "drdynvc") == 0)
+        return -1;
     for (uint32_t i = 0; i < config->channels.static_allow_count; i++) {
         if (strcmp(config->channels.static_allow[i], name) == 0)
             return -1;

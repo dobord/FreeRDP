@@ -118,7 +118,7 @@ Deliverables:
 - [x] opportunistic framebuffer tile compression (partial: `frdpd` advertises and enforces minimum-color-loss/no-subsampling NSCodec and sends `SET_SURFACE_BITS` only when the client negotiated it and the encoded tile is smaller than the raw tile; RFX/RDPGFX and production codec policy remain open);
 - [x] keyboard/mouse/text input (partial: integrated callbacks forward input over optional agent control IPC and the agent injects scancode keyboard, Unicode BMP text, and mouse events through XTest/X11; IME/layout-safe text input and supplementary-plane Unicode are not implemented yet);
 - [x] display resize (prototype: RDP monitor-layout changes are forwarded to the agent and applied through XRandR before `frdpd` updates peer geometry; runtime interop and resize churn are not smoke-tested yet);
-- [x] static channel policy engine (`frdpd` enforces deny-by-default for client-requested static virtual channels during capability processing, supports an explicit `static_allow` list, and has CTest coverage for config parsing plus `CHANNEL_DEF` validation; dynamic channel policy and channel handlers remain open);
+- [x] static channel policy engine (`frdpd` enforces deny-by-default for client-requested static virtual channels during capability processing, supports an explicit `static_allow` list, rejects `drdynvc` until dynamic-channel policy exists, and has CTest coverage for config parsing plus `CHANNEL_DEF` validation; dynamic channel policy and channel handlers remain open);
 - [ ] text clipboard;
 - [ ] baseline audio output;
 - [ ] dynamic channel policy and useful channel handlers.

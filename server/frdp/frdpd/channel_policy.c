@@ -22,6 +22,8 @@ int frdp_channel_policy_static_allowed(const frdpChannelPolicy *policy, const ch
 {
 	if (!policy || !channel || channel[0] == '\0')
 		return 0;
+	if (strcmp(channel, "drdynvc") == 0)
+		return 0;
 
 	for (uint32_t i = 0; i < policy->static_allow_count; i++)
 	{

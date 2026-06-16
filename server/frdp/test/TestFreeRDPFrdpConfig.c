@@ -105,6 +105,7 @@ static int test_empty_allow_list(void)
 static int test_static_allow_list(void)
 {
 	frdpConfig config = { 0 };
+	frdpChannelPolicy direct_policy = { 0 };
 	const char* body = "[channels]\nstatic_allow = \"cliprdr, rdpsnd,rdpdr\"\n";
 	CHANNEL_DEF channel = { 0 };
 	char name[CHANNEL_NAME_LEN + 2] = { 0 };
@@ -140,6 +141,12 @@ static int test_static_allow_list(void)
 	if (frdp_channel_policy_static_channel_allowed(&config.channels, &channel, name, sizeof(name)) != 0)
 		return -1;
 	if (strcmp(name, "drdynvc") != 0)
+		return -1;
+	direct_policy.static_allow_count = 1;
+	memcpy(direct_policy.static_allow[0], "drdynvc", sizeof("drdynvc"));
+	if (frdp_channel_policy_static_allowed(&direct_policy, "drdynvc") != 0)
+		return -1;
+	if (frdp_channel_policy_static_channel_allowed(&direct_policy, &channel, name, sizeof(name)) != 0)
 		return -1;
 	memset(&channel, 0, sizeof(channel));
 	memset(name, 0xff, sizeof(name));
@@ -177,6 +184,12 @@ static int test_invalid_channel_config(void)
 		return -1;
 	if (expect_load_failure("frdp-bad-channel-char.toml",
 	                        "[channels]\nstatic_allow = \"clip-rdr\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-drdynvc-static-channel.toml",
+	                        "[channels]\nstatic_allow = \"drdynvc\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-drdynvc-mixed-static-channel.toml",
+	                        "[channels]\nstatic_allow = \"cliprdr, drdynvc\"\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-long-channel-name.toml",
 	                        "[channels]\nstatic_allow = \"abcdefghi\"\n") != 0)
