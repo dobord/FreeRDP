@@ -30,6 +30,7 @@
 #include <winpr/winsock.h>
 
 #include <freerdp/constants.h>
+#include <freerdp/codec/color.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/listener.h>
 #include <freerdp/log.h>
@@ -53,6 +54,7 @@
 #define FRDPD_FRAME_HASH_PRIME 1099511628211ULL
 #define FRDPD_MAX_DESKTOP_SIZE 8192U
 #define FRDPD_MAX_MONITORS 16U
+#define FRDPD_NSC_COLOR_LOSS_LEVEL 1U
 #define FRDPD_PEER_ACTIVE_WAIT_TIMEOUT_MS 50
 #define FRDPD_PEER_IDLE_WAIT_TIMEOUT_MS 250
 
@@ -217,6 +219,17 @@ static UINT32 frdpd_min_u32(UINT32 a, UINT32 b)
 	return (a < b) ? a : b;
 }
 
+static void frdpd_reset_frame_encoder(frdpdPeerContext* context)
+{
+	if (!context)
+		return;
+	nsc_context_free(context->framebuffer_nsc);
+	context->framebuffer_nsc = NULL;
+	Stream_Free(context->framebuffer_nsc_stream, TRUE);
+	context->framebuffer_nsc_stream = NULL;
+	context->framebuffer_nsc_warned = FALSE;
+}
+
 static void frdpd_invalidate_framebuffer_cache(frdpdPeerContext* context)
 {
 	if (!context)
@@ -237,6 +250,7 @@ static void frdpd_reset_framebuffer_state(frdpdPeerContext* context)
 	context->framebuffer_active = FALSE;
 	context->framebuffer_output_suppressed = FALSE;
 	frdpd_invalidate_framebuffer_cache(context);
+	frdpd_reset_frame_encoder(context);
 }
 
 static UINT64 frdpd_hash_frame_tile(const BYTE* data, UINT32 length)
@@ -338,6 +352,52 @@ static BOOL frdpd_set_resize_ipc_timeout(int fd)
 	if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0)
 		return FALSE;
 	return TRUE;
+}
+
+static BOOL frdpd_nsc_surface_bits_supported(const rdpUpdate* update, const rdpSettings* settings)
+{
+	const UINT32 supported = settings
+	                               ? freerdp_settings_get_uint32(settings,
+	                                                             FreeRDP_SurfaceCommandsSupported)
+	                               : 0;
+	const UINT32 codec_id = settings ? freerdp_settings_get_uint32(settings, FreeRDP_NSCodecId) : 0;
+
+	return update && update->SurfaceBits && settings &&
+	       ((supported & SURFCMDS_SET_SURFACE_BITS) != 0) &&
+	       freerdp_settings_get_bool(settings, FreeRDP_NSCodec) && (codec_id != 0) &&
+	       (codec_id <= UINT16_MAX);
+}
+
+static BOOL frdpd_prepare_nsc_encoder(frdpdPeerContext* context, UINT32 width, UINT32 height)
+{
+	if (!context || (width == 0) || (height == 0) || (width > UINT16_MAX) ||
+	    (height > UINT16_MAX))
+		return FALSE;
+	if (!context->framebuffer_nsc)
+	{
+		context->framebuffer_nsc = nsc_context_new();
+		if (!context->framebuffer_nsc)
+			return FALSE;
+	}
+	if (!context->framebuffer_nsc_stream)
+	{
+		context->framebuffer_nsc_stream =
+		    Stream_New(NULL, 4ULL * FRDPD_FRAME_TILE_SIZE * FRDPD_FRAME_TILE_SIZE);
+		if (!context->framebuffer_nsc_stream)
+			return FALSE;
+	}
+
+	if (!nsc_context_reset(context->framebuffer_nsc, width, height))
+		return FALSE;
+	if (!nsc_context_set_parameters(context->framebuffer_nsc, NSC_COLOR_LOSS_LEVEL,
+	                                FRDPD_NSC_COLOR_LOSS_LEVEL))
+		return FALSE;
+	if (!nsc_context_set_parameters(context->framebuffer_nsc, NSC_ALLOW_SUBSAMPLING, 0))
+		return FALSE;
+	if (!nsc_context_set_parameters(context->framebuffer_nsc, NSC_DYNAMIC_COLOR_FIDELITY, 0))
+		return FALSE;
+	return nsc_context_set_parameters(context->framebuffer_nsc, NSC_COLOR_FORMAT,
+	                                  PIXEL_FORMAT_BGRX32);
 }
 
 static BOOL frdpd_send_agent_resize(frdpdPeerContext* context, UINT32 width, UINT32 height,
@@ -551,6 +611,83 @@ static BOOL frdpd_send_bitmap_frame(freerdp_peer* client, const frdpAgentFrameRe
 	return ok;
 }
 
+static BOOL frdpd_send_nsc_frame(freerdp_peer* client, frdpdPeerContext* context,
+                                 const frdpAgentFrameResponse* frame, BYTE* data)
+{
+	SURFACE_BITS_COMMAND cmd = { 0 };
+	rdpSettings* settings = NULL;
+	rdpUpdate* update = NULL;
+	wStream* stream = NULL;
+	size_t encoded_length = 0;
+	UINT32 codec_id = 0;
+	BOOL ok = FALSE;
+
+	if (!client || !client->context || !context || !frame || !data)
+		return FALSE;
+	settings = client->context->settings;
+	update = client->context->update;
+	if (!frdpd_nsc_surface_bits_supported(update, settings))
+		return FALSE;
+	if ((frame->x > UINT16_MAX) || (frame->y > UINT16_MAX) ||
+	    (frame->width > UINT16_MAX) || (frame->height > UINT16_MAX) ||
+	    (frame->width > UINT16_MAX - frame->x) ||
+	    (frame->height > UINT16_MAX - frame->y))
+		return FALSE;
+	if (!frdpd_prepare_nsc_encoder(context, frame->width, frame->height))
+		goto fail;
+
+	stream = context->framebuffer_nsc_stream;
+	Stream_ResetPosition(stream);
+	if (!nsc_compose_message(context->framebuffer_nsc, stream, data, frame->width, frame->height,
+	                         frame->stride))
+		goto fail;
+	encoded_length = Stream_GetPosition(stream);
+	if ((encoded_length == 0) || (encoded_length > UINT32_MAX))
+		goto fail;
+	if (encoded_length >= frame->data_length)
+		return FALSE;
+
+	codec_id = freerdp_settings_get_uint32(settings, FreeRDP_NSCodecId);
+	cmd.cmdType = CMDTYPE_SET_SURFACE_BITS;
+	cmd.destLeft = frame->x;
+	cmd.destTop = frame->y;
+	cmd.destRight = frame->x + frame->width;
+	cmd.destBottom = frame->y + frame->height;
+	cmd.bmp.bpp = 32;
+	cmd.bmp.codecID = (UINT16)codec_id;
+	cmd.bmp.width = (UINT16)frame->width;
+	cmd.bmp.height = (UINT16)frame->height;
+	cmd.bmp.bitmapDataLength = (UINT32)encoded_length;
+	cmd.bmp.bitmapData = Stream_Buffer(stream);
+
+	rdp_update_lock(update);
+	ok = update->SurfaceBits(update->context, &cmd);
+	rdp_update_unlock(update);
+	if (ok)
+	{
+		context->framebuffer_nsc_warned = FALSE;
+		return TRUE;
+	}
+
+fail:
+	if (!context->framebuffer_nsc_warned)
+	{
+		WLog_WARN(TAG,
+		          "correlation_id=%s failed to send NSCodec framebuffer tile for session_id=%s; falling back to raw bitmap updates",
+		          context->correlation_id, context->session_id);
+		context->framebuffer_nsc_warned = TRUE;
+	}
+	return FALSE;
+}
+
+static BOOL frdpd_send_frame(freerdp_peer* client, frdpdPeerContext* context,
+                             const frdpAgentFrameResponse* frame, BYTE* data)
+{
+	if (frdpd_send_nsc_frame(client, context, frame, data))
+		return TRUE;
+	return frdpd_send_bitmap_frame(client, frame, data);
+}
+
 static void frdpd_advance_frame_cursor(frdpdPeerContext* context, UINT32 desktop_width,
                                        UINT32 desktop_height)
 {
@@ -670,7 +807,7 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 			continue;
 		}
 
-		if (!frdpd_send_bitmap_frame(client, &frame, data))
+		if (!frdpd_send_frame(client, context, &frame, data))
 		{
 			free(data);
 			WLog_WARN(TAG, "correlation_id=%s failed to send framebuffer tile for session_id=%s",
@@ -1210,6 +1347,7 @@ static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
 	    !freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, height))
 		return FALSE;
 	frdpd_invalidate_framebuffer_cache(frdp_context);
+	frdpd_reset_frame_encoder(frdp_context);
 	WLog_INFO(TAG,
 	          "correlation_id=%s accepted display resize %" PRIu32 "x%" PRIu32
 	          " monitor_count=%" PRIu32,
@@ -1282,6 +1420,13 @@ static BOOL frdpd_configure_security(freerdp_peer* client, const frdpdServerConf
 	if (!freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, TRUE))
 		return FALSE;
 	if (!freerdp_settings_set_bool(settings, FreeRDP_NSCodec, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_uint32(settings, FreeRDP_NSCodecColorLossLevel,
+	                                 FRDPD_NSC_COLOR_LOSS_LEVEL))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_NSCodecAllowSubsampling, FALSE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_NSCodecAllowDynamicColorFidelity, FALSE))
 		return FALSE;
 	if (!freerdp_settings_set_uint32(settings, FreeRDP_ColorDepth, 32))
 		return FALSE;

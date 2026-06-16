@@ -8,6 +8,9 @@
 #ifndef FREERDP_SERVER_FRDPD_H
 #define FREERDP_SERVER_FRDPD_H
 
+#include <winpr/stream.h>
+
+#include <freerdp/codec/nsc.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/peer.h>
 
@@ -50,6 +53,9 @@ extern "C"
 		UINT32 framebuffer_hash_cols;
 		UINT32 framebuffer_hash_rows;
 		UINT64* framebuffer_hashes;
+		NSC_CONTEXT* framebuffer_nsc;
+		wStream* framebuffer_nsc_stream;
+		BOOL framebuffer_nsc_warned;
 		void* pam_handle;
 		char* pam_user;
 		BOOL pam_credentials_established;
