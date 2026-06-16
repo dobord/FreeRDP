@@ -21,7 +21,7 @@ Rotate the service key periodically:
 
 1. Use `ktutil` or `setspn`/`ktpass` to generate a new keytab for the SPN (TERMSRV/hostname).
 2. Copy the new keytab to each RDP server.
-3. Reload the daemon (`systemctl reload frdpd`) to pick up the new key without dropping active sessions.
+3. Restart the affected daemon during a maintenance window; live reload is not implemented yet.
 4. Remove old keys from Active Directory to prevent reuse.
 
 ## Troubleshooting
