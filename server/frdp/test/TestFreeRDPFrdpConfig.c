@@ -56,6 +56,8 @@ static int test_default_deny(void)
 
 	if (load_config_body("frdp-default-deny.toml", "", &config) != 0)
 		return -1;
+	if (config.max_connections != 0)
+		return -1;
 	if (config.channels.static_allow_count != 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") != 0)
@@ -65,6 +67,23 @@ static int test_default_deny(void)
 	if (frdp_channel_policy_static_allowed(NULL, "cliprdr") != 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "") != 0)
+		return -1;
+	return 0;
+}
+
+static int test_server_max_connections(void)
+{
+	frdpConfig config = { 0 };
+
+	if (load_config_body("frdp-max-connections-bare.toml", "[server]\nmax_connections = 64\n",
+	                     &config) != 0)
+		return -1;
+	if (config.max_connections != 64)
+		return -1;
+	if (load_config_body("frdp-max-connections-zero.toml", "[server]\nmax_connections = 0\n",
+	                     &config) != 0)
+		return -1;
+	if (config.max_connections != 0)
 		return -1;
 	return 0;
 }
@@ -135,6 +154,21 @@ static int test_static_allow_list(void)
 
 static int test_invalid_channel_config(void)
 {
+	if (expect_load_failure("frdp-duplicate-max-connections.toml",
+	                        "[server]\nmax_connections = 1\nmax_connections = 2\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-negative-max-connections.toml",
+	                        "[server]\nmax_connections = -1\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-invalid-max-connections.toml",
+	                        "[server]\nmax_connections = \"many\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-quoted-max-connections.toml",
+	                        "[server]\nmax_connections = \"7\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-too-large-max-connections.toml",
+	                        "[server]\nmax_connections = 2147483648\n") != 0)
+		return -1;
 	if (expect_load_failure("frdp-duplicate-channel.toml",
 	                        "[channels]\nstatic_allow = \"cliprdr,cliprdr\"\n") != 0)
 		return -1;
@@ -164,6 +198,8 @@ int TestFreeRDPFrdpConfig(int argc, char* argv[])
 	if (test_default_deny() != 0)
 		return -1;
 	if (test_empty_allow_list() != 0)
+		return -1;
+	if (test_server_max_connections() != 0)
 		return -1;
 	if (test_static_allow_list() != 0)
 		return -1;

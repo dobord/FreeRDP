@@ -22,6 +22,7 @@
 
 #include <winpr/assert.h>
 #include <winpr/crt.h>
+#include <winpr/interlocked.h>
 #include <winpr/path.h>
 #include <winpr/rpc.h>
 #include <winpr/ssl.h>
@@ -1116,6 +1117,34 @@ static BOOL frdpd_peer_init(freerdp_peer* client)
 	return freerdp_peer_context_new(client);
 }
 
+static BOOL frdpd_reserve_connection(frdpdServerConfig* config, const char* hostname)
+{
+	const LONG max_connections = config ? (LONG)config->max_connections : 0;
+
+	if (!config || (max_connections <= 0))
+		return TRUE;
+
+	for (;;)
+	{
+		const LONG active = InterlockedCompareExchange(&config->active_connections, 0, 0);
+
+		if (active >= max_connections)
+		{
+			WLog_WARN(TAG, "rejecting client %s: max_connections=%ld active=%ld",
+			          hostname ? hostname : "unknown", (long)max_connections, (long)active);
+			return FALSE;
+		}
+		if (InterlockedCompareExchange(&config->active_connections, active + 1, active) == active)
+			return TRUE;
+	}
+}
+
+static void frdpd_release_connection(frdpdServerConfig* config)
+{
+	if (config && (config->max_connections > 0))
+		(void)InterlockedDecrement(&config->active_connections);
+}
+
 static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY* identity,
                              BOOL automatic)
 {
@@ -1615,20 +1644,34 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 fail:
 	freerdp_peer_context_free(client);
 	freerdp_peer_free(client);
+	frdpd_release_connection(config);
 	return 0;
 }
 
 static BOOL frdpd_peer_accepted(freerdp_listener* instance, freerdp_peer* client)
 {
 	HANDLE thread = NULL;
+	frdpdServerConfig* config = NULL;
 
 	WINPR_ASSERT(instance);
 	WINPR_ASSERT(client);
 
+	config = (frdpdServerConfig*)instance->info;
+	WINPR_ASSERT(config);
+
+	if (!frdpd_reserve_connection(config, client->hostname))
+	{
+		freerdp_peer_free(client);
+		return TRUE;
+	}
+
 	client->ContextExtra = instance->info;
 	thread = CreateThread(NULL, 0, frdpd_peer_mainloop, client, 0, NULL);
 	if (!thread)
+	{
+		frdpd_release_connection(config);
 		return FALSE;
+	}
 
 	(void)CloseHandle(thread);
 	return TRUE;
@@ -1787,6 +1830,7 @@ static BOOL frdpd_apply_file_config(frdpdOptions* options)
 
 	if (!frdpd_apply_listen_config(options, config->listen))
 		return FALSE;
+	options->server.max_connections = config->max_connections;
 	if (_stricmp(config->auth_mode, "pam-sssd") != 0)
 		return FALSE;
 	if (!frdpd_string_is_empty(config->tls_cert))

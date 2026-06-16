@@ -13,6 +13,7 @@ typedef struct {
 /* Structure representing configuration parsed from frdpd.toml */
 typedef struct {
     char listen[64];
+    uint32_t max_connections;
     char security[16];
     char tls_cert[256];
     char tls_key[256];

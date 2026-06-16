@@ -1,5 +1,7 @@
 #include "frdp-config.h"
 
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -45,6 +47,22 @@ static int unquote_value(char *value)
 
     value[len - 1] = '\0';
     memmove(value, value + 1, len - 1);
+    return 0;
+}
+
+static int parse_uint32_limit(const char *value, uint32_t *out)
+{
+    char *end = NULL;
+    unsigned long tmp = 0;
+
+    if (!value || !out || value[0] == '\0' || value[0] == '-')
+        return -1;
+
+    errno = 0;
+    tmp = strtoul(value, &end, 10);
+    if ((errno != 0) || !end || (end[0] != '\0') || (tmp > INT_MAX))
+        return -1;
+    *out = (uint32_t)tmp;
     return 0;
 }
 
@@ -122,6 +140,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_session_section = 0;
     int seen_channels_section = 0;
     int seen_listen = 0;
+    int seen_max_connections = 0;
     int seen_security = 0;
     int seen_tls_cert = 0;
     int seen_tls_key = 0;
@@ -218,9 +237,16 @@ int frdp_config_load(const char *path, frdpConfig *config)
         trim(val);
         const int allow_empty_value = (strcmp(current_section, "channels") == 0) &&
                                       (strcmp(key, "static_allow") == 0);
-        if (unquote_value(val) != 0) {
-            fclose(f);
-            return -1;
+        const int allow_bare_value = (strcmp(current_section, "server") == 0) &&
+                                     (strcmp(key, "max_connections") == 0);
+        if (allow_bare_value) {
+            /* Bare numeric values are accepted for TOML-like integer fields. */
+        }
+        else {
+            if (unquote_value(val) != 0) {
+                fclose(f);
+                return -1;
+            }
         }
         if (val[0] == '\0' && !allow_empty_value) {
             fclose(f);
@@ -277,8 +303,15 @@ int frdp_config_load(const char *path, frdpConfig *config)
             }
             else if (strcmp(key, "max_connections") == 0)
             {
-                fclose(f);
-                return -1;
+                if (seen_max_connections) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_max_connections = 1;
+                if (parse_uint32_limit(val, &config->max_connections) != 0) {
+                    fclose(f);
+                    return -1;
+                }
             }
             else {
                 fclose(f);

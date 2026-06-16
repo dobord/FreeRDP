@@ -8,7 +8,8 @@ listen = "0.0.0.0:3389"
 security = "nla"
 tls_cert = "/etc/frdpd/tls.crt"
 tls_key = "/etc/frdpd/tls.key"
-# max_connections is omitted until the daemon enforces connection caps.
+# 0 or omitted means unlimited accepted peer workers.
+# max_connections = 64
 
 [auth]
 mode = "pam-sssd"

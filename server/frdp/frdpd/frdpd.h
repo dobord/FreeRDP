@@ -31,6 +31,8 @@ extern "C"
 		const char* auth_socket;
 		const char* session_socket;
 		UINT16 port;
+		UINT32 max_connections;
+		volatile LONG active_connections;
 		BOOL allow_tls_fallback;
 		BOOL open_pam_session;
 		frdpdDomainMode domain_mode;
