@@ -420,6 +420,26 @@ static int create_cloexec_unix_socket(void)
     return fd;
 }
 
+static int accept_cloexec(int fd)
+{
+    int cfd = -1;
+
+#ifdef SOCK_CLOEXEC
+    cfd = accept4(fd, NULL, NULL, SOCK_CLOEXEC);
+    if ((cfd == -1) && (errno == EINVAL || errno == ENOSYS))
+#endif
+        cfd = accept(fd, NULL, NULL);
+    if (cfd < 0)
+        return -1;
+    if (set_cloexec(cfd) != 0) {
+        int saved = errno;
+        close(cfd);
+        errno = saved;
+        return -1;
+    }
+    return cfd;
+}
+
 static int run_ipc_server(const char *socket_path, const char *pam_service)
 {
     mode_t old_umask;
@@ -504,7 +524,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
         if ((pfd.revents & POLLIN) == 0)
             continue;
 
-        int cfd = accept(fd, NULL, NULL);
+        int cfd = accept_cloexec(fd);
         if (cfd < 0) {
             if (errno == EINTR)
                 continue;
