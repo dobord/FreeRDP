@@ -246,6 +246,45 @@ static void close_child_fds_except(int keep_a, int keep_b)
     }
 }
 
+static int set_fd_cloexec(int fd, int enabled)
+{
+    int flags = fcntl(fd, F_GETFD);
+
+    if (flags < 0)
+        return -1;
+    if (enabled)
+        flags |= FD_CLOEXEC;
+    else
+        flags &= ~FD_CLOEXEC;
+    return fcntl(fd, F_SETFD, flags);
+}
+
+static int create_cloexec_pipe(int pipefd[2])
+{
+    if (!pipefd)
+        return -1;
+
+#if defined(__linux__) && defined(O_CLOEXEC)
+    if (pipe2(pipefd, O_CLOEXEC) == 0)
+        return 0;
+    if (errno != EINVAL && errno != ENOSYS)
+        return -1;
+#endif
+
+    if (pipe(pipefd) != 0)
+        return -1;
+    if (set_fd_cloexec(pipefd[0], 1) != 0 || set_fd_cloexec(pipefd[1], 1) != 0) {
+        int saved = errno;
+        close(pipefd[0]);
+        close(pipefd[1]);
+        pipefd[0] = -1;
+        pipefd[1] = -1;
+        errno = saved;
+        return -1;
+    }
+    return 0;
+}
+
 static int process_group_exists(pid_t pgid)
 {
     if (pgid <= 0)
@@ -446,7 +485,7 @@ static int open_session(const char *user, const char *rhost, const char *correla
         return -1;
     }
 
-    if (pipe(exec_pipe) != 0) {
+    if (create_cloexec_pipe(exec_pipe) != 0) {
         destroy_agent_socket(&agent_fd, agent_socket_path);
         pam_close_session(pamh, 0);
         pam_setcred(pamh, PAM_DELETE_CRED);
@@ -466,6 +505,8 @@ static int open_session(const char *user, const char *rhost, const char *correla
     if (pid == 0) {
         close(exec_pipe[0]);
         close_child_fds_except(exec_pipe[1], agent_fd);
+        if (set_fd_cloexec(exec_pipe[1], 0) != 0)
+            child_exec_failed(exec_pipe[1]);
         /* Child: create a new process group for the session and drop privileges. */
         if (setpgid(0, 0) != 0)
             child_exec_failed(exec_pipe[1]);
