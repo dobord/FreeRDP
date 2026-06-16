@@ -141,6 +141,7 @@ Events should be written to journald in a structured format:
 - `channel.opened` / `channel.denied`.
 
 It is forbidden to log passwords, raw CredSSP blobs, Kerberos tickets, keytab paths with sensitive parameters, or clipboard contents.
+Current `frdpd` peer/channel/session logs escape client-supplied hostnames, authenticated usernames, static channel names, and IPC-supplied session ids, display names, agent socket paths, and session-manager error strings, but the structured journald schema above is still planned work.
 
 ## Troubleshooting checklist
 

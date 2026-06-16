@@ -87,6 +87,7 @@ Deliverables:
 - [x] PAM credential establish/delete lifecycle in the integrated `server/frdp/frdpd` path;
 - [x] NSS/SSSD uid/gid/groups lookup integrated with the authenticated session path (optional `frdp-sesmand` session IPC performs `getpwnam()`, `initgroups()`, and uid/gid drop before launching the agent);
 - [x] audit events with correlation id integrated with the authenticated auth/session/agent path (channels and structured audit config are tracked separately);
+- [x] `frdpd` peer/channel/session logs escape client-supplied hostnames, authenticated usernames, static channel names, and IPC-supplied session ids, display names, agent socket paths, and session-manager error strings;
 - [x] fail-closed core dump/non-dumpable hardening in `server/frdp/frdpd`, `server/frdp/frdp-authd`, and `server/frdp/frdp-sesmand`;
 - [ ] locked secret buffers and brokerized credential handling across the integrated auth/session path (partial locked-buffer handling exists only in standalone `frdp-authd`, which is not integrated).
 
