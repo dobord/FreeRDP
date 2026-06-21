@@ -1,0 +1,265 @@
+name: frdpd-e2e
+
+x-frdp-image: &frdp-image
+  image: ${FRDP_E2E_IMAGE:-frdpd-e2e:dev}
+  build:
+    context: ../../../..
+    dockerfile: server/frdp/test/e2e/Dockerfile
+
+x-frdp-healthcheck: &frdp-healthcheck
+  test: ["CMD", "bash", "/opt/frdp-e2e/scripts/frdpd-healthcheck.sh"]
+  interval: 5s
+  timeout: 5s
+  retries: 60
+  start_period: 10s
+
+services:
+  component-tests:
+    <<: *frdp-image
+    profiles: ["component"]
+    entrypoint: ["bash", "-lc"]
+    command:
+      - >-
+        ctest --test-dir /opt/freerdp-build --output-on-failure
+        -R '^TestFreeRDPFrdp'
+    volumes:
+      - ${FRDP_E2E_ARTIFACTS:-./artifacts}/component:/artifacts
+
+  frdpd-local:
+    <<: *frdp-image
+    profiles: ["local"]
+    hostname: frdpd.local.test
+    environment:
+      FRDP_IDENTITY_PROVIDER: local
+      FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
+      FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
+      FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
+      FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+    healthcheck: *frdp-healthcheck
+    stop_grace_period: 30s
+    volumes:
+      - local-sesmand:/run/frdp-sesmand
+    networks:
+      frdp-e2e:
+        ipv4_address: ${FRDP_LOCAL_SERVER_IP:-172.31.56.30}
+        aliases: ["frdpd.local.test"]
+
+  rdp-client-local:
+    <<: *frdp-image
+    profiles: ["local"]
+    entrypoint: ["bash", "/opt/frdp-e2e/scripts/rdp-probe.sh"]
+    environment:
+      FRDP_RDP_TARGET: frdpd.local.test:3389
+      FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
+      FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
+      FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
+      FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+    depends_on:
+      frdpd-local:
+        condition: service_healthy
+    volumes:
+      - local-sesmand:/run/frdp-sesmand:ro
+      - ${FRDP_E2E_ARTIFACTS:-./artifacts}/local:/artifacts
+    networks:
+      frdp-e2e:
+        ipv4_address: ${FRDP_LOCAL_CLIENT_IP:-172.31.56.40}
+
+  freeipa:
+    profiles: ["freeipa"]
+    image: ${FRDP_FREEIPA_E2E_IMAGE:-frdpd-e2e-freeipa:dev}
+    build:
+      context: ../../../..
+      dockerfile: server/frdp/test/e2e/Dockerfile.freeipa
+      args:
+        FREEIPA_BASE_IMAGE: ${FRDP_FREEIPA_BASE_IMAGE:-quay.io/freeipa/freeipa-server:rocky-9}
+    hostname: ipa.ipa.test
+    read_only: true
+    cgroup: host
+    environment:
+      PASSWORD: ${FRDP_IPA_ADMIN_PASSWORD:-IpaAdminPassw0rd!}
+      IPA_SERVER_IP: ${FRDP_IPA_IP:-172.31.56.10}
+      FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
+      FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
+      FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
+      FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+    command:
+      - ipa-server-install
+      - -U
+      - --realm=IPA.TEST
+      - --domain=ipa.test
+      - --setup-dns
+      - --no-forwarders
+      - --no-ntp
+      - --skip-mem-check
+    dns: ["127.0.0.1"]
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "0"
+    tmpfs:
+      - /run
+      - /tmp
+    volumes:
+      - freeipa-data:/data
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    healthcheck:
+      test: ["CMD", "/usr/local/sbin/frdp-e2e-freeipa-ready"]
+      interval: 10s
+      timeout: 120s
+      retries: 60
+      start_period: 180s
+    stop_grace_period: 2m
+    networks:
+      frdp-e2e:
+        ipv4_address: ${FRDP_IPA_IP:-172.31.56.10}
+        aliases: ["ipa.ipa.test"]
+
+  frdpd-freeipa:
+    <<: *frdp-image
+    profiles: ["freeipa"]
+    hostname: frdpd.ipa.test
+    dns: ["${FRDP_IPA_IP:-172.31.56.10}"]
+    dns_search: ["ipa.test"]
+    environment:
+      FRDP_IDENTITY_PROVIDER: freeipa
+      FRDP_FREEIPA_SERVER: ipa.ipa.test
+      FRDP_FREEIPA_DOMAIN: ipa.test
+      FRDP_FREEIPA_REALM: IPA.TEST
+      FRDP_FREEIPA_SEARCH_BASE: dc=ipa,dc=test
+      FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
+      FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
+      FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
+      FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+    depends_on:
+      freeipa:
+        condition: service_healthy
+    healthcheck: *frdp-healthcheck
+    stop_grace_period: 30s
+    volumes:
+      - freeipa-sesmand:/run/frdp-sesmand
+    networks:
+      frdp-e2e:
+        ipv4_address: ${FRDP_FREEIPA_SERVER_IP:-172.31.56.31}
+        aliases: ["frdpd.ipa.test"]
+
+  rdp-client-freeipa:
+    <<: *frdp-image
+    profiles: ["freeipa"]
+    entrypoint: ["bash", "/opt/frdp-e2e/scripts/rdp-probe.sh"]
+    dns: ["${FRDP_IPA_IP:-172.31.56.10}"]
+    extra_hosts:
+      - "frdpd.ipa.test:${FRDP_FREEIPA_SERVER_IP:-172.31.56.31}"
+    environment:
+      FRDP_RDP_TARGET: frdpd.ipa.test:3389
+      FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
+      FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
+      FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
+      FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+      FRDP_E2E_TIMEOUT: 90
+    depends_on:
+      frdpd-freeipa:
+        condition: service_healthy
+    volumes:
+      - freeipa-sesmand:/run/frdp-sesmand:ro
+      - ${FRDP_E2E_ARTIFACTS:-./artifacts}/freeipa:/artifacts
+    networks:
+      frdp-e2e:
+        ipv4_address: ${FRDP_FREEIPA_CLIENT_IP:-172.31.56.41}
+
+  samba-dc:
+    profiles: ["samba"]
+    image: ${FRDP_SAMBA_E2E_IMAGE:-frdpd-e2e-samba:dev}
+    build:
+      context: ../../../..
+      dockerfile: server/frdp/test/e2e/Dockerfile.samba
+    hostname: dc.ad.test
+    environment:
+      FRDP_AD_REALM: AD.TEST
+      FRDP_AD_NETBIOS_DOMAIN: AD
+      FRDP_AD_ADMIN_PASSWORD: ${FRDP_AD_ADMIN_PASSWORD:-SambaAdminPassw0rd!}
+      FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
+      FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
+      FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
+      FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          smbclient -L //127.0.0.1
+          -U "Administrator%$${FRDP_AD_ADMIN_PASSWORD}" -m SMB3 >/dev/null 2>&1
+          && samba-tool user show "$${FRDP_TEST_USER}" >/dev/null 2>&1
+      interval: 5s
+      timeout: 10s
+      retries: 60
+      start_period: 20s
+    stop_grace_period: 30s
+    networks:
+      frdp-e2e:
+        ipv4_address: ${FRDP_AD_DC_IP:-172.31.56.20}
+        aliases: ["dc.ad.test"]
+
+  frdpd-samba:
+    <<: *frdp-image
+    profiles: ["samba"]
+    hostname: frdpd.ad.test
+    dns: ["${FRDP_AD_DC_IP:-172.31.56.20}"]
+    dns_search: ["ad.test"]
+    environment:
+      FRDP_IDENTITY_PROVIDER: samba
+      FRDP_AD_DC: dc.ad.test
+      FRDP_AD_DOMAIN: ad.test
+      FRDP_AD_REALM: AD.TEST
+      FRDP_AD_ADMIN_USER: Administrator
+      FRDP_AD_ADMIN_PASSWORD: ${FRDP_AD_ADMIN_PASSWORD:-SambaAdminPassw0rd!}
+      FRDP_AD_HOST_FQDN: frdpd.ad.test
+      FRDP_AD_COMPUTER_NAME: FRDPD
+      FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
+      FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
+      FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
+      FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+    depends_on:
+      samba-dc:
+        condition: service_healthy
+    healthcheck: *frdp-healthcheck
+    stop_grace_period: 30s
+    volumes:
+      - samba-sesmand:/run/frdp-sesmand
+    networks:
+      frdp-e2e:
+        ipv4_address: ${FRDP_SAMBA_SERVER_IP:-172.31.56.32}
+        aliases: ["frdpd.ad.test"]
+
+  rdp-client-samba:
+    <<: *frdp-image
+    profiles: ["samba"]
+    entrypoint: ["bash", "/opt/frdp-e2e/scripts/rdp-probe.sh"]
+    dns: ["${FRDP_AD_DC_IP:-172.31.56.20}"]
+    extra_hosts:
+      - "frdpd.ad.test:${FRDP_SAMBA_SERVER_IP:-172.31.56.32}"
+    environment:
+      FRDP_RDP_TARGET: frdpd.ad.test:3389
+      FRDP_RDP_DOMAIN: AD
+      FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
+      FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
+      FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
+      FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+      FRDP_E2E_TIMEOUT: 90
+    depends_on:
+      frdpd-samba:
+        condition: service_healthy
+    volumes:
+      - samba-sesmand:/run/frdp-sesmand:ro
+      - ${FRDP_E2E_ARTIFACTS:-./artifacts}/samba:/artifacts
+    networks:
+      frdp-e2e:
+        ipv4_address: ${FRDP_SAMBA_CLIENT_IP:-172.31.56.42}
+
+volumes:
+  local-sesmand:
+  freeipa-data:
+  freeipa-sesmand:
+  samba-sesmand:
+
+networks:
+  frdp-e2e:
+    ipam:
+      config:
+        - subnet: ${FRDP_E2E_SUBNET:-172.31.56.0/24}
