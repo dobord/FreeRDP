@@ -1,0 +1,303 @@
+sation, locked_password };
++    pam_status = pam_start(service, user, &conversation, &pamh);
++    if (pam_status == PAM_SUCCESS && rhost && rhost[0] != '\0')
++        pam_status = pam_set_item(pamh, PAM_RHOST, rhost);
++    if (pam_status == PAM_SUCCESS)
++        pam_status = pam_set_item(pamh, PAM_TTY, "rdp");
++    if (pam_status == PAM_SUCCESS)
++        pam_status = pam_set_item(pamh, PAM_RUSER, user);
++    if (pam_status == PAM_SUCCESS)
++        pam_status = pam_set_item(pamh, PAM_AUTHTOK, locked_password);
++    if (pam_status == PAM_SUCCESS)
++        pam_status = pam_authenticate(pamh, 0);
++    if (pam_status == PAM_SUCCESS)
++        pam_status = pam_acct_mgmt(pamh, 0);
++    if (pam_status == PAM_SUCCESS)
++        pam_status = pam_get_item(pamh, PAM_USER, &pam_user_item);
++    if (pam_status == PAM_SUCCESS) {
++        canonical_user = (const char *)pam_user_item;
++        if (!canonical_user || canonical_user[0] == '\0')
++            pam_status = PAM_USER_UNKNOWN;
++    }
++    if (pam_status == PAM_SUCCESS) {
++        password_entry = getpwnam(canonical_user);
++        if (!password_entry ||
++            copy_string(identity->user, sizeof(identity->user), password_entry->pw_name) != 0) {
++            pam_status = PAM_USER_UNKNOWN;
++        } else {
++            identity->uid = (uint32_t)password_entry->pw_uid;
++            identity->gid = (uint32_t)password_entry->pw_gid;
++            result = 0;
++        }
+     }
+ 
+-    /* Clear and unlock secret data. */
+-    memset(buf, 0, pwlen + 1);
+-    munlock(buf, pwlen + 1);
+-    munmap(buf, pwlen + 1);
+-
+-    log_audit_event(user, ret == PAM_SUCCESS, correlation_id);
+-    return (ret == PAM_SUCCESS) ? 0 : -1;
++cleanup:
++    if (pamh) {
++        (void)pam_set_item(pamh, PAM_AUTHTOK, "");
++        (void)pam_end(pamh, pam_status);
++    }
++    if (locked_password != MAP_FAILED) {
++        clear_secret(locked_password, password_length + 1U);
++        (void)munlock(locked_password, password_length + 1U);
++        (void)munmap(locked_password, password_length + 1U);
++    }
++    log_auth_event("authenticate", result == 0 ? identity->user : user, result == 0,
++                   correlation_id, result == 0 ? "pam-account-ok" : "pam-rejected");
++    return result;
+ }
+ 
+-/* Run in IPC server mode listening on a UNIX domain socket and handling auth requests */
+ static int pam_service_is_valid(const char *service)
+ {
+-    size_t len = 0;
++    size_t length = 0U;
+ 
+     if (!service || service[0] == '\0')
+         return 0;
+-    for (len = 0; service[len] != '\0'; len++) {
+-        unsigned char c = (unsigned char)service[len];
+-        if (len >= 63)
++    for (length = 0U; service[length] != '\0'; length++) {
++        const unsigned char c = (unsigned char)service[length];
++        if (length >= 63U)
+             return 0;
+         if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+               (c >= '0' && c <= '9') || c == '_' || c == '-'))
+@@ -391,201 +539,247 @@ static int pam_service_is_valid(const char *service)
+     return 1;
+ }
+ 
+-static int set_cloexec(int fd)
++static int parse_grant_ttl(const char *value, uint32_t *ttl)
+ {
+-    const int flags = fcntl(fd, F_GETFD);
++    char *end = NULL;
++    unsigned long parsed = 0UL;
+ 
+-    if (flags < 0)
++    if (!value || !ttl || value[0] == '\0' || value[0] == '-')
+         return -1;
+-    return fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
++    errno = 0;
++    parsed = strtoul(value, &end, 10);
++    if (errno != 0 || !end || end[0] != '\0' || parsed == 0UL ||
++        parsed > FRDP_AUTHD_MAX_GRANT_TTL)
++        return -1;
++    *ttl = (uint32_t)parsed;
++    return 0;
+ }
+ 
+-static int create_cloexec_unix_socket(void)
++static void handle_auth_request(int fd, const char *pam_service, frdpAuthzStore *store)
+ {
+-    int fd = -1;
+-
+-#ifdef SOCK_CLOEXEC
+-    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+-    if ((fd == -1) && (errno == EINVAL || errno == EPROTONOSUPPORT))
+-#endif
+-        fd = socket(AF_UNIX, SOCK_STREAM, 0);
+-    if (fd < 0)
+-        return -1;
+-    if (set_cloexec(fd) != 0) {
+-        int saved = errno;
+-        close(fd);
+-        errno = saved;
+-        return -1;
++    frdpAuthRequest request;
++    char user[sizeof(request.user)] = { 0 };
++    char correlation_id[sizeof(request.correlation_id)] = { 0 };
++    char rhost[sizeof(request.rhost)] = { 0 };
++    char password[sizeof(request.password)] = { 0 };
++    char token[FRDP_AUTHZ_TOKEN_SIZE] = { 0 };
++    uint8_t random_bytes[FRDP_AUTHZ_TOKEN_BYTES] = { 0 };
++    uint64_t expires_at = 0U;
++    frdpAuthenticatedIdentity identity;
++    frdpAuthzStatus authorization_status = FRDP_AUTHZ_INVALID_ARGUMENT;
++
++    memset(&request, 0, sizeof(request));
++    memset(&identity, 0, sizeof(identity));
++    if (frdp_ipc_recv(fd, &request, sizeof(request)) != (int)sizeof(request))
++        return;
++    if (copy_ipc_string(user, sizeof(user), request.user, sizeof(request.user)) != 0 ||
++        copy_ipc_string(correlation_id, sizeof(correlation_id), request.correlation_id,
++                        sizeof(request.correlation_id)) != 0 ||
++        copy_ipc_string(rhost, sizeof(rhost), request.rhost, sizeof(request.rhost)) != 0 ||
++        copy_ipc_string(password, sizeof(password), request.password, sizeof(request.password)) != 0 ||
++        !correlation_id_is_valid(correlation_id)) {
++        (void)send_auth_response(fd, 0, NULL, NULL, 0U, 0U, 0U, "invalid auth request");
++        goto cleanup;
+     }
+-    return fd;
++    if (authenticate_user(pam_service, rhost, correlation_id, user, password, &identity) != 0) {
++        (void)send_auth_response(fd, 0, NULL, NULL, 0U, 0U, 0U, NULL);
++        goto cleanup;
++    }
++    if (secure_random(random_bytes, sizeof(random_bytes)) != 0) {
++        (void)send_auth_response(fd, 0, NULL, NULL, 0U, 0U, 0U,
++                                 "authorization grant entropy unavailable");
++        goto cleanup;
++    }
++    authorization_status = frdp_authz_issue(store, (uint64_t)time(NULL), random_bytes,
++                                             correlation_id, identity.user, rhost, identity.uid,
++                                             identity.gid, token, sizeof(token), &expires_at);
++    if (authorization_status != FRDP_AUTHZ_OK) {
++        (void)send_auth_response(fd, 0, NULL, NULL, 0U, 0U, 0U,
++                                 "authorization grant issue failed");
++        log_auth_event("grant-issue", identity.user, 0, correlation_id,
++                       frdp_authz_status_string(authorization_status));
++        goto cleanup;
++    }
++    log_auth_event("grant-issue", identity.user, 1, correlation_id, "issued");
++    (void)send_auth_response(fd, 1, token, identity.user, identity.uid, identity.gid, expires_at,
++                             NULL);
++
++cleanup:
++    clear_secret(password, sizeof(password));
++    clear_secret(request.password, sizeof(request.password));
++    clear_secret(random_bytes, sizeof(random_bytes));
++    clear_secret(token, sizeof(token));
+ }
+ 
+-static int accept_cloexec(int fd)
++static void handle_grant_consume_request(int fd, frdpAuthzStore *store)
+ {
+-    int cfd = -1;
++    frdpAuthGrantConsumeRequest request;
++    frdpAuthzIdentity identity;
++    char correlation_id[sizeof(request.correlation_id)] = { 0 };
++    char grant[sizeof(request.grant)] = { 0 };
++    char user[sizeof(request.user)] = { 0 };
++    char rhost[sizeof(request.rhost)] = { 0 };
++    char error[128] = { 0 };
++    frdpAuthzStatus status = FRDP_AUTHZ_INVALID_ARGUMENT;
++
++    memset(&request, 0, sizeof(request));
++    memset(&identity, 0, sizeof(identity));
++    if (frdp_ipc_recv(fd, &request, sizeof(request)) != (int)sizeof(request))
++        return;
++    if (copy_ipc_string(correlation_id, sizeof(correlation_id), request.correlation_id,
++                        sizeof(request.correlation_id)) != 0 ||
++        copy_ipc_string(grant, sizeof(grant), request.grant, sizeof(request.grant)) != 0 ||
++        copy_ipc_string(user, sizeof(user), request.user, sizeof(request.user)) != 0 ||
++        copy_ipc_string(rhost, sizeof(rhost), request.rhost, sizeof(request.rhost)) != 0 ||
++        !correlation_id_is_valid(correlation_id)) {
++        (void)send_grant_consume_response(fd, 0, NULL, "invalid authorization request");
++        goto cleanup;
++    }
+ 
+-#ifdef SOCK_CLOEXEC
+-    cfd = accept4(fd, NULL, NULL, SOCK_CLOEXEC);
+-    if ((cfd == -1) && (errno == EINVAL || errno == ENOSYS))
+-#endif
+-        cfd = accept(fd, NULL, NULL);
+-    if (cfd < 0)
+-        return -1;
+-    if (set_cloexec(cfd) != 0) {
+-        int saved = errno;
+-        close(cfd);
+-        errno = saved;
+-        return -1;
++    status = frdp_authz_consume(store, (uint64_t)time(NULL), grant, correlation_id, user, rhost,
++                                &identity);
++    if (status != FRDP_AUTHZ_OK) {
++        (void)snprintf(error, sizeof(error), "authorization grant %s",
++                       frdp_authz_status_string(status));
++        (void)send_grant_consume_response(fd, 0, NULL, error);
++        log_auth_event("grant-consume", user, 0, correlation_id,
++                       frdp_authz_status_string(status));
++        goto cleanup;
+     }
+-    return cfd;
++    (void)send_grant_consume_response(fd, 1, &identity, NULL);
++    log_auth_event("grant-consume", identity.user, 1, correlation_id, "consumed");
++
++cleanup:
++    clear_secret(grant, sizeof(grant));
++    clear_secret(request.grant, sizeof(request.grant));
+ }
+ 
+-static int run_ipc_server(const char *socket_path, const char *pam_service)
++static int run_ipc_server(const char *socket_path, const char *pam_service, uint32_t grant_ttl)
+ {
+-    mode_t old_umask;
++    mode_t old_umask = 0;
+     int fd = -1;
++    frdpAuthzStore grant_store;
++    struct sockaddr_un address;
+ 
+-    if (!pam_service_is_valid(pam_service)) {
+-        fprintf(stderr, "invalid PAM service name\n");
++    if (!pam_service_is_valid(pam_service) || grant_ttl == 0U ||
++        grant_ttl > FRDP_AUTHD_MAX_GRANT_TTL) {
++        fprintf(stderr, "invalid authentication broker configuration\n");
+         return -1;
+     }
+     if (install_signal_handlers() != 0) {
+         fprintf(stderr, "failed to install signal handlers\n");
+         return -1;
+     }
+-    if (g_stop_requested)
+-        return 0;
+-
+     if (prepare_socket_path(socket_path) != 0) {
+-        char escaped_socket[512] = {0};
+-
+-        escape_log_field(socket_path ? socket_path : "(null)", escaped_socket, sizeof(escaped_socket));
++        char escaped_socket[512] = { 0 };
++        escape_log_field(socket_path ? socket_path : "(null)", escaped_socket,
++                         sizeof(escaped_socket));
+         fprintf(stderr, "refusing unsafe socket path: %s\n", escaped_socket);
+         return -1;
+     }
+ 
++    frdp_authz_store_init(&grant_store, grant_ttl);
+     fd = create_cloexec_unix_socket();
+     if (fd < 0) {
+         perror("socket");
+-        return -1;
++        goto fail;
+     }
+-    struct sockaddr_un addr;
+-    memset(&addr, 0, sizeof(addr));
+-    addr.sun_family = AF_UNIX;
+-    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
++    memset(&address, 0, sizeof(address));
++    address.sun_family = AF_UNIX;
++    (void)snprintf(address.sun_path, sizeof(address.sun_path), "%s", socket_path);
+     old_umask = umask(0177);
+-    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
++    if (bind(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
+         umask(old_umask);
+         perror("bind");
+-        close(fd);
+-        return -1;
++        goto fail;
+     }
+     umask(old_umask);
+-    if (chmod(socket_path, 0600) != 0) {
+-        perror("chmod");
+-        close(fd);
+-        unlink(socket_path);
+-        return -1;
+-    }
+-    if (listen(fd, 5) < 0) {
++    if (chmod(socket_path, 0600) != 0 || listen(fd, 16) != 0) {
+         perror("listen");
+-        close(fd);
+-        unlink(socket_path);
+-        return -1;
++        goto fail;
+     }
+-    if (g_stop_requested) {
+-        close(fd);
+-        unlink(socket_path);
+-        return 0;
+-    }
