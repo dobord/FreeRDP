@@ -1,0 +1,342 @@
+Context* ctx)
+ 	context->pam_session_open = FALSE;
+ 	free(context->pam_user);
+ 	context->pam_user = NULL;
++	SecureZeroMemory(context->auth_grant, sizeof(context->auth_grant));
+ }
+ 
+ static BOOL frdpd_dvc_authorize(void* userdata, DWORD SessionId, const char* channelName,
+@@ -1236,10 +1248,14 @@ static BOOL frdpd_peer_context_new(freerdp_peer* client, rdpContext* ctx)
+ 	context->vcm = WTSOpenServerA((LPSTR)client->context);
+ 	if (!context->vcm || (context->vcm == INVALID_HANDLE_VALUE))
+ 	{
++		/* Useful dynamic channels are intentionally disabled in the current FRDP
++		 * profile.  Absence of the FreeRDS WTS backend must therefore not abort
++		 * TLS/NLA or the managed desktop path. */
+ 		context->vcm = NULL;
+-		WLog_ERR(TAG, "correlation_id=%s failed to open virtual channel manager",
+-		         context->correlation_id);
+-		return FALSE;
++		WLog_WARN(TAG,
++		          "correlation_id=%s virtual channel manager unavailable; DVC remains disabled",
++		          context->correlation_id);
++		return TRUE;
+ 	}
+ 	WTSVirtualChannelManagerSetDVCChannelAuthorizationCallback(context->vcm, frdpd_dvc_authorize,
+ 	                                                         context);
+@@ -1319,6 +1335,7 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
+ 		return FALSE;
+ 	}
+ 
++	SecureZeroMemory(context->auth_grant, sizeof(context->auth_grant));
+ 	const frdpdAuthConfig auth = {
+ 		.pam_service = config->pam_service,
+ 		.auth_socket = config->auth_socket,
+@@ -1354,10 +1371,20 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
+ 	context->pam_session_open = FALSE;
+ 	free(context->pam_user);
+ 	context->pam_user = result.pam_user;
++	result.pam_user = NULL;
++	SecureZeroMemory(context->auth_grant, sizeof(context->auth_grant));
++	if (result.grant[0] != '\0' &&
++	    !frdpd_copy_ipc_string(context->auth_grant, sizeof(context->auth_grant), result.grant))
++	{
++		free(context->pam_user);
++		context->pam_user = NULL;
++		frdpd_auth_result_cleanup(&result);
++		return FALSE;
++	}
+ 	context->pam_handle = result.pam_handle;
+ 	context->pam_credentials_established = result.pam_credentials_established;
+ 	context->pam_session_open = result.pam_session_open;
+-	result.pam_user = NULL;
++	SecureZeroMemory(result.grant, sizeof(result.grant));
+ 	result.pam_handle = NULL;
+ 
+ 	WLog_INFO(TAG, "correlation_id=%s PAM accepted RDP login for %s from %s",
+@@ -2208,14 +2235,16 @@ static int frdpd_run_server(const frdpdOptions* options)
+ 	freerdp_listener* listener = NULL;
+ 	const frdpdServerConfig* config = &options->server;
+ 
+-	if (config->open_pam_session && config->auth_socket && (config->auth_socket[0] != '\0'))
++	const BOOL auth_ipc = config->auth_socket && (config->auth_socket[0] != '\0');
++	const BOOL session_ipc = config->session_socket && (config->session_socket[0] != '\0');
++	if (auth_ipc != session_ipc)
+ 	{
+-		WLog_ERR(TAG, "Auth IPC requires --no-pam-session until session ownership is delegated");
++		WLog_ERR(TAG, "Auth and session IPC must be configured together");
+ 		return -1;
+ 	}
+-	if (config->open_pam_session && config->session_socket && (config->session_socket[0] != '\0'))
++	if (config->open_pam_session && auth_ipc)
+ 	{
+-		WLog_ERR(TAG, "Session IPC requires --no-pam-session");
++		WLog_ERR(TAG, "Brokered auth/session IPC requires --no-pam-session");
+ 		return -1;
+ 	}
+ 
+diff --git a/server/frdp/frdpd/frdpd.h b/server/frdp/frdpd/frdpd.h
+index de9877d..d5b7c19 100644
+--- a/server/frdp/frdpd/frdpd.h
++++ b/server/frdp/frdpd/frdpd.h
+@@ -46,6 +46,7 @@ extern "C"
+ 		char session_id[64];
+ 		char session_display[32];
+ 		char agent_socket[108];
++		char auth_grant[65];
+ 		BOOL managed_session_open;
+ 		BOOL agent_input_warned;
+ 		BOOL agent_frame_warned;
+diff --git a/server/frdp/frdpd/frdpd_auth.c b/server/frdp/frdpd/frdpd_auth.c
+index 4bf0923..88ad9f6 100644
+--- a/server/frdp/frdpd/frdpd_auth.c
++++ b/server/frdp/frdpd/frdpd_auth.c
+@@ -11,6 +11,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/mman.h>
++#include <time.h>
+ 
+ #include <winpr/crt.h>
+ 
+@@ -22,12 +23,9 @@ static void frdpd_auth_result_set(frdpdAuthResult* result, frdpdPamAuthStatus st
+ 	if (!result)
+ 		return;
+ 
++	memset(result, 0, sizeof(*result));
+ 	result->status = status;
+ 	result->pam_status = pam_status;
+-	result->pam_user = NULL;
+-	result->pam_handle = NULL;
+-	result->pam_credentials_established = FALSE;
+-	result->pam_session_open = FALSE;
+ }
+ 
+ static BOOL frdpd_auth_string_is_empty(const char* value)
+@@ -144,16 +142,37 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
+ 	if (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))
+ 		goto fail;
+ 
++	response.grant[sizeof(response.grant) - 1] = '\0';
++	response.user[sizeof(response.user) - 1] = '\0';
++	response.error[sizeof(response.error) - 1] = '\0';
+ 	frdpd_auth_result_set(result,
+ 	                      response.success ? FRDPD_PAM_AUTH_OK
+ 	                                       : (response.error[0] ? FRDPD_PAM_AUTH_ERROR
+ 	                                                            : FRDPD_PAM_AUTH_DENIED),
+ 	                      0);
+ 	ok = response.success ? TRUE : FALSE;
+-	if (ok && result)
++	if (ok)
+ 	{
+-		result->pam_user = pam_user;
+-		pam_user = NULL;
++		const time_t now = time(NULL);
++		if (!result || (strlen(response.grant) != sizeof(response.grant) - 1) ||
++		    (response.user[0] == '\0') || (now < 0) ||
++		    (response.expires_at < (uint64_t)now))
++		{
++			ok = FALSE;
++			goto fail;
++		}
++		result->pam_user = _strdup(response.user);
++		if (!result->pam_user ||
++		    !frdpd_auth_copy_ipc_string(result->grant, sizeof(result->grant), response.grant))
++		{
++			free(result->pam_user);
++			result->pam_user = NULL;
++			ok = FALSE;
++			goto fail;
++		}
++		result->uid = response.uid;
++		result->gid = response.gid;
++		result->expires_at = response.expires_at;
+ 	}
+ 
+ fail:
+@@ -165,6 +184,18 @@ fail:
+ 	free(pam_user);
+ 	frdpd_auth_clear_locked_secret(&password_secret);
+ 	free(password);
++	SecureZeroMemory(response.grant, sizeof(response.grant));
++	if (!ok && result)
++	{
++		free(result->pam_user);
++		result->pam_user = NULL;
++		SecureZeroMemory(result->grant, sizeof(result->grant));
++		result->uid = 0;
++		result->gid = 0;
++		result->expires_at = 0;
++		if (result->status == FRDPD_PAM_AUTH_OK)
++			result->status = FRDPD_PAM_AUTH_ERROR;
++	}
+ 	return ok;
+ }
+ 
+diff --git a/server/frdp/frdpd/frdpd_auth.h b/server/frdp/frdpd/frdpd_auth.h
+index f60f606..405ae95 100644
+--- a/server/frdp/frdpd/frdpd_auth.h
++++ b/server/frdp/frdpd/frdpd_auth.h
+@@ -8,6 +8,7 @@
+ #ifndef FREERDP_SERVER_FRDPD_AUTH_H
+ #define FREERDP_SERVER_FRDPD_AUTH_H
+ 
++#include <stdint.h>
+ #include <winpr/sspi.h>
+ 
+ #include "frdpd_pam.h"
+@@ -27,6 +28,10 @@ typedef struct
+ 	frdpdPamAuthStatus status;
+ 	int pam_status;
+ 	char* pam_user;
++	char grant[65];
++	uint32_t uid;
++	uint32_t gid;
++	uint64_t expires_at;
+ 	void* pam_handle;
+ 	BOOL pam_credentials_established;
+ 	BOOL pam_session_open;
+diff --git a/server/frdp/ipc/frdp-ipc.h b/server/frdp/ipc/frdp-ipc.h
+index a22a42f..9acc120 100644
+--- a/server/frdp/ipc/frdp-ipc.h
++++ b/server/frdp/ipc/frdp-ipc.h
+@@ -18,7 +18,9 @@ typedef enum {
+     FRDP_IPC_AGENT_RESIZE_REQUEST = 10,
+     FRDP_IPC_AGENT_RESIZE_RESPONSE = 11,
+     FRDP_IPC_SESSION_LIST_REQUEST = 12,
+-    FRDP_IPC_SESSION_LIST_RESPONSE = 13
++    FRDP_IPC_SESSION_LIST_RESPONSE = 13,
++    FRDP_IPC_AUTH_GRANT_CONSUME_REQUEST = 14,
++    FRDP_IPC_AUTH_GRANT_CONSUME_RESPONSE = 15
+ } frdpIpcMessageType;
+ 
+ typedef enum {
+@@ -53,15 +55,37 @@ typedef struct {
+ /* Authentication response structure */
+ typedef struct {
+     int success;
++    char grant[65];
++    char user[64];
++    uint32_t uid;
++    uint32_t gid;
++    uint64_t expires_at;
+     char error[128];
+ } frdpAuthResponse;
+ 
++typedef struct {
++    char correlation_id[64];
++    char grant[65];
++    char user[64];
++    char rhost[128];
++} frdpAuthGrantConsumeRequest;
++
++typedef struct {
++    int success;
++    char user[64];
++    uint32_t uid;
++    uint32_t gid;
++    uint64_t expires_at;
++    char error[128];
++} frdpAuthGrantConsumeResponse;
++
+ /* Session open/close request structure */
+ typedef struct {
+     char correlation_id[64];
+     char session_id[64];
+     char user[64];
+     char rhost[128];
++    char auth_grant[65];
+     uint32_t desktop_width;
+     uint32_t desktop_height;
+     uint32_t color_depth;
+diff --git a/server/frdp/test/CMakeLists.txt b/server/frdp/test/CMakeLists.txt
+index c661aab..a09afaa 100644
+--- a/server/frdp/test/CMakeLists.txt
++++ b/server/frdp/test/CMakeLists.txt
+@@ -5,7 +5,8 @@ disable_warnings_for_directory(${CMAKE_CURRENT_BINARY_DIR})
+ 
+ set(${MODULE_PREFIX}_DRIVER ${MODULE_NAME}.c)
+ set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFreeRDPFrdpCtlIpc.c
+-                         TestFreeRDPFrdpHelperStop.c TestFreeRDPFrdpServiceIpc.c)
++                         TestFreeRDPFrdpAuthz.c TestFreeRDPFrdpHelperStop.c
++                         TestFreeRDPFrdpServiceIpc.c)
+ find_program(XVFB_EXECUTABLE Xvfb)
+ if(XVFB_EXECUTABLE)
+   list(APPEND ${MODULE_PREFIX}_TESTS TestFreeRDPFrdpAgentStop.c)
+@@ -19,6 +20,8 @@ add_executable(${MODULE_NAME}
+     ../config/frdp-config.h
+     ../ipc/frdp-ipc.c
+     ../ipc/frdp-ipc.h
++    ../authz/frdp-authz.c
++    ../authz/frdp-authz.h
+     ../frdpd/channel_policy.c
+     ../frdpd/channel_policy.h)
+ add_dependencies(${MODULE_NAME} frdpctl frdp-authd frdp-sesmand frdp-session-agent)
+diff --git a/mnt/data/frdp_work/server/frdp/test/TestFreeRDPFrdpAuthz.c b/server/frdp/test/TestFreeRDPFrdpAuthz.c
+new file mode 100644
+index 0000000..3e97eb9
+--- /dev/null
++++ b/server/frdp/test/TestFreeRDPFrdpAuthz.c
+@@ -0,0 +1,165 @@
++#include "authz/frdp-authz.h"
++
++#include <stdio.h>
++#include <string.h>
++
++static void fill_random(uint8_t random_bytes[FRDP_AUTHZ_TOKEN_BYTES], uint8_t seed)
++{
++    for (size_t index = 0; index < FRDP_AUTHZ_TOKEN_BYTES; index++)
++        random_bytes[index] = (uint8_t)(seed + index);
++}
++
++static int issue(frdpAuthzStore *store, uint64_t now, uint8_t seed, const char *correlation_id,
++                 const char *user, const char *rhost, char token[FRDP_AUTHZ_TOKEN_SIZE],
++                 uint64_t *expires_at)
++{
++    uint8_t random_bytes[FRDP_AUTHZ_TOKEN_BYTES];
++
++    fill_random(random_bytes, seed);
++    return frdp_authz_issue(store, now, random_bytes, correlation_id, user, rhost, 1001U, 1002U,
++                            token, FRDP_AUTHZ_TOKEN_SIZE, expires_at) == FRDP_AUTHZ_OK
++               ? 0
++               : -1;
++}
++
++static int test_issue_consume_and_replay(void)
++{
++    frdpAuthzStore store;
++    frdpAuthzIdentity identity;
++    char token[FRDP_AUTHZ_TOKEN_SIZE] = { 0 };
++    uint64_t expires_at = 0U;
++
++    frdp_authz_store_init(&store, 30U);
++    if (issue(&store, 100U, 1U, "11111111-1111-4111-8111-111111111111", "alice",
++              "client.example", token, &expires_at) != 0)
++        return -1;
++    if (expires_at != 130U || strlen(token) != FRDP_AUTHZ_TOKEN_SIZE - 1U)
++        return -1;
++    if (frdp_authz_consume(&store, 110U, token, "11111111-1111-4111-8111-111111111111",
++                           "alice", "client.example", &identity) != FRDP_AUTHZ_OK)
++        return -1;
++    if (strcmp(identity.user, "alice") != 0 || identity.uid != 1001U || identity.gid != 1002U ||
++        identity.expires_at != expires_at)
++        return -1;
++    if (frdp_authz_consume(&store, 111U, token, "11111111-1111-4111-8111-111111111111",
++                           "alice", "client.example", &identity) != FRDP_AUTHZ_REPLAY)
++        return -1;
++    frdp_authz_store_clear(&store);
++    return 0;
++}
++
++static int test_mismatch_does_not_consume(void)
++{
++    frdpAuthzStore store;
++    frdpAuthzIdentity identity;
++    char token[FRDP_AUTHZ_TOKEN_SIZE] = { 0 };
++    uint64_t expires_at = 0U;
++
++    frdp_authz_store_init(&store, 30U);
++    if (issue(&store, 200U, 2U, "22222222-2222-4222-8222-222222222222", "bob", "host-a",
++              token, &expires_at) != 0)
++        return -1;
++  
