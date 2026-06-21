@@ -1,0 +1,5 @@
+ARG FREEIPA_BASE_IMAGE=quay.io/freeipa/freeipa-server:rocky-9
+FROM ${FREEIPA_BASE_IMAGE}
+
+COPY server/frdp/test/e2e/scripts/freeipa-ready.sh /usr/local/sbin/frdp-e2e-freeipa-ready
+RUN chmod 0755 /usr/local/sbin/frdp-e2e-freeipa-ready
