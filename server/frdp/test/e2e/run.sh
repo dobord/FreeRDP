@@ -26,22 +26,23 @@ run_profile()
 	local profile=$1
 	local exit_service=$2
 	local status=0
+	local output="$artifacts/$profile/compose-up.log"
 
 	mkdir -p "$artifacts/$profile"
+	: >"$output"
 	"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
 
 	set +e
 	"${compose[@]}" --profile "$profile" up --build \
 		--abort-on-container-exit \
 		--exit-code-from "$exit_service" \
-		"$exit_service"
-	status=$?
+		"$exit_service" 2>&1 | tee "$output"
+	status=${PIPESTATUS[0]}
 	set -e
 
 	"${compose[@]}" --profile "$profile" logs --no-color >"$artifacts/$profile/compose.log" 2>&1 || true
-	if [[ $status -ne 0 ]]; then
-		"${compose[@]}" --profile "$profile" ps -a >"$artifacts/$profile/compose-ps.txt" 2>&1 || true
-	fi
+	"${compose[@]}" --profile "$profile" ps -a >"$artifacts/$profile/compose-ps.txt" 2>&1 || true
+	printf '%s\n' "$status" >"$artifacts/$profile/exit-code.txt"
 	cleanup
 	return "$status"
 }
