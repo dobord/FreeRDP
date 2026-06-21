@@ -1,21 +1,29 @@
 name: FRDP authorization delivery
 
 on:
-  push:
-    branches: [tmp/frdp-authz-delivery]
+  pull_request:
+    branches: [master]
     paths:
-      - '.frdp-delivery/READY'
+      - '.frdp-delivery/**'
+      - '.github/workflows/frdp-delivery.yml'
 
 permissions:
   contents: write
 
+concurrency:
+  group: frdp-delivery-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Verify and apply source patch
         shell: bash
@@ -27,10 +35,32 @@ jobs:
           git apply /tmp/frdp-authz.patch
           rm -rf .frdp-delivery
           rm -f .github/workflows/frdp-delivery.yml
+          git diff --check
+
+      - name: Run component tests
+        run: bash server/frdp/test/e2e/run.sh component
+
+      - name: Run local PAM RDP E2E
+        run: bash server/frdp/test/e2e/run.sh local
+
+      - name: Commit verified implementation
+        shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -Eeuo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git diff --cached --check
           git diff --cached --quiet && { echo 'payload made no changes' >&2; exit 1; }
           git commit -m 'Implement broker-bound authorization grants'
-          git push origin HEAD:tmp/frdp-authz-delivery
+          git push origin "HEAD:${HEAD_BRANCH}"
+
+      - name: Upload delivery diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frdp-delivery-${{ github.run_id }}
+          path: server/frdp/test/e2e/artifacts
+          if-no-files-found: ignore
