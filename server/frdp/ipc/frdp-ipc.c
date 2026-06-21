@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include "frdp-ipc.h"
 
 #include <sys/socket.h>
@@ -41,6 +43,29 @@ static int frdp_ipc_validate_socket_path(const char *socket_path)
     if ((st.st_mode & (S_IRWXG | S_IRWXO)) != 0)
         return -1;
 
+    return 0;
+}
+
+static int frdp_ipc_validate_peer(int fd)
+{
+#if defined(__linux__) && defined(SO_PEERCRED)
+    struct ucred cred;
+    socklen_t length = sizeof(cred);
+
+    memset(&cred, 0, sizeof(cred));
+    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &length) != 0)
+        return -1;
+    if (length != sizeof(cred)) {
+        errno = EIO;
+        return -1;
+    }
+    if ((cred.uid != 0) && (cred.uid != geteuid())) {
+        errno = EACCES;
+        return -1;
+    }
+#else
+    (void)fd;
+#endif
     return 0;
 }
 
@@ -102,6 +127,12 @@ int frdp_ipc_connect(const char *socket_path)
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    if (frdp_ipc_validate_peer(fd) != 0) {
         int saved = errno;
         close(fd);
         errno = saved;
