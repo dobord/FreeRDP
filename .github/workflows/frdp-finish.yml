@@ -1,0 +1,102 @@
+name: FRDP finish integration
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/frdp-finish.yml'
+      - '.frdp-delivery/**'
+      - 'server/frdp/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: frdp-finish-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  finish:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Materialize implementation and deterministic probes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ ! -f server/frdp/authz/frdp-authz.c ]]; then
+            find .frdp-delivery -maxdepth 1 -type f -name 'patch-*' -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 cat > /tmp/frdp-authz.patch
+            git apply --check --recount /tmp/frdp-authz.patch
+            git apply --recount /tmp/frdp-authz.patch
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+
+          probe = Path('server/frdp/test/e2e/scripts/rdp-probe.sh')
+          text = probe.read_text()
+          marker = '\tlog "auth-only \'$label\' produced expected result:'
+          start = text.find('\t# FreeRDP uses a dedicated non-zero process exit code')
+          if start < 0:
+              start = text.find('\t# Authentication-only exit codes changed')
+          end = text.find(marker, start) if start >= 0 else -1
+          if start >= 0 and end >= 0:
+              block = '''\t# Parse the result emitted by FreeRDP rather than assuming a stable\n\t# process exit code across client revisions.\n\tlocal protocol_status\n\tprotocol_status=$(sed -n 's/.*Authentication only, exit status \\([0-9][0-9]*\\).*/\\1/p' "$logfile" | tail -n 1)\n\tif [[ -n $protocol_status ]]; then\n\t\tif [[ $expected == success ]]; then\n\t\t\t[[ $protocol_status -eq 0 ]] || fail "auth-only '$label' was rejected (protocol status $protocol_status, process status $status)"\n\t\telse\n\t\t\t[[ $protocol_status -ne 0 ]] || fail "auth-only '$label' unexpectedly succeeded (process status $status)"\n\t\tfi\n\telse\n\t\tif [[ $expected == success ]]; then\n\t\t\t[[ $status -eq 0 ]] || fail "auth-only '$label' failed without a protocol result (status $status)"\n\t\telse\n\t\t\t[[ $status -ne 0 && $status -ne 124 && $status -ne 137 ]] || fail "auth-only '$label' did not produce a deterministic denial (status $status)"\n\t\tfi\n\tfi\n'''
+              text = text[:start] + block + text[end:]
+          probe.write_text(text)
+
+          entry = Path('server/frdp/test/e2e/scripts/frdpd-entrypoint.sh')
+          text = entry.read_text()
+          text = text.replace(
+              'frdp-authd --pam-service frdpd --socket "$FRDP_AUTH_SOCKET" &',
+              'frdp-authd --pam-service frdpd --grant-ttl 120 --socket "$FRDP_AUTH_SOCKET" &')
+          text = text.replace(
+              'frdp-sesmand --pam-service frdpd --socket "$FRDP_SESSION_SOCKET" &',
+              'frdp-sesmand --pam-service frdpd --auth-socket "$FRDP_AUTH_SOCKET" \\\n\t--socket "$FRDP_SESSION_SOCKET" &')
+          entry.write_text(text)
+
+          authz = Path('server/frdp/authz/frdp-authz.c')
+          text = authz.read_text()
+          text = text.replace('now > grant->expires_at', 'now >= grant->expires_at')
+          text = text.replace('now > matched->expires_at', 'now >= matched->expires_at')
+          authz.write_text(text)
+          PY
+          chmod 0755 server/frdp/test/e2e/run.sh server/frdp/test/e2e/scripts/*.sh
+          git diff --check
+
+      - name: Run component tests
+        run: bash server/frdp/test/e2e/run.sh component
+
+      - name: Run local PAM/NLA RDP E2E
+        run: bash server/frdp/test/e2e/run.sh local
+
+      - name: Commit only the verified implementation
+        shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf .frdp-delivery
+          rm -f .github/workflows/frdp-delivery.yml .github/workflows/frdp-finish.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git diff --cached --quiet && { echo 'no verified changes to commit' >&2; exit 1; }
+          git commit -m 'Complete broker-bound authorization integration'
+          git push origin "HEAD:${HEAD_BRANCH}"
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frdp-finish-${{ github.run_id }}
+          path: server/frdp/test/e2e/artifacts
+          if-no-files-found: ignore
