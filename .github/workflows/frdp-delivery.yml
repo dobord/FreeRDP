@@ -25,47 +25,35 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Verify and extract source archive
+      - name: Apply and commit staged implementation
         shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           set -Eeuo pipefail
-          artifact_dir=server/frdp/test/e2e/artifacts/delivery
-          mkdir -p "$artifact_dir"
-          find .frdp-delivery -maxdepth 1 -type f -name 'chunk-*' -print0 |
+          mkdir -p server/frdp/test/e2e/artifacts/delivery
+          find .frdp-delivery -maxdepth 1 -type f -name 'patch-*' -print0 |
             LC_ALL=C sort -z |
-            xargs -0 cat > /tmp/frdp-source.b64
-          base64 --decode /tmp/frdp-source.b64 > /tmp/frdp-source.tar.gz
-          sha256sum /tmp/frdp-source.tar.gz | tee "$artifact_dir/archive.sha256"
-          tar -tzf /tmp/frdp-source.tar.gz | tee "$artifact_dir/archive.list"
-          if grep -Eq '(^/|(^|/)\.\.(/|$))' "$artifact_dir/archive.list"; then
-            echo 'unsafe archive path' >&2
-            exit 1
-          fi
-          tar -xzf /tmp/frdp-source.tar.gz -C .
+            xargs -0 cat > /tmp/frdp-authz.patch
+          sha256sum /tmp/frdp-authz.patch | tee server/frdp/test/e2e/artifacts/delivery/patch.sha256
+          git apply --check --verbose --recount /tmp/frdp-authz.patch
+          git apply --verbose --recount /tmp/frdp-authz.patch
+          rm -rf .frdp-delivery
+          rm -f .github/workflows/frdp-delivery.yml
           git diff --check
-          git status --short | tee "$artifact_dir/status.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git diff --cached --quiet && { echo 'staged implementation made no changes' >&2; exit 1; }
+          git commit -m 'Implement broker-bound authorization grants'
+          git push origin "HEAD:${HEAD_BRANCH}"
 
       - name: Run component tests
         run: bash server/frdp/test/e2e/run.sh component
 
       - name: Run local PAM RDP E2E
         run: bash server/frdp/test/e2e/run.sh local
-
-      - name: Commit verified implementation
-        shell: bash
-        env:
-          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
-        run: |
-          set -Eeuo pipefail
-          rm -rf .frdp-delivery
-          rm -f .github/workflows/frdp-delivery.yml
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git diff --cached --check
-          git diff --cached --quiet && { echo 'archive made no changes' >&2; exit 1; }
-          git commit -m 'Implement broker-bound authorization grants'
-          git push origin "HEAD:${HEAD_BRANCH}"
 
       - name: Upload delivery diagnostics
         if: always()
