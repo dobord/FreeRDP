@@ -1,0 +1,147 @@
+   if (frdp_authz_consume(&store, 201U, token, "22222222-2222-4222-8222-222222222222",
++                           "mallory", "host-a", &identity) != FRDP_AUTHZ_MISMATCH)
++        return -1;
++    if (frdp_authz_consume(&store, 202U, token, "22222222-2222-4222-8222-222222222222",
++                           "bob", "host-b", &identity) != FRDP_AUTHZ_MISMATCH)
++        return -1;
++    if (frdp_authz_consume(&store, 203U, token, "33333333-3333-4333-8333-333333333333",
++                           "bob", "host-a", &identity) != FRDP_AUTHZ_MISMATCH)
++        return -1;
++    if (frdp_authz_consume(&store, 204U, token, "22222222-2222-4222-8222-222222222222",
++                           "bob", "host-a", &identity) != FRDP_AUTHZ_OK)
++        return -1;
++    frdp_authz_store_clear(&store);
++    return 0;
++}
++
++static int test_expiry_and_tampering(void)
++{
++    frdpAuthzStore store;
++    frdpAuthzIdentity identity;
++    char token[FRDP_AUTHZ_TOKEN_SIZE] = { 0 };
++    char tampered[FRDP_AUTHZ_TOKEN_SIZE] = { 0 };
++    uint64_t expires_at = 0U;
++
++    frdp_authz_store_init(&store, 5U);
++    if (issue(&store, 300U, 3U, "33333333-3333-4333-8333-333333333333", "carol", "",
++              token, &expires_at) != 0)
++        return -1;
++    memcpy(tampered, token, sizeof(tampered));
++    tampered[0] = (tampered[0] == '0') ? '1' : '0';
++    if (frdp_authz_consume(&store, 301U, tampered,
++                           "33333333-3333-4333-8333-333333333333", "carol", "",
++                           &identity) != FRDP_AUTHZ_NOT_FOUND)
++        return -1;
++    if (frdp_authz_consume(&store, 306U, token, "33333333-3333-4333-8333-333333333333",
++                           "carol", "", &identity) != FRDP_AUTHZ_EXPIRED)
++        return -1;
++    if (frdp_authz_consume(&store, 307U, token, "33333333-3333-4333-8333-333333333333",
++                           "carol", "", &identity) != FRDP_AUTHZ_NOT_FOUND)
++        return -1;
++    frdp_authz_store_clear(&store);
++    return 0;
++}
++
++static int test_duplicate_and_capacity(void)
++{
++    frdpAuthzStore store;
++    uint8_t random_bytes[FRDP_AUTHZ_TOKEN_BYTES];
++    char token[FRDP_AUTHZ_TOKEN_SIZE] = { 0 };
++    uint64_t expires_at = 0U;
++
++    frdp_authz_store_init(&store, 60U);
++    fill_random(random_bytes, 7U);
++    if (frdp_authz_issue(&store, 400U, random_bytes,
++                         "44444444-4444-4444-8444-444444444444", "dave", "host", 1U, 2U,
++                         token, sizeof(token), &expires_at) != FRDP_AUTHZ_OK)
++        return -1;
++    if (frdp_authz_issue(&store, 401U, random_bytes,
++                         "44444444-4444-4444-8444-444444444444", "dave", "host", 1U, 2U,
++                         token, sizeof(token), &expires_at) != FRDP_AUTHZ_DUPLICATE_TOKEN)
++        return -1;
++
++    for (size_t index = 1U; index < FRDP_AUTHZ_MAX_GRANTS; index++) {
++        memset(random_bytes, 0, sizeof(random_bytes));
++        random_bytes[0] = (uint8_t)(index & 0xffU);
++        random_bytes[1] = (uint8_t)((index >> 8U) & 0xffU);
++        random_bytes[2] = 0xa5U;
++        if (frdp_authz_issue(&store, 401U, random_bytes,
++                             "44444444-4444-4444-8444-444444444444", "dave", "host", 1U, 2U,
++                             token, sizeof(token), &expires_at) != FRDP_AUTHZ_OK)
++            return -1;
++    }
++    memset(random_bytes, 0xee, sizeof(random_bytes));
++    if (frdp_authz_issue(&store, 401U, random_bytes,
++                         "44444444-4444-4444-8444-444444444444", "dave", "host", 1U, 2U,
++                         token, sizeof(token), &expires_at) != FRDP_AUTHZ_STORE_FULL)
++        return -1;
++    frdp_authz_store_clear(&store);
++    return 0;
++}
++
++int TestFreeRDPFrdpAuthz(int argc, char *argv[])
++{
++    (void)argc;
++    (void)argv;
++
++    if (test_issue_consume_and_replay() != 0) {
++        printf("authorization grant consume/replay test failed\n");
++        return -1;
++    }
++    if (test_mismatch_does_not_consume() != 0) {
++        printf("authorization grant mismatch test failed\n");
++        return -1;
++    }
++    if (test_expiry_and_tampering() != 0) {
++        printf("authorization grant expiry/tampering test failed\n");
++        return -1;
++    }
++    if (test_duplicate_and_capacity() != 0) {
++        printf("authorization grant duplicate/capacity test failed\n");
++        return -1;
++    }
++    return 0;
++}
+diff --git a/server/frdp/test/TestFreeRDPFrdpHelperStop.c b/server/frdp/test/TestFreeRDPFrdpHelperStop.c
+index 74e517f..46c6f3c 100644
+--- a/server/frdp/test/TestFreeRDPFrdpHelperStop.c
++++ b/server/frdp/test/TestFreeRDPFrdpHelperStop.c
+@@ -67,10 +67,11 @@ static int wait_for_exit(pid_t pid, int* status)
+ 	return -1;
+ }
+ 
+-static int run_stop_test(const char* binary, const char* name)
++static int run_stop_test(const char* binary, const char* name, int needs_auth_socket)
+ {
+ 	char dir[1024] = { 0 };
+ 	char socket_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
++	char auth_socket_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
+ 	pid_t pid = -1;
+ 	int status = 0;
+ 	int rc = -1;
+@@ -78,7 +79,9 @@ static int run_stop_test(const char* binary, const char* name)
+ 	if (make_runtime_dir(dir, sizeof(dir)) != 0)
+ 		return -1;
+ 	if (snprintf(socket_path, sizeof(socket_path), "%s/%s.sock", dir, name) >=
+-	    (int)sizeof(socket_path))
++	    (int)sizeof(socket_path) ||
++	    snprintf(auth_socket_path, sizeof(auth_socket_path), "%s/auth.sock", dir) >=
++	        (int)sizeof(auth_socket_path))
+ 		goto cleanup;
+ 
+ 	pid = fork();
+@@ -86,7 +89,11 @@ static int run_stop_test(const char* binary, const char* name)
+ 		goto cleanup;
+ 	if (pid == 0)
+ 	{
+-		execl(binary, binary, "--socket", socket_path, (char*)NULL);
++		if (needs_auth_socket)
++			execl(binary, binary, "--auth-socket", auth_socket_path, "--socket", socket_path,
++			      (char*)NULL);
++		else
++			execl(binary, binary, "--socket", socket_path, (char*)NULL);
+ 		_exit(127);
+ 	}
+ 
+@@ -125,12 +132,12 @@ int TestFreeRDPFrdpHelperStop(int argc, char* argv[])
+ 	(void)arg
