@@ -10,6 +10,7 @@ keep=${FRDP_E2E_KEEP:-0}
 export FRDP_E2E_ARTIFACTS="$artifacts"
 mkdir -p "$artifacts"
 
+git -C "$repo_root" rev-parse 'HEAD^{tree}' >"$artifacts/base-tree-sha.txt"
 tar -C "$repo_root" -czf "$artifacts/frdp-source.tar.gz" \
 	server/frdp tools/frdpctl include/freerdp/channels/wtsvc.h \
 	libfreerdp/core/server.c libfreerdp/core/server.h \
