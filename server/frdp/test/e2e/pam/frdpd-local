@@ -1,0 +1,9 @@
+# Local-only PAM stack for the isolated FRDP Docker E2E profile.
+auth      required   pam_env.so
+auth      required   pam_unix.so try_first_pass
+
+account   required   pam_unix.so
+
+session   required   pam_limits.so
+session   required   pam_mkhomedir.so skel=/etc/skel umask=0077
+session   optional   pam_unix.so
