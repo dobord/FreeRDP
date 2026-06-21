@@ -29,13 +29,24 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          cat .frdp-delivery/patch-* > /tmp/frdp-authz.patch
-          sha256sum /tmp/frdp-authz.patch
-          git apply --check /tmp/frdp-authz.patch
-          git apply /tmp/frdp-authz.patch
-          rm -rf .frdp-delivery
-          rm -f .github/workflows/frdp-delivery.yml
-          git diff --check
+          mkdir -p server/frdp/test/e2e/artifacts/delivery
+          log=server/frdp/test/e2e/artifacts/delivery/apply.log
+          {
+            printf 'head=%s\n' "$(git rev-parse HEAD)"
+            find .frdp-delivery -maxdepth 1 -type f -name 'patch-*' -print | LC_ALL=C sort
+            find .frdp-delivery -maxdepth 1 -type f -name 'patch-*' -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 cat > /tmp/frdp-authz.patch
+            sha256sum /tmp/frdp-authz.patch
+            git apply --check --verbose --recount /tmp/frdp-authz.patch
+            git apply --verbose --recount /tmp/frdp-authz.patch
+            git diff --check
+            git status --short
+          } >"$log" 2>&1 || {
+            cat "$log"
+            exit 1
+          }
+          cat "$log"
 
       - name: Run component tests
         run: bash server/frdp/test/e2e/run.sh component
@@ -51,9 +62,9 @@ jobs:
           set -Eeuo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
+          git add packaging/systemd server/frdp
           git diff --cached --check
-          git diff --cached --quiet && { echo 'payload made no changes' >&2; exit 1; }
+          git diff --cached --quiet && { echo 'payload made no source changes' >&2; exit 1; }
           git commit -m 'Implement broker-bound authorization grants'
           git push origin "HEAD:${HEAD_BRANCH}"
 
