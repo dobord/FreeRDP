@@ -1,0 +1,131 @@
+name: frdpd component and e2e
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'server/frdp/**'
+      - 'tools/frdpctl/**'
+      - 'include/freerdp/channels/wtsvc.h'
+      - 'libfreerdp/core/server.c'
+      - 'libfreerdp/core/server.h'
+      - '.github/workflows/frdpd-compose.yml'
+  push:
+    branches: ['project/**']
+    paths:
+      - 'server/frdp/**'
+      - 'tools/frdpctl/**'
+      - 'include/freerdp/channels/wtsvc.h'
+      - 'libfreerdp/core/server.c'
+      - 'libfreerdp/core/server.h'
+      - '.github/workflows/frdpd-compose.yml'
+  schedule:
+    - cron: '15 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Test profile to run'
+        required: true
+        default: quick
+        type: choice
+        options:
+          - quick
+          - component
+          - local
+          - samba
+          - freeipa
+          - all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frdpd-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FRDP_E2E_ARTIFACTS: ${{ github.workspace }}/server/frdp/test/e2e/artifacts
+
+jobs:
+  quick:
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.profile == 'quick' || inputs.profile == 'component' ||
+      inputs.profile == 'local' || inputs.profile == 'all'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Docker versions
+        run: |
+          docker version
+          docker compose version
+
+      - name: Run component tests
+        if: >-
+          github.event_name != 'workflow_dispatch' ||
+          inputs.profile == 'quick' || inputs.profile == 'component' || inputs.profile == 'all'
+        run: bash server/frdp/test/e2e/run.sh component
+
+      - name: Run local PAM RDP E2E
+        if: >-
+          github.event_name != 'workflow_dispatch' ||
+          inputs.profile == 'quick' || inputs.profile == 'local' || inputs.profile == 'all'
+        run: bash server/frdp/test/e2e/run.sh local
+
+      - name: Upload quick-test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frdpd-quick-${{ github.run_id }}
+          path: server/frdp/test/e2e/artifacts
+          if-no-files-found: ignore
+
+  samba:
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.profile == 'samba' || inputs.profile == 'all'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Samba AD, SSSD and RDP E2E
+        run: bash server/frdp/test/e2e/run.sh samba
+
+      - name: Upload Samba artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frdpd-samba-${{ github.run_id }}
+          path: server/frdp/test/e2e/artifacts/samba
+          if-no-files-found: ignore
+
+  freeipa:
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.profile == 'freeipa' || inputs.profile == 'all'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show cgroup environment
+        run: |
+          stat -fc %T /sys/fs/cgroup
+          test -e /sys/fs/cgroup/cgroup.controllers
+          docker info
+
+      - name: Run FreeIPA, SSSD and RDP E2E
+        run: bash server/frdp/test/e2e/run.sh freeipa
+
+      - name: Upload FreeIPA artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frdpd-freeipa-${{ github.run_id }}
+          path: server/frdp/test/e2e/artifacts/freeipa
+          if-no-files-found: ignore
