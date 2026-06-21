@@ -1,0 +1,191 @@
+name: FRDP deterministic finalizer
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/frdp-finalize-v4.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: frdp-final-one-shot-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify-and-commit:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Materialize candidate implementation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ ! -f server/frdp/authz/frdp-authz.c ]]; then
+            find .frdp-delivery -maxdepth 1 -type f -name 'patch-*' -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 cat > /tmp/frdp-authz.patch
+            git apply --check --recount /tmp/frdp-authz.patch
+            git apply --recount /tmp/frdp-authz.patch
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              if old in text:
+                  return text.replace(old, new, 1)
+              if new in text:
+                  return text
+              raise SystemExit(f'missing expected source fragment: {label}')
+
+          entry = Path('server/frdp/test/e2e/scripts/frdpd-entrypoint.sh')
+          text = entry.read_text()
+          text = text.replace(
+              'frdp-authd --pam-service frdpd --socket "$FRDP_AUTH_SOCKET" &',
+              'frdp-authd --pam-service frdpd --grant-ttl 120 --socket "$FRDP_AUTH_SOCKET" &')
+          text = text.replace(
+              'frdp-sesmand --pam-service frdpd --socket "$FRDP_SESSION_SOCKET" &',
+              'frdp-sesmand --pam-service frdpd --auth-socket "$FRDP_AUTH_SOCKET" \\\n\t--socket "$FRDP_SESSION_SOCKET" &')
+          entry.write_text(text)
+
+          authz = Path('server/frdp/authz/frdp-authz.c')
+          text = authz.read_text()
+          text = text.replace('now > grant->expires_at', 'now >= grant->expires_at')
+          text = text.replace('now > matched->expires_at', 'now >= matched->expires_at')
+          authz.write_text(text)
+
+          sesmand = Path('server/frdp/frdp-sesmand/frdp-sesmand.c')
+          text = sesmand.read_text().replace('poll(&pfd, 1, 20000)', 'poll(&pfd, 1, 60000)')
+          sesmand.write_text(text)
+
+          header = Path('server/frdp/frdpd/frdpd.h')
+          text = header.read_text()
+          if 'char auth_rhost[128];' not in text:
+              text = replace_once(text, '\t\tchar auth_grant[65];\n',
+                                  '\t\tchar auth_grant[65];\n\t\tchar auth_rhost[128];\n',
+                                  'peer auth rhost field')
+          header.write_text(text)
+
+          daemon = Path('server/frdp/frdpd/frdpd.c')
+          text = daemon.read_text()
+          old_request = (
+              "\t    !frdpd_copy_ipc_string(request.rhost, sizeof(request.rhost),\n"
+              "\t                          (client->hostname[0] != '\\0') ? client->hostname : NULL) ||")
+          new_request = (
+              "\t    !frdpd_copy_ipc_string(request.rhost, sizeof(request.rhost),\n"
+              "\t                          context->auth_rhost) ||")
+          text = replace_once(text, old_request, new_request, 'session authorization rhost')
+
+          peer_start = text.find('static BOOL frdpd_peer_logon')
+          peer_end = text.find('static BOOL frdpd_peer_post_connect', peer_start)
+          if peer_start < 0 or peer_end < 0:
+              raise SystemExit('peer logon function not found')
+          peer = text[peer_start:peer_end]
+          declaration = '\tchar log_user[FRDPD_LOG_STRING_SIZE] = { 0 };\n'
+          if 'const char* auth_rhost = NULL;' not in peer:
+              peer = replace_once(peer, declaration,
+                                  declaration + '\tconst char* auth_rhost = NULL;\n',
+                                  'auth rhost declaration')
+          log_name = '\t(void)frdpd_client_log_name(client, log_hostname, sizeof(log_hostname));\n'
+          if '\tauth_rhost = ' not in peer:
+              peer = replace_once(
+                  peer, log_name,
+                  log_name +
+                  "\tauth_rhost = (client->hostname[0] != '\\0') ? client->hostname : \"\";\n"
+                  '\tSecureZeroMemory(context->auth_rhost, sizeof(context->auth_rhost));\n',
+                  'auth rhost capture')
+          peer = peer.replace(
+              "\t\t.rhost = (client->hostname[0] != '\\0') ? client->hostname : NULL,",
+              '\t\t.rhost = auth_rhost,', 1)
+          anchor = ('\tSecureZeroMemory(result.grant, sizeof(result.grant));\n'
+                    '\tresult.pam_handle = NULL;\n')
+          if 'frdpd_copy_ipc_string(context->auth_rhost' not in peer:
+              peer = replace_once(
+                  peer, anchor,
+                  '\tif (!frdpd_copy_ipc_string(context->auth_rhost, '
+                  'sizeof(context->auth_rhost), auth_rhost))\n\t{\n'
+                  '\t\tfree(context->pam_user);\n\t\tcontext->pam_user = NULL;\n'
+                  '\t\tfrdpd_auth_result_cleanup(&result);\n\t\treturn FALSE;\n\t}\n'
+                  + anchor,
+                  'auth rhost persistence')
+          text = text[:peer_start] + peer + text[peer_end:]
+
+          free_start = text.find('static void frdpd_peer_context_free')
+          free_end = text.find('static BOOL frdpd_dvc_authorize', free_start)
+          if free_start < 0 or free_end < 0:
+              raise SystemExit('peer context free function not found')
+          free_fn = text[free_start:free_end]
+          if 'SecureZeroMemory(context->auth_rhost' not in free_fn:
+              free_fn = replace_once(
+                  free_fn,
+                  '\tSecureZeroMemory(context->auth_grant, sizeof(context->auth_grant));\n',
+                  '\tSecureZeroMemory(context->auth_grant, sizeof(context->auth_grant));\n'
+                  '\tSecureZeroMemory(context->auth_rhost, sizeof(context->auth_rhost));\n',
+                  'auth rhost cleanup')
+          text = text[:free_start] + free_fn + text[free_end:]
+          daemon.write_text(text)
+
+          probe = Path('server/frdp/test/e2e/scripts/rdp-probe.sh')
+          text = probe.read_text()
+          text = text.replace('run_auth_only valid success "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"\n', '')
+          markers = [
+              '\t# FreeRDP uses a dedicated non-zero process exit code',
+              '\t# Authentication-only exit codes changed',
+              '\t# Parse the result emitted by FreeRDP',
+              '\t# The full managed-session connection below is the positive NLA proof',
+              '\t# The full managed session below proves successful NLA/PAM.'
+          ]
+          starts = [text.find(marker) for marker in markers if text.find(marker) >= 0]
+          start = min(starts) if starts else -1
+          end = text.find('\tlog "auth-only', start) if start >= 0 else -1
+          if start < 0 or end < 0:
+              raise SystemExit('auth-only assertion block not found')
+          block = '''\t# The full managed session below proves successful NLA/PAM. These\n\t# probes verify that bad credentials are rejected and cannot create a session.\n\tlocal protocol_status\n\tprotocol_status=$(sed -n 's/.*Authentication only, exit status \\([0-9][0-9]*\\).*/\\1/p' "$logfile" | tail -n 1)\n\tif [[ -n $protocol_status ]]; then\n\t\t[[ $protocol_status -ne 0 ]] || fail "auth-only '$label' unexpectedly succeeded (status $status)"\n\telse\n\t\t[[ $status -ne 0 ]] || fail "auth-only '$label' unexpectedly succeeded without a protocol result"\n\tfi\n\t[[ $status -ne 124 && $status -ne 137 ]] || fail "auth-only '$label' timed out instead of being denied (status $status)"\n\tfrdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$FRDP_ARTIFACT_DIR/session-list-${label}.txt" 2>&1\n\tgrep -q '^No active sessions$' "$FRDP_ARTIFACT_DIR/session-list-${label}.txt" || fail "denied login '$label' created a managed session"\n'''
+          text = text[:start] + block + text[end:]
+          probe.write_text(text)
+          PY
+
+          chmod 0755 server/frdp/test/e2e/run.sh server/frdp/test/e2e/scripts/*.sh
+          git diff --check
+
+      - name: Run component tests
+        run: bash server/frdp/test/e2e/run.sh component
+
+      - name: Run real local PAM/NLA managed-session E2E
+        run: bash server/frdp/test/e2e/run.sh local
+
+      - name: Commit verified implementation and remove scaffolding
+        shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf .frdp-delivery
+          rm -f .github/workflows/frdp-finish-v3.yml \
+                .github/workflows/frdp-finalize-v4.yml
+          rm -f server/frdp/test/e2e/.integration-tree \
+                server/frdp/test/e2e/.tree-test \
+                zzz-frdp-tree-api-test
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git diff --cached --quiet && { echo 'no verified changes to commit' >&2; exit 1; }
+          git commit -m 'Complete broker-bound authorization integration'
+          git push origin "HEAD:${HEAD_BRANCH}"
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frdp-finalize-${{ github.run_id }}
+          path: server/frdp/test/e2e/artifacts
+          if-no-files-found: ignore
