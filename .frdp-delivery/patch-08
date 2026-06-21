@@ -1,0 +1,124 @@
+ 0)
+ 		goto cleanup;
+-	if (test_sesmand_rejects_unknown_session(helper.socket_path) != 0)
++	rc = receive_session_response(fd, 0, "authorization grant not-found");
++
++cleanup:
++	frdp_ipc_close(fd);
++	return rc;
++}
++
++static int test_sesmand_component(void)
++{
++	frdpTestHelper authd;
++	frdpTestHelper sesmand;
++	int rc = -1;
++	int authd_started = 0;
++	int sesmand_started = 0;
++
++	memset(&authd, 0, sizeof(authd));
++	memset(&sesmand, 0, sizeof(sesmand));
++	authd.pid = -1;
++	sesmand.pid = -1;
++	if (start_helper(FRDP_AUTHD_BINARY, "frdp-authd-for-sesmand", NULL, &authd) != 0)
++		goto cleanup;
++	authd_started = 1;
++	if (start_helper(FRDP_SESMAND_BINARY, "frdp-sesmand-component", authd.socket_path,
++	                 &sesmand) != 0)
++		goto cleanup;
++	sesmand_started = 1;
++	if (test_sesmand_list_empty(sesmand.socket_path) != 0)
+ 		goto cleanup;
+-	if (test_sesmand_rejects_unterminated_request(helper.socket_path) != 0)
++	if (test_sesmand_rejects_unknown_session(sesmand.socket_path) != 0)
+ 		goto cleanup;
+-	if (test_sesmand_rejects_bad_length(helper.socket_path) != 0)
++	if (test_sesmand_rejects_unterminated_request(sesmand.socket_path) != 0)
+ 		goto cleanup;
+-	/* A final list request proves the registry and service loop remained healthy. */
+-	if (test_sesmand_list_empty(helper.socket_path) != 0)
++	if (test_sesmand_rejects_bad_length(sesmand.socket_path) != 0)
++		goto cleanup;
++	if (test_sesmand_rejects_missing_grant(sesmand.socket_path) != 0)
++		goto cleanup;
++	if (test_sesmand_rejects_unknown_grant(sesmand.socket_path) != 0)
++		goto cleanup;
++	/* Final requests prove both service loops remained healthy. */
++	if (test_sesmand_list_empty(sesmand.socket_path) != 0 ||
++	    test_authd_rejects_unknown_grant(authd.socket_path) != 0)
+ 		goto cleanup;
+ 	rc = 0;
+ 
+ cleanup:
+-	if (stop_helper(&helper) != 0)
++	if (sesmand_started && stop_helper(&sesmand) != 0)
++		rc = -1;
++	if (authd_started && stop_helper(&authd) != 0)
+ 		rc = -1;
+ 	return rc;
+ }
+diff --git a/server/frdp/test/e2e/run.sh b/server/frdp/test/e2e/run.sh
+index 12fffc2..96f36e7 100644
+--- a/server/frdp/test/e2e/run.sh
++++ b/server/frdp/test/e2e/run.sh
+@@ -2,7 +2,6 @@
+ set -Eeuo pipefail
+ 
+ root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+-repo_root=$(cd "$root/../../../.." && pwd)
+ compose_file="$root/compose.yaml"
+ artifacts=${FRDP_E2E_ARTIFACTS:-$root/artifacts}
+ keep=${FRDP_E2E_KEEP:-0}
+@@ -10,12 +9,6 @@ keep=${FRDP_E2E_KEEP:-0}
+ export FRDP_E2E_ARTIFACTS="$artifacts"
+ mkdir -p "$artifacts"
+ 
+-git -C "$repo_root" rev-parse 'HEAD^{tree}' >"$artifacts/base-tree-sha.txt"
+-tar -C "$repo_root" -czf "$artifacts/frdp-source.tar.gz" \
+-	server/frdp tools/frdpctl include/freerdp/channels/wtsvc.h \
+-	libfreerdp/core/server.c libfreerdp/core/server.h \
+-	.github/workflows/frdpd-compose.yml
+-
+ command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 2; }
+ docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required" >&2; exit 2; }
+ 
+diff --git a/server/frdp/test/e2e/scripts/frdpd-entrypoint.sh b/server/frdp/test/e2e/scripts/frdpd-entrypoint.sh
+index b93d697..07c5cc1 100644
+--- a/server/frdp/test/e2e/scripts/frdpd-entrypoint.sh
++++ b/server/frdp/test/e2e/scripts/frdpd-entrypoint.sh
+@@ -330,7 +330,8 @@ generate_tls_identity
+ 
+ frdp-authd --pam-service frdpd --socket "$FRDP_AUTH_SOCKET" &
+ children+=("$!")
+-frdp-sesmand --pam-service frdpd --socket "$FRDP_SESSION_SOCKET" &
++frdp-sesmand --pam-service frdpd --auth-socket "$FRDP_AUTH_SOCKET" \
++	--socket "$FRDP_SESSION_SOCKET" &
+ children+=("$!")
+ 
+ wait_socket "$FRDP_AUTH_SOCKET" || fail "frdp-authd socket was not created"
+diff --git a/server/frdp/test/e2e/scripts/rdp-probe.sh b/server/frdp/test/e2e/scripts/rdp-probe.sh
+index f74a0a9..737c49a 100644
+--- a/server/frdp/test/e2e/scripts/rdp-probe.sh
++++ b/server/frdp/test/e2e/scripts/rdp-probe.sh
+@@ -84,12 +84,18 @@ run_auth_only()
+ 	status=$?
+ 	set -e
+ 
++	# FreeRDP uses a dedicated non-zero process exit code for auth-only mode on
++	# some builds.  The protocol result emitted by the client is the stable
++	# assertion; the raw process status is retained for diagnostics.
+ 	if [[ $expected == success ]]; then
+-		[[ $status -eq 0 ]] || fail "auth-only '$label' failed with status $status"
++		grep -q "Authentication only, exit status 0" "$logfile" ||
++			fail "auth-only '$label' failed with status $status"
+ 	else
+-		[[ $status -ne 0 ]] || fail "auth-only '$label' unexpectedly succeeded"
++		if grep -q "Authentication only, exit status 0" "$logfile"; then
++			fail "auth-only '$label' unexpectedly succeeded (status $status)"
++		fi
+ 	fi
+-	log "auth-only '$label' produced expected result: $expected"
++	log "auth-only '$label' produced expected result: $expected (process status $status)"
+ }
+ 
+ stop_process()
