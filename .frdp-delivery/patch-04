@@ -1,0 +1,292 @@
+ return 0;
+-    }
+-    char escaped_socket[512] = {0};
+ 
+-    escape_log_field(socket_path, escaped_socket, sizeof(escaped_socket));
+-    printf("frdp-authd IPC server listening on %s\n", escaped_socket);
++    printf("frdp-authd IPC server listening on %s with grant_ttl=%u\n", socket_path,
++           grant_ttl);
+     while (!g_stop_requested) {
+-        struct pollfd pfd;
+-
+-        memset(&pfd, 0, sizeof(pfd));
+-        pfd.fd = fd;
+-        pfd.events = POLLIN;
+-        const int poll_status = poll(&pfd, 1, 1000);
++        struct pollfd poll_fd = { fd, POLLIN, 0 };
++        const int poll_status = poll(&poll_fd, 1, 1000);
+         if (poll_status < 0) {
+             if (errno == EINTR)
+                 continue;
+             perror("poll");
+             break;
+         }
++        frdp_authz_store_purge(&grant_store, (uint64_t)time(NULL));
+         if (poll_status == 0)
+             continue;
+-        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+-            perror("poll");
++        if (poll_fd.revents & (POLLERR | POLLHUP | POLLNVAL))
+             break;
+-        }
+-        if ((pfd.revents & POLLIN) == 0)
++        if ((poll_fd.revents & POLLIN) == 0)
+             continue;
+ 
+-        int cfd = accept_cloexec(fd);
+-        if (cfd < 0) {
++        int client_fd = accept_cloexec(fd);
++        if (client_fd < 0) {
+             if (errno == EINTR)
+                 continue;
+             perror("accept");
+             continue;
+         }
+-        if (set_client_timeouts(cfd) != 0) {
+-            close(cfd);
++        if (set_client_timeouts(client_fd) != 0 || verify_peer(client_fd) != 0) {
++            (void)send_auth_response(client_fd, 0, NULL, NULL, 0U, 0U, 0U,
++                                     "unauthorized IPC peer");
++            close(client_fd);
+             continue;
+         }
+-        if (verify_peer(cfd) != 0) {
+-            send_auth_response(cfd, 0, "unauthorized IPC peer");
+-            close(cfd);
+-            continue;
+-        }
+-        frdpIpcHeader hdr;
+-        if (frdp_ipc_recv(cfd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+-            close(cfd);
++
++        frdpIpcHeader header;
++        memset(&header, 0, sizeof(header));
++        if (frdp_ipc_recv(client_fd, &header, sizeof(header)) != (int)sizeof(header)) {
++            close(client_fd);
+             continue;
+         }
+-        if (hdr.type == FRDP_IPC_AUTH_REQUEST_V2 && hdr.payload_len == sizeof(frdpAuthRequest)) {
+-            frdpAuthRequest req;
+-            if (frdp_ipc_recv(cfd, &req, sizeof(req)) == (int)sizeof(req)) {
+-                char user[sizeof(req.user)] = {0};
+-                char correlation_id[sizeof(req.correlation_id)] = {0};
+-                char rhost[sizeof(req.rhost)] = {0};
+-                char password[sizeof(req.password)] = {0};
+-                if (copy_ipc_string(user, sizeof(user), req.user, sizeof(req.user)) != 0 ||
+-                    copy_ipc_string(correlation_id, sizeof(correlation_id), req.correlation_id,
+-                                    sizeof(req.correlation_id)) != 0 ||
+-                    copy_ipc_string(rhost, sizeof(rhost), req.rhost, sizeof(req.rhost)) != 0 ||
+-                    copy_ipc_string(password, sizeof(password), req.password, sizeof(req.password)) != 0) {
+-                    send_auth_response(cfd, 0, "invalid auth request");
+-                } else {
+-                    send_auth_response(cfd,
+-                                       authenticate_user(pam_service, rhost, correlation_id, user,
+-                                                         password) == 0,
+-                                       NULL);
+-                }
+-                clear_secret(password, sizeof(password));
+-                clear_secret(req.password, sizeof(req.password));
+-            }
++        if (header.type == FRDP_IPC_AUTH_REQUEST_V2 &&
++            header.payload_len == sizeof(frdpAuthRequest)) {
++            handle_auth_request(client_fd, pam_service, &grant_store);
++        } else if (header.type == FRDP_IPC_AUTH_GRANT_CONSUME_REQUEST &&
++                   header.payload_len == sizeof(frdpAuthGrantConsumeRequest)) {
++            handle_grant_consume_request(client_fd, &grant_store);
++        } else if (header.type == FRDP_IPC_AUTH_GRANT_CONSUME_REQUEST) {
++            (void)send_grant_consume_response(client_fd, 0, NULL,
++                                              "unsupported authorization request");
+         } else {
+-            send_auth_response(cfd, 0, "unsupported IPC request");
++            (void)send_auth_response(client_fd, 0, NULL, NULL, 0U, 0U, 0U,
++                                     "unsupported IPC request");
+         }
+-        close(cfd);
++        close(client_fd);
+     }
++
+     close(fd);
+     unlink(socket_path);
++    frdp_authz_store_clear(&grant_store);
+     return g_stop_requested ? 0 : -1;
++
++fail:
++    if (fd >= 0)
++        close(fd);
++    unlink(socket_path);
++    frdp_authz_store_clear(&grant_store);
++    return -1;
+ }
+ 
+ static void usage(const char *argv0)
+ {
+-    fprintf(stderr, "Usage: %s [--pam-service <name>] --socket <absolute-socket-path>\n", argv0);
++    fprintf(stderr,
++            "Usage: %s [--pam-service <name>] [--grant-ttl <1..300>] "
++            "--socket <absolute-socket-path>\n",
++            argv0);
+ }
+ 
+ int main(int argc, char **argv)
+ {
+     const char *pam_service = "frdpd";
+     const char *socket_path = NULL;
++    uint32_t grant_ttl = FRDP_AUTHD_DEFAULT_GRANT_TTL;
+ 
+     if (set_no_core() != 0) {
+         fprintf(stderr, "failed to disable core dumps\n");
+@@ -595,19 +789,24 @@ int main(int argc, char **argv)
+         usage(argv[0]);
+         return 0;
+     }
+-    for (int x = 1; x < argc; x++) {
+-        if (strcmp(argv[x], "--pam-service") == 0) {
+-            if (++x >= argc) {
++    for (int index = 1; index < argc; index++) {
++        if (strcmp(argv[index], "--pam-service") == 0) {
++            if (++index >= argc) {
++                usage(argv[0]);
++                return 2;
++            }
++            pam_service = argv[index];
++        } else if (strcmp(argv[index], "--socket") == 0) {
++            if (++index >= argc) {
+                 usage(argv[0]);
+                 return 2;
+             }
+-            pam_service = argv[x];
+-        } else if (strcmp(argv[x], "--socket") == 0) {
+-            if (++x >= argc) {
++            socket_path = argv[index];
++        } else if (strcmp(argv[index], "--grant-ttl") == 0) {
++            if (++index >= argc || parse_grant_ttl(argv[index], &grant_ttl) != 0) {
+                 usage(argv[0]);
+                 return 2;
+             }
+-            socket_path = argv[x];
+         } else {
+             usage(argv[0]);
+             return 2;
+@@ -617,5 +816,5 @@ int main(int argc, char **argv)
+         usage(argv[0]);
+         return 2;
+     }
+-    return run_ipc_server(socket_path, pam_service);
++    return run_ipc_server(socket_path, pam_service, grant_ttl) == 0 ? 0 : 1;
+ }
+diff --git a/server/frdp/frdp-sesmand/frdp-sesmand.c b/server/frdp/frdp-sesmand/frdp-sesmand.c
+index 205eca3..6cecfcf 100644
+--- a/server/frdp/frdp-sesmand/frdp-sesmand.c
++++ b/server/frdp/frdp-sesmand/frdp-sesmand.c
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <stdio.h>
++#include <inttypes.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+@@ -60,6 +61,7 @@ static session sessions[MAX_SESSIONS];
+ static int session_count = 0;
+ static int next_display = FRDP_DISPLAY_MIN;
+ static const char *g_pam_service = "frdpd";
++static const char *g_auth_socket = NULL;
+ static char g_agent_socket_dir[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
+ static volatile sig_atomic_t g_stop_requested = 0;
+ 
+@@ -394,6 +396,7 @@ static int allocate_display_number(int *display)
+ /* Open a session for the specified user.  This starts a PAM session, forks
+  * a child to run the per-user agent and returns 0 on success. */
+ static int open_session(const char *user, const char *rhost, const char *correlation_id,
++                        uint32_t expected_uid, uint32_t expected_gid,
+                         uint32_t desktop_width, uint32_t desktop_height, uint32_t color_depth,
+                         char *session_id, size_t session_id_size,
+                         char *display_out, size_t display_out_size,
+@@ -410,6 +413,13 @@ static int open_session(const char *user, const char *rhost, const char *correla
+ 
+     if (session_count >= MAX_SESSIONS)
+         return -1;
++    /* Re-resolve and compare the broker-authorized POSIX identity before any
++     * PAM session side effects. */
++    struct passwd *pwd = getpwnam(user);
++    if (!pwd || (uintmax_t)pwd->pw_uid != expected_uid ||
++        (uintmax_t)pwd->pw_gid != expected_gid)
++        return -1;
++
+     struct pam_conv conv = {pam_conv_fn, NULL};
+     pam_handle_t *pamh = NULL;
+     int credentials_established = 0;
+@@ -475,16 +485,6 @@ static int open_session(const char *user, const char *rhost, const char *correla
+              normalize_dimension(desktop_width, 1024),
+              normalize_dimension(desktop_height, 768), normalize_color_depth(color_depth));
+ 
+-    /* Retrieve user information for UID/GID drop. */
+-    struct passwd *pwd = getpwnam(user);
+-    if (!pwd) {
+-        destroy_agent_socket(&agent_fd, agent_socket_path);
+-        pam_close_session(pamh, 0);
+-        pam_setcred(pamh, PAM_DELETE_CRED);
+-        pam_end(pamh, PAM_USER_UNKNOWN);
+-        return -1;
+-    }
+-
+     if (create_cloexec_pipe(exec_pipe) != 0) {
+         destroy_agent_socket(&agent_fd, agent_socket_path);
+         pam_close_session(pamh, 0);
+@@ -900,6 +900,64 @@ static void reap_exited_sessions(void)
+     }
+ }
+ 
++static int consume_authorization_grant(const char *correlation_id, const char *grant,
++                                       const char *user, const char *rhost,
++                                       frdpAuthGrantConsumeResponse *response)
++{
++    int fd = -1;
++    frdpIpcHeader header;
++    frdpIpcHeader response_header;
++    frdpAuthGrantConsumeRequest request;
++    time_t now = 0;
++    int ok = 0;
++
++    if (!g_auth_socket || g_auth_socket[0] != '/' || !correlation_id || !grant || !user ||
++        !response)
++        return -1;
++    memset(&header, 0, sizeof(header));
++    memset(&response_header, 0, sizeof(response_header));
++    memset(&request, 0, sizeof(request));
++    memset(response, 0, sizeof(*response));
++    if (snprintf(request.correlation_id, sizeof(request.correlation_id), "%s", correlation_id) < 0 ||
++        snprintf(request.grant, sizeof(request.grant), "%s", grant) < 0 ||
++        snprintf(request.user, sizeof(request.user), "%s", user) < 0 ||
++        snprintf(request.rhost, sizeof(request.rhost), "%s", rhost ? rhost : "") < 0)
++        return -1;
++    if (strlen(request.correlation_id) != strlen(correlation_id) ||
++        strlen(request.grant) != strlen(grant) || strlen(request.user) != strlen(user) ||
++        strlen(request.rhost) != strlen(rhost ? rhost : ""))
++        return -1;
++
++    fd = frdp_ipc_connect(g_auth_socket);
++    if (fd < 0)
++        goto cleanup;
++    header.type = FRDP_IPC_AUTH_GRANT_CONSUME_REQUEST;
++    header.payload_len = sizeof(request);
++    if (frdp_ipc_send(fd, &header, sizeof(header)) != 0 ||
++        frdp_ipc_send(fd, &request, sizeof(request)) != 0 ||
++        frdp_ipc_recv(fd, &response_header, sizeof(response_header)) !=
++            (int)sizeof(response_header) ||
++        response_header.type != FRDP_IPC_AUTH_GRANT_CONSUME_RESPONSE ||
++        response_header.payload_len != sizeof(*response) ||
++        frdp_ipc_recv(fd, response, sizeof(*response)) != (int)sizeof(*response))
++        goto cleanup;
++
++    response->user[sizeof(response->user) - 1] = '\0';
++    response->error[sizeof(response->error) - 1] = '\0';
++    if (!response->success || response->user[0] == '\0')
++        goto cleanup;
++    now = time(NULL);
++    if (now < 0 || response->expires_at < (uint64_t)now)
++        goto cleanup;
++    ok = 1;
++
++cleanup:
++    memset(request.grant, 0, sizeof(request.grant));
