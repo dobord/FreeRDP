@@ -5,7 +5,7 @@ disable_warnings_for_directory(${CMAKE_CURRENT_BINARY_DIR})
 
 set(${MODULE_PREFIX}_DRIVER ${MODULE_NAME}.c)
 set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFreeRDPFrdpCtlIpc.c
-                         TestFreeRDPFrdpHelperStop.c)
+                         TestFreeRDPFrdpHelperStop.c TestFreeRDPFrdpServiceIpc.c)
 find_program(XVFB_EXECUTABLE Xvfb)
 if(XVFB_EXECUTABLE)
   list(APPEND ${MODULE_PREFIX}_TESTS TestFreeRDPFrdpAgentStop.c)
