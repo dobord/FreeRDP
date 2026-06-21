@@ -1,0 +1,176 @@
+c;
+ 	(void)argv;
+ 
+-	if (run_stop_test(FRDP_AUTHD_BINARY, "authd") != 0)
++	if (run_stop_test(FRDP_AUTHD_BINARY, "authd", 0) != 0)
+ 	{
+ 		printf("frdp-authd stop cleanup failed\n");
+ 		return -1;
+ 	}
+-	if (run_stop_test(FRDP_SESMAND_BINARY, "sesmand") != 0)
++	if (run_stop_test(FRDP_SESMAND_BINARY, "sesmand", 1) != 0)
+ 	{
+ 		printf("frdp-sesmand stop cleanup failed\n");
+ 		return -1;
+diff --git a/server/frdp/test/TestFreeRDPFrdpServiceIpc.c b/server/frdp/test/TestFreeRDPFrdpServiceIpc.c
+index 559ce9a..fe2b6b6 100644
+--- a/server/frdp/test/TestFreeRDPFrdpServiceIpc.c
++++ b/server/frdp/test/TestFreeRDPFrdpServiceIpc.c
+@@ -83,7 +83,8 @@ static int wait_for_exit(pid_t pid, int* status)
+ 	return -1;
+ }
+ 
+-static int start_helper(const char* binary, const char* name, frdpTestHelper* helper)
++static int start_helper(const char* binary, const char* name, const char* auth_socket,
++                        frdpTestHelper* helper)
+ {
+ 	if (!binary || !name || !helper)
+ 		return -1;
+@@ -100,7 +101,11 @@ static int start_helper(const char* binary, const char* name, frdpTestHelper* he
+ 		goto fail;
+ 	if (helper->pid == 0)
+ 	{
+-		execl(binary, binary, "--socket", helper->socket_path, (char*)NULL);
++		if (auth_socket)
++			execl(binary, binary, "--auth-socket", auth_socket, "--socket",
++			      helper->socket_path, (char*)NULL);
++		else
++			execl(binary, binary, "--socket", helper->socket_path, (char*)NULL);
+ 		_exit(127);
+ 	}
+ 	if (wait_for_socket(helper->socket_path) != 0)
+@@ -189,6 +194,25 @@ static int receive_auth_failure(int fd, const char* expected_error)
+ 	return 0;
+ }
+ 
++static int receive_grant_failure(int fd, const char* expected_error)
++{
++	frdpIpcHeader header = { 0 };
++	frdpAuthGrantConsumeResponse response = { 0 };
++
++	if (frdp_ipc_recv(fd, &header, sizeof(header)) != (int)sizeof(header))
++		return -1;
++	if ((header.type != FRDP_IPC_AUTH_GRANT_CONSUME_RESPONSE) ||
++	    (header.payload_len != sizeof(response)))
++		return -1;
++	if (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))
++		return -1;
++	if (response.success != 0 || !memchr(response.error, '\0', sizeof(response.error)))
++		return -1;
++	if (expected_error && strcmp(response.error, expected_error) != 0)
++		return -1;
++	return 0;
++}
++
+ static int receive_session_response(int fd, int expected_success, const char* expected_error)
+ {
+ 	frdpIpcHeader header = { 0 };
+@@ -263,12 +287,52 @@ cleanup:
+ 	return rc;
+ }
+ 
++static int test_authd_rejects_unknown_grant(const char* socket_path)
++{
++	frdpAuthGrantConsumeRequest request = { 0 };
++	int fd = frdp_ipc_connect(socket_path);
++	int rc = -1;
++
++	if (fd < 0)
++		return -1;
++	snprintf(request.correlation_id, sizeof(request.correlation_id),
++	         "55555555-5555-4555-8555-555555555555");
++	memset(request.grant, 'a', sizeof(request.grant) - 1U);
++	snprintf(request.user, sizeof(request.user), "alice");
++	snprintf(request.rhost, sizeof(request.rhost), "client.example");
++	if (send_header(fd, FRDP_IPC_AUTH_GRANT_CONSUME_REQUEST, sizeof(request)) != 0 ||
++	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
++		goto cleanup;
++	rc = receive_grant_failure(fd, "authorization grant not-found");
++
++cleanup:
++	frdp_ipc_close(fd);
++	return rc;
++}
++
++static int test_authd_rejects_bad_grant_length(const char* socket_path)
++{
++	int fd = frdp_ipc_connect(socket_path);
++	int rc = -1;
++
++	if (fd < 0)
++		return -1;
++	if (send_header(fd, FRDP_IPC_AUTH_GRANT_CONSUME_REQUEST,
++	                sizeof(frdpAuthGrantConsumeRequest) - 1U) != 0)
++		goto cleanup;
++	rc = receive_grant_failure(fd, "unsupported authorization request");
++
++cleanup:
++	frdp_ipc_close(fd);
++	return rc;
++}
++
+ static int test_authd_component(void)
+ {
+ 	frdpTestHelper helper;
+ 	int rc = -1;
+ 
+-	if (start_helper(FRDP_AUTHD_BINARY, "frdp-authd-component", &helper) != 0)
++	if (start_helper(FRDP_AUTHD_BINARY, "frdp-authd-component", NULL, &helper) != 0)
+ 		return -1;
+ 	if (test_authd_rejects_bad_length(helper.socket_path) != 0)
+ 		goto cleanup;
+@@ -276,6 +340,10 @@ static int test_authd_component(void)
+ 		goto cleanup;
+ 	if (test_authd_rejects_unterminated_request(helper.socket_path) != 0)
+ 		goto cleanup;
++	if (test_authd_rejects_unknown_grant(helper.socket_path) != 0)
++		goto cleanup;
++	if (test_authd_rejects_bad_grant_length(helper.socket_path) != 0)
++		goto cleanup;
+ 	/* A final request proves that malformed clients did not stop the service loop. */
+ 	if (test_authd_rejects_bad_length(helper.socket_path) != 0)
+ 		goto cleanup;
+@@ -373,28 +441,91 @@ cleanup:
+ 	return rc;
+ }
+ 
+-static int test_sesmand_component(void)
++static int test_sesmand_rejects_missing_grant(const char* socket_path)
+ {
+-	frdpTestHelper helper;
++	frdpSessionRequest request = { 0 };
++	int fd = frdp_ipc_connect(socket_path);
++	int rc = -1;
++
++	if (fd < 0)
++		return -1;
++	snprintf(request.correlation_id, sizeof(request.correlation_id),
++	         "66666666-6666-4666-8666-666666666666");
++	snprintf(request.user, sizeof(request.user), "alice");
++	if (send_header(fd, FRDP_IPC_SESSION_REQUEST, sizeof(request)) != 0 ||
++	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
++		goto cleanup;
++	rc = receive_session_response(fd, 0,
++	                              "missing authenticated identity or authorization grant");
++
++cleanup:
++	frdp_ipc_close(fd);
++	return rc;
++}
++
++static int test_sesmand_rejects_unknown_grant(const char* socket_path)
++{
++	frdpSessionRequest request = { 0 };
++	int fd = frdp_ipc_connect(socket_path);
+ 	int rc = -1;
+ 
+-	if (start_helper(FRDP_SESMAND_BINARY, "frdp-sesmand-component", &helper) != 0)
++	if (fd < 0)
+ 		return -1;
+-	if (test_sesmand_list_empty(helper.socket_path) != 0)
++	snprintf(request.correlation_id, sizeof(request.correlation_id),
++	         "77777777-7777-4777-8777-777777777777");
++	snprintf(request.user, sizeof(request.user), "alice");
++	memset(request.auth_grant, 'b', sizeof(request.auth_grant) - 1U);
++	if (send_header(fd, FRDP_IPC_SESSION_REQUEST, sizeof(request)) != 0 ||
++	    frdp_ipc_send(fd, &request, sizeof(request)) !
