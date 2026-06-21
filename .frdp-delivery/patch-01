@@ -1,0 +1,374 @@
+UTHZ_NOT_FOUND:
++            return "not-found";
++        case FRDP_AUTHZ_EXPIRED:
++            return "expired";
++        case FRDP_AUTHZ_REPLAY:
++            return "replay";
++        case FRDP_AUTHZ_MISMATCH:
++            return "mismatch";
++        default:
++            return "unknown";
++    }
++}
+diff --git a/mnt/data/frdp_work/server/frdp/authz/frdp-authz.h b/server/frdp/authz/frdp-authz.h
+new file mode 100644
+index 0000000..aeaae46
+--- /dev/null
++++ b/server/frdp/authz/frdp-authz.h
+@@ -0,0 +1,66 @@
++#ifndef FRDP_AUTHZ_H
++#define FRDP_AUTHZ_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#define FRDP_AUTHZ_TOKEN_BYTES 32U
++#define FRDP_AUTHZ_TOKEN_SIZE ((FRDP_AUTHZ_TOKEN_BYTES * 2U) + 1U)
++#define FRDP_AUTHZ_MAX_GRANTS 256U
++
++typedef enum
++{
++    FRDP_AUTHZ_OK = 0,
++    FRDP_AUTHZ_INVALID_ARGUMENT = 1,
++    FRDP_AUTHZ_STORE_FULL = 2,
++    FRDP_AUTHZ_DUPLICATE_TOKEN = 3,
++    FRDP_AUTHZ_NOT_FOUND = 4,
++    FRDP_AUTHZ_EXPIRED = 5,
++    FRDP_AUTHZ_REPLAY = 6,
++    FRDP_AUTHZ_MISMATCH = 7
++} frdpAuthzStatus;
++
++typedef struct
++{
++    char user[64];
++    uint32_t uid;
++    uint32_t gid;
++    uint64_t expires_at;
++} frdpAuthzIdentity;
++
++typedef struct
++{
++    char token[FRDP_AUTHZ_TOKEN_SIZE];
++    char correlation_id[64];
++    char user[64];
++    char rhost[128];
++    uint32_t uid;
++    uint32_t gid;
++    uint64_t expires_at;
++    uint8_t state;
++} frdpAuthzGrant;
++
++typedef struct
++{
++    frdpAuthzGrant grants[FRDP_AUTHZ_MAX_GRANTS];
++    uint32_t ttl_seconds;
++} frdpAuthzStore;
++
++void frdp_authz_store_init(frdpAuthzStore *store, uint32_t ttl_seconds);
++void frdp_authz_store_clear(frdpAuthzStore *store);
++void frdp_authz_store_purge(frdpAuthzStore *store, uint64_t now);
++
++frdpAuthzStatus frdp_authz_issue(frdpAuthzStore *store, uint64_t now,
++                                 const uint8_t random_bytes[FRDP_AUTHZ_TOKEN_BYTES],
++                                 const char *correlation_id, const char *user,
++                                 const char *rhost, uint32_t uid, uint32_t gid,
++                                 char *token, size_t token_size, uint64_t *expires_at);
++
++frdpAuthzStatus frdp_authz_consume(frdpAuthzStore *store, uint64_t now,
++                                   const char *token, const char *correlation_id,
++                                   const char *user, const char *rhost,
++                                   frdpAuthzIdentity *identity);
++
++const char *frdp_authz_status_string(frdpAuthzStatus status);
++
++#endif /* FRDP_AUTHZ_H */
+diff --git a/server/frdp/config/frdpd.env b/server/frdp/config/frdpd.env
+index 4901586..e218504 100644
+--- a/server/frdp/config/frdpd.env
++++ b/server/frdp/config/frdpd.env
+@@ -1,5 +1,3 @@
+-# Optional extra arguments consumed by frdpd.service.
+-#
+-# Set this when both auth_socket and session_socket are enabled in frdpd.toml:
+-# FRDPD_ARGS=--no-pam-session
+-FRDPD_ARGS=
++# Extra arguments consumed by frdpd.service.
++# Brokered authentication and session ownership are the installed default.
++FRDPD_ARGS=--no-pam-session
+diff --git a/server/frdp/config/frdpd.toml b/server/frdp/config/frdpd.toml
+index 9689fe4..cdf8847 100644
+--- a/server/frdp/config/frdpd.toml
++++ b/server/frdp/config/frdpd.toml
+@@ -10,12 +10,12 @@ tls_key = "/etc/frdpd/tls.key"
+ [auth]
+ mode = "pam-sssd"
+ pam_service = "frdpd"
+-# auth_socket = "/run/frdp-authd/authd.sock"
++auth_socket = "/run/frdp-authd/authd.sock"
+ # Kerberos-first fields are intentionally omitted until the daemon enforces them.
+ # Do not configure kerberos, ntlm_fallback, keytab, or accepted_spn in the current parser.
+ 
+-# [session]
+-# session_socket = "/run/frdp-sesmand/sesmand.sock"
++[session]
++session_socket = "/run/frdp-sesmand/sesmand.sock"
+ 
+ # [channels]
+ # Channel filtering defaults to blocklist mode with empty lists.
+diff --git a/server/frdp/frdp-authd/frdp-authd.c b/server/frdp/frdp-authd/frdp-authd.c
+index 0391a6d..f32ae60 100644
+--- a/server/frdp/frdp-authd/frdp-authd.c
++++ b/server/frdp/frdp-authd/frdp-authd.c
+@@ -1,53 +1,57 @@
+ #define _GNU_SOURCE
+ 
+ /*
+- * frdp-authd - Authentication broker for FreeRDP-based RDP server
++ * frdp-authd - PAM/SSSD authentication and short-lived authorization grants.
+  *
+- * This component performs authentication for the RDP daemon using CredSSP,
+- * Kerberos and PAM/SSSD. The code demonstrates secure handling of passwords
+- * and integrates PAM. Credentials must be supplied via the local IPC server;
+- * command-line password ingress is intentionally not supported.
++ * Passwords are accepted only over a root-owned local IPC socket.  A successful
++ * PAM account decision creates a random, short-lived, single-use grant.  The
++ * session manager must consume that grant before opening a PAM session, which
++ * binds session creation to the authentication decision instead of trusting a
++ * caller-supplied user name.
+  */
+ 
++#include <errno.h>
++#include <fcntl.h>
++#include <grp.h>
++#include <poll.h>
++#include <pwd.h>
++#include <signal.h>
++#include <stdint.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+-#include <security/pam_appl.h>
+-#include <unistd.h>
+ #include <sys/mman.h>
+-
+-/* Additional headers for hardening and account lookups */
+ #include <sys/resource.h>
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/time.h>
++#include <sys/types.h>
++#include <sys/un.h>
++#include <syslog.h>
++#include <time.h>
++#include <unistd.h>
++#include <uuid/uuid.h>
+ #ifdef __linux__
+ #include <sys/prctl.h>
++#include <sys/random.h>
+ #endif
+-#include <pwd.h>
+-#include <grp.h>
+-#include <syslog.h>
+-#include <uuid/uuid.h>
+-#include <sys/types.h>
+-#include <errno.h>
+-#include <poll.h>
+-#include <signal.h>
+-#include <sys/stat.h>
+-#include <sys/time.h>
+-#include <fcntl.h>
++#include <security/pam_appl.h>
+ 
+-/* IPC definitions */
++#include "../authz/frdp-authz.h"
+ #include "../ipc/frdp-ipc.h"
+-#include <sys/socket.h>
+-#include <sys/un.h>
+ 
+-/*
+- * The authentication broker is responsible for validating a user via PAM/SSSD
+- * and preparing the process environment for further session handling.  In
+- * addition to password verification we perform basic account lookups and
+- * emit structured audit events.  Sensitive memory is locked and wiped
+- * explicitly to reduce the risk of credential leakage.
+- */
++#define FRDP_AUTHD_DEFAULT_GRANT_TTL 30U
++#define FRDP_AUTHD_MAX_GRANT_TTL 300U
+ 
+ static volatile sig_atomic_t g_stop_requested = 0;
+ 
++typedef struct
++{
++    char user[64];
++    uint32_t uid;
++    uint32_t gid;
++} frdpAuthenticatedIdentity;
++
+ static void authd_signal_handler(int signum)
+ {
+     (void)signum;
+@@ -69,34 +73,66 @@ static int install_signal_handlers(void)
+     return 0;
+ }
+ 
++static void clear_secret(void *secret, size_t length)
++{
++    volatile unsigned char *p = (volatile unsigned char *)secret;
++
++    while (p && length-- > 0U)
++        *p++ = 0U;
++}
++
+ static int pam_conversation(int num_msg, const struct pam_message **msg,
+                             struct pam_response **resp, void *appdata_ptr)
+ {
+     const char *password = (const char *)appdata_ptr;
+-    struct pam_response *aresp = calloc(num_msg, sizeof(struct pam_response));
+-    if (!aresp)
++    struct pam_response *answers = NULL;
++
++    if (num_msg <= 0 || !msg || !resp)
++        return PAM_CONV_ERR;
++    answers = calloc((size_t)num_msg, sizeof(*answers));
++    if (!answers)
+         return PAM_BUF_ERR;
+-    for (int i = 0; i < num_msg; i++) {
+-        if (msg[i]->msg_style == PAM_PROMPT_ECHO_OFF) {
+-            aresp[i].resp = strdup(password ? password : "");
+-            if (!aresp[i].resp) {
+-                for (int j = 0; j < i; j++)
+-                    free(aresp[j].resp);
+-                free(aresp);
+-                return PAM_BUF_ERR;
+-            }
++
++    for (int index = 0; index < num_msg; index++) {
++        if (!msg[index])
++            goto fail;
++        switch (msg[index]->msg_style) {
++            case PAM_PROMPT_ECHO_OFF:
++                answers[index].resp = strdup(password ? password : "");
++                if (!answers[index].resp)
++                    goto fail;
++                break;
++            case PAM_PROMPT_ECHO_ON:
++                answers[index].resp = strdup("");
++                if (!answers[index].resp)
++                    goto fail;
++                break;
++            case PAM_TEXT_INFO:
++            case PAM_ERROR_MSG:
++                break;
++            default:
++                goto fail;
+         }
+     }
+-    *resp = aresp;
++    *resp = answers;
+     return PAM_SUCCESS;
++
++fail:
++    for (int index = 0; index < num_msg; index++) {
++        if (answers[index].resp) {
++            clear_secret(answers[index].resp, strlen(answers[index].resp));
++            free(answers[index].resp);
++        }
++    }
++    free(answers);
++    return PAM_CONV_ERR;
+ }
+ 
+-/* Disable core dumps for the process. */
+ static int set_no_core(void)
+ {
+-    struct rlimit rl = {0};
++    struct rlimit limit = { 0, 0 };
+ 
+-    if (setrlimit(RLIMIT_CORE, &rl) != 0)
++    if (setrlimit(RLIMIT_CORE, &limit) != 0)
+         return -1;
+ #ifdef __linux__
+     if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0)
+@@ -119,24 +155,24 @@ static int log_char_is_safe(unsigned char c)
+ 
+ static void escape_log_field(const char *src, char *dst, size_t dst_size)
+ {
+-    size_t used = 0;
++    size_t used = 0U;
+ 
+-    if (!dst || dst_size == 0)
++    if (!dst || dst_size == 0U)
+         return;
+     dst[0] = '\0';
+     if (!src)
+         return;
+ 
+-    for (const unsigned char *p = (const unsigned char *)src; (*p != '\0') && (used + 1 < dst_size);
+-         p++) {
++    for (const unsigned char *p = (const unsigned char *)src;
++         (*p != '\0') && (used + 1U < dst_size); p++) {
+         if (log_char_is_safe(*p)) {
+             dst[used++] = (char)*p;
+             dst[used] = '\0';
+-        } else if ((*p == '\\') && (used + 2 < dst_size)) {
++        } else if ((*p == '\\') && (used + 2U < dst_size)) {
+             dst[used++] = '\\';
+             dst[used++] = '\\';
+             dst[used] = '\0';
+-        } else if (used + 4 < dst_size) {
++        } else if (used + 4U < dst_size) {
+             dst[used++] = '\\';
+             dst[used++] = 'x';
+             dst[used++] = hex_digit((*p >> 4U) & 0x0fU);
+@@ -155,145 +191,175 @@ static int is_uuid_hex_char(char c)
+ 
+ static int correlation_id_is_valid(const char *correlation_id)
+ {
+-    size_t x;
+-
+     if (!correlation_id)
+         return 0;
+-    for (x = 0; x < 36; x++) {
+-        const char c = correlation_id[x];
+-
++    for (size_t index = 0U; index < 36U; index++) {
++        const char c = correlation_id[index];
+         if (c == '\0')
+             return 0;
+-        if (x == 8 || x == 13 || x == 18 || x == 23) {
++        if (index == 8U || index == 13U || index == 18U || index == 23U) {
+             if (c != '-')
+                 return 0;
+         } else if (!is_uuid_hex_char(c)) {
+             return 0;
+         }
+     }
+-
+     return correlation_id[36] == '\0';
+ }
+ 
+-/* Emit an audit event with a correlation identifier. */
+-static void log_audit_event(const char *user, int success, const char *correlation_id)
++static void log_auth_event(const char *event, const char *user, int success,
++                           const char *correlation_id, const char *reason)
+ {
+-    uuid_t id;
+-    char uuid_str[37];
+-    char escaped_user[256] = {0};
++    uuid_t local_id;
++    char local_id_string[37];
++    char escaped_event[128] = { 0 };
++    char escaped_user[256] = { 0 };
++    char escaped_reason[256] = { 0 };
+ 
+     if (!correlation_id_is_valid(correlation_id)) {
+-        uuid_generate(id);
+-        uuid_unparse_lower(id, uuid_str);
+-        correlation_id = uuid_str;
++        uuid_generate(local_id);
++        uuid_unparse_lower(local_id, local_id_string);
++        correlation_id = local_id_string;
+     }
++    escape_log_field(event ? event : "auth", escaped_event, sizeof(escaped_event));
+     escape_log_field(user ? user : "unknown", escaped_user, sizeof(escaped_user));
++    escape_log_field(reason ? reason : (success ? "ok"
