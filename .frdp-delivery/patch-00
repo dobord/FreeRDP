@@ -1,0 +1,326 @@
+diff --git a/packaging/systemd/frdp-authd.service.in b/packaging/systemd/frdp-authd.service.in
+index 998e9bd..cf27601 100644
+--- a/packaging/systemd/frdp-authd.service.in
++++ b/packaging/systemd/frdp-authd.service.in
+@@ -3,11 +3,11 @@ Description=FreeRDP RDP Server Authentication Broker
+ After=network.target
+ 
+ [Service]
+-ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/frdp-authd --pam-service frdpd --socket /run/frdp-authd/authd.sock
++ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/frdp-authd --pam-service frdpd --grant-ttl 30 --socket /run/frdp-authd/authd.sock
+ User=root
+ Group=root
+ RuntimeDirectory=frdp-authd
+-RuntimeDirectoryMode=0755
++RuntimeDirectoryMode=0700
+ PrivateTmp=true
+ ProtectSystem=strict
+ ProtectHome=true
+diff --git a/packaging/systemd/frdp-sesmand.service.in b/packaging/systemd/frdp-sesmand.service.in
+index bd77388..bf4ecca 100644
+--- a/packaging/systemd/frdp-sesmand.service.in
++++ b/packaging/systemd/frdp-sesmand.service.in
+@@ -1,16 +1,17 @@
+ [Unit]
+ Description=FreeRDP RDP Server Session Manager
+-After=network.target
++After=network.target frdp-authd.service
++Requires=frdp-authd.service
+ 
+ [Service]
+-ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/frdp-sesmand --pam-service frdpd --socket /run/frdp-sesmand/sesmand.sock
++ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/frdp-sesmand --pam-service frdpd --auth-socket /run/frdp-authd/authd.sock --socket /run/frdp-sesmand/sesmand.sock
+ User=root
+ Group=root
+ RuntimeDirectory=frdp-sesmand
+-RuntimeDirectoryMode=0755
++RuntimeDirectoryMode=0700
+ PrivateTmp=true
+ ProtectSystem=full
+-ReadWritePaths=/run/frdp-sesmand
++ReadWritePaths=/run/frdp-sesmand /run/frdp-authd
+ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ LockPersonality=true
+ LimitNOFILE=1024
+diff --git a/packaging/systemd/frdpd.service.in b/packaging/systemd/frdpd.service.in
+index 432dfe5..1780420 100644
+--- a/packaging/systemd/frdpd.service.in
++++ b/packaging/systemd/frdpd.service.in
+@@ -1,6 +1,7 @@
+ [Unit]
+ Description=FreeRDP PAM/SSSD/NLA Server
+-After=network.target
++After=network.target frdp-authd.service frdp-sesmand.service
++Requires=frdp-authd.service frdp-sesmand.service
+ 
+ [Service]
+ EnvironmentFile=-@CMAKE_INSTALL_FULL_SYSCONFDIR@/frdpd/frdpd.env
+diff --git a/server/frdp/CMakeLists.txt b/server/frdp/CMakeLists.txt
+index 92be39a..7de1645 100644
+--- a/server/frdp/CMakeLists.txt
++++ b/server/frdp/CMakeLists.txt
+@@ -26,9 +26,15 @@ add_library(frdp-ipc OBJECT
+     ipc/frdp-ipc.h)
+ set_property(TARGET frdp-ipc PROPERTY FOLDER "Server/frdp")
+ 
++add_library(frdp-authz OBJECT
++    authz/frdp-authz.c
++    authz/frdp-authz.h)
++set_property(TARGET frdp-authz PROPERTY FOLDER "Server/frdp")
++
+ add_executable(frdp-authd
+     frdp-authd/frdp-authd.c
+-    $<TARGET_OBJECTS:frdp-ipc>)
++    $<TARGET_OBJECTS:frdp-ipc>
++    $<TARGET_OBJECTS:frdp-authz>)
+ target_include_directories(frdp-authd SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
+ target_link_libraries(frdp-authd PRIVATE ${PAM_LIBRARIES} ${UUID_LIBRARY})
+ installwithrpath(TARGETS frdp-authd DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)
+diff --git a/mnt/data/frdp_work/server/frdp/authz/frdp-authz.c b/server/frdp/authz/frdp-authz.c
+new file mode 100644
+index 0000000..54cb451
+--- /dev/null
++++ b/server/frdp/authz/frdp-authz.c
+@@ -0,0 +1,253 @@
++#include "frdp-authz.h"
++
++#include <limits.h>
++#include <string.h>
++
++#define FRDP_AUTHZ_GRANT_UNUSED 0U
++#define FRDP_AUTHZ_GRANT_ACTIVE 1U
++#define FRDP_AUTHZ_GRANT_CONSUMED 2U
++
++static size_t bounded_strlen(const char *value, size_t maximum)
++{
++    size_t length = 0U;
++
++    if (!value)
++        return maximum;
++    while (length < maximum && value[length] != '\0')
++        length++;
++    return length;
++}
++
++static void secure_clear(void *data, size_t length)
++{
++    volatile uint8_t *p = (volatile uint8_t *)data;
++
++    while (p && length-- > 0U)
++        *p++ = 0U;
++}
++
++static int copy_string(char *dst, size_t dst_size, const char *src)
++{
++    size_t length = 0U;
++
++    if (!dst || dst_size == 0U || !src)
++        return -1;
++    length = bounded_strlen(src, dst_size);
++    if (length == 0U || length >= dst_size)
++        return -1;
++    memcpy(dst, src, length + 1U);
++    return 0;
++}
++
++static int copy_optional_string(char *dst, size_t dst_size, const char *src)
++{
++    size_t length = 0U;
++
++    if (!dst || dst_size == 0U)
++        return -1;
++    if (!src)
++        src = "";
++    length = bounded_strlen(src, dst_size);
++    if (length >= dst_size)
++        return -1;
++    memcpy(dst, src, length + 1U);
++    return 0;
++}
++
++static int constant_time_equal(const char *left, const char *right, size_t length)
++{
++    uint8_t difference = 0U;
++
++    if (!left || !right)
++        return 0;
++    for (size_t index = 0U; index < length; index++)
++        difference |= (uint8_t)left[index] ^ (uint8_t)right[index];
++    return difference == 0U;
++}
++
++static int token_is_valid(const char *token)
++{
++    if (!token || bounded_strlen(token, FRDP_AUTHZ_TOKEN_SIZE) != FRDP_AUTHZ_TOKEN_SIZE - 1U)
++        return 0;
++    for (size_t index = 0U; index < FRDP_AUTHZ_TOKEN_SIZE - 1U; index++) {
++        const char c = token[index];
++        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
++            return 0;
++    }
++    return 1;
++}
++
++static void encode_token(const uint8_t random_bytes[FRDP_AUTHZ_TOKEN_BYTES],
++                         char token[FRDP_AUTHZ_TOKEN_SIZE])
++{
++    static const char hexadecimal[] = "0123456789abcdef";
++
++    for (size_t index = 0U; index < FRDP_AUTHZ_TOKEN_BYTES; index++) {
++        token[index * 2U] = hexadecimal[(random_bytes[index] >> 4U) & 0x0fU];
++        token[(index * 2U) + 1U] = hexadecimal[random_bytes[index] & 0x0fU];
++    }
++    token[FRDP_AUTHZ_TOKEN_SIZE - 1U] = '\0';
++}
++
++void frdp_authz_store_init(frdpAuthzStore *store, uint32_t ttl_seconds)
++{
++    if (!store)
++        return;
++    memset(store, 0, sizeof(*store));
++    store->ttl_seconds = ttl_seconds;
++}
++
++void frdp_authz_store_clear(frdpAuthzStore *store)
++{
++    if (!store)
++        return;
++    secure_clear(store, sizeof(*store));
++}
++
++void frdp_authz_store_purge(frdpAuthzStore *store, uint64_t now)
++{
++    if (!store)
++        return;
++    for (size_t index = 0U; index < FRDP_AUTHZ_MAX_GRANTS; index++) {
++        frdpAuthzGrant *grant = &store->grants[index];
++        if (grant->state != FRDP_AUTHZ_GRANT_UNUSED && now > grant->expires_at)
++            secure_clear(grant, sizeof(*grant));
++    }
++}
++
++frdpAuthzStatus frdp_authz_issue(frdpAuthzStore *store, uint64_t now,
++                                 const uint8_t random_bytes[FRDP_AUTHZ_TOKEN_BYTES],
++                                 const char *correlation_id, const char *user,
++                                 const char *rhost, uint32_t uid, uint32_t gid,
++                                 char *token, size_t token_size, uint64_t *expires_at)
++{
++    char encoded[FRDP_AUTHZ_TOKEN_SIZE] = { 0 };
++    frdpAuthzGrant *free_grant = NULL;
++    uint64_t expiry = 0U;
++
++    if (!store || !random_bytes || !token || token_size < FRDP_AUTHZ_TOKEN_SIZE ||
++        !expires_at || store->ttl_seconds == 0U || !correlation_id || !user)
++        return FRDP_AUTHZ_INVALID_ARGUMENT;
++    if (bounded_strlen(correlation_id, sizeof(store->grants[0].correlation_id)) == 0U ||
++        bounded_strlen(correlation_id, sizeof(store->grants[0].correlation_id)) >=
++            sizeof(store->grants[0].correlation_id) ||
++        bounded_strlen(user, sizeof(store->grants[0].user)) == 0U ||
++        bounded_strlen(user, sizeof(store->grants[0].user)) >= sizeof(store->grants[0].user) ||
++        (rhost && bounded_strlen(rhost, sizeof(store->grants[0].rhost)) >=
++                      sizeof(store->grants[0].rhost)))
++        return FRDP_AUTHZ_INVALID_ARGUMENT;
++    if (now > UINT64_MAX - store->ttl_seconds)
++        return FRDP_AUTHZ_INVALID_ARGUMENT;
++
++    frdp_authz_store_purge(store, now);
++    encode_token(random_bytes, encoded);
++
++    for (size_t index = 0U; index < FRDP_AUTHZ_MAX_GRANTS; index++) {
++        frdpAuthzGrant *grant = &store->grants[index];
++        if (grant->state == FRDP_AUTHZ_GRANT_UNUSED) {
++            if (!free_grant)
++                free_grant = grant;
++            continue;
++        }
++        if (constant_time_equal(grant->token, encoded, FRDP_AUTHZ_TOKEN_SIZE))
++            return FRDP_AUTHZ_DUPLICATE_TOKEN;
++    }
++    if (!free_grant)
++        return FRDP_AUTHZ_STORE_FULL;
++
++    expiry = now + store->ttl_seconds;
++    memset(free_grant, 0, sizeof(*free_grant));
++    if (copy_string(free_grant->token, sizeof(free_grant->token), encoded) != 0 ||
++        copy_string(free_grant->correlation_id, sizeof(free_grant->correlation_id),
++                    correlation_id) != 0 ||
++        copy_string(free_grant->user, sizeof(free_grant->user), user) != 0 ||
++        copy_optional_string(free_grant->rhost, sizeof(free_grant->rhost), rhost) != 0) {
++        secure_clear(free_grant, sizeof(*free_grant));
++        return FRDP_AUTHZ_INVALID_ARGUMENT;
++    }
++    free_grant->uid = uid;
++    free_grant->gid = gid;
++    free_grant->expires_at = expiry;
++    free_grant->state = FRDP_AUTHZ_GRANT_ACTIVE;
++
++    memcpy(token, encoded, FRDP_AUTHZ_TOKEN_SIZE);
++    *expires_at = expiry;
++    secure_clear(encoded, sizeof(encoded));
++    return FRDP_AUTHZ_OK;
++}
++
++frdpAuthzStatus frdp_authz_consume(frdpAuthzStore *store, uint64_t now,
++                                   const char *token, const char *correlation_id,
++                                   const char *user, const char *rhost,
++                                   frdpAuthzIdentity *identity)
++{
++    frdpAuthzGrant *matched = NULL;
++    const char *normalized_rhost = rhost ? rhost : "";
++
++    if (!store || !token_is_valid(token) || !correlation_id || !user || !identity)
++        return FRDP_AUTHZ_INVALID_ARGUMENT;
++    if (bounded_strlen(correlation_id, sizeof(store->grants[0].correlation_id)) == 0U ||
++        bounded_strlen(correlation_id, sizeof(store->grants[0].correlation_id)) >=
++            sizeof(store->grants[0].correlation_id) ||
++        bounded_strlen(user, sizeof(store->grants[0].user)) == 0U ||
++        bounded_strlen(user, sizeof(store->grants[0].user)) >= sizeof(store->grants[0].user) ||
++        bounded_strlen(normalized_rhost, sizeof(store->grants[0].rhost)) >=
++            sizeof(store->grants[0].rhost))
++        return FRDP_AUTHZ_INVALID_ARGUMENT;
++
++    memset(identity, 0, sizeof(*identity));
++    for (size_t index = 0U; index < FRDP_AUTHZ_MAX_GRANTS; index++) {
++        frdpAuthzGrant *grant = &store->grants[index];
++        if (grant->state == FRDP_AUTHZ_GRANT_UNUSED)
++            continue;
++        if (constant_time_equal(grant->token, token, FRDP_AUTHZ_TOKEN_SIZE)) {
++            matched = grant;
++            break;
++        }
++    }
++    if (!matched)
++        return FRDP_AUTHZ_NOT_FOUND;
++    if (now > matched->expires_at) {
++        secure_clear(matched, sizeof(*matched));
++        return FRDP_AUTHZ_EXPIRED;
++    }
++    if (matched->state == FRDP_AUTHZ_GRANT_CONSUMED)
++        return FRDP_AUTHZ_REPLAY;
++    if (matched->state != FRDP_AUTHZ_GRANT_ACTIVE)
++        return FRDP_AUTHZ_NOT_FOUND;
++    if (strcmp(matched->correlation_id, correlation_id) != 0 ||
++        strcmp(matched->user, user) != 0 || strcmp(matched->rhost, normalized_rhost) != 0)
++        return FRDP_AUTHZ_MISMATCH;
++
++    if (copy_string(identity->user, sizeof(identity->user), matched->user) != 0)
++        return FRDP_AUTHZ_INVALID_ARGUMENT;
++    identity->uid = matched->uid;
++    identity->gid = matched->gid;
++    identity->expires_at = matched->expires_at;
++    matched->state = FRDP_AUTHZ_GRANT_CONSUMED;
++    return FRDP_AUTHZ_OK;
++}
++
++const char *frdp_authz_status_string(frdpAuthzStatus status)
++{
++    switch (status) {
++        case FRDP_AUTHZ_OK:
++            return "ok";
++        case FRDP_AUTHZ_INVALID_ARGUMENT:
++            return "invalid";
++        case FRDP_AUTHZ_STORE_FULL:
++            return "store-full";
++        case FRDP_AUTHZ_DUPLICATE_TOKEN:
++            return "duplicate";
++        case FRDP_A
