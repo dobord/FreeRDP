@@ -1,0 +1,9 @@
+# Non-interactive SSSD PAM stack for FRDP identity-provider E2E profiles.
+auth      required   pam_env.so
+auth      required   pam_sss.so use_first_pass
+
+account   required   pam_sss.so
+
+session   required   pam_limits.so
+session   required   pam_mkhomedir.so skel=/etc/skel umask=0077
+session   optional   pam_sss.so
