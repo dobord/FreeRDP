@@ -2,12 +2,18 @@
 set -Eeuo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd "$root/../../../.." && pwd)
 compose_file="$root/compose.yaml"
 artifacts=${FRDP_E2E_ARTIFACTS:-$root/artifacts}
 keep=${FRDP_E2E_KEEP:-0}
 
 export FRDP_E2E_ARTIFACTS="$artifacts"
 mkdir -p "$artifacts"
+
+tar -C "$repo_root" -czf "$artifacts/frdp-source.tar.gz" \
+	server/frdp tools/frdpctl include/freerdp/channels/wtsvc.h \
+	libfreerdp/core/server.c libfreerdp/core/server.h \
+	.github/workflows/frdpd-compose.yml
 
 command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 2; }
 docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required" >&2; exit 2; }
