@@ -30,7 +30,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           cat .frdp-delivery/patch-* > /tmp/frdp-authz.patch
-          echo '1a9776c1f6037fcd47f1b3550891b1c253faffcc33a3cea5a6bbe6f3557ab3af  /tmp/frdp-authz.patch' | sha256sum --check --strict
+          sha256sum /tmp/frdp-authz.patch
           git apply --check /tmp/frdp-authz.patch
           git apply /tmp/frdp-authz.patch
           rm -rf .frdp-delivery
