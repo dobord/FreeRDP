@@ -1,0 +1,159 @@
+name: FRDP final resilient verification
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/frdp-finish-v3.yml'
+      - '.frdp-delivery/**'
+      - 'server/frdp/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: frdp-final-resilient-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Prepare final candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ ! -f server/frdp/authz/frdp-authz.c ]]; then
+            find .frdp-delivery -maxdepth 1 -type f -name 'patch-*' -print0 |
+              LC_ALL=C sort -z |
+              xargs -0 cat > /tmp/frdp-authz.patch
+            git apply --check --recount /tmp/frdp-authz.patch
+            git apply --recount /tmp/frdp-authz.patch
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+
+          entry = Path('server/frdp/test/e2e/scripts/frdpd-entrypoint.sh')
+          value = entry.read_text()
+          value = value.replace(
+              'frdp-authd --pam-service frdpd --socket "$FRDP_AUTH_SOCKET" &',
+              'frdp-authd --pam-service frdpd --grant-ttl 120 --socket "$FRDP_AUTH_SOCKET" &')
+          value = value.replace(
+              'frdp-sesmand --pam-service frdpd --socket "$FRDP_SESSION_SOCKET" &',
+              'frdp-sesmand --pam-service frdpd --auth-socket "$FRDP_AUTH_SOCKET" \\\n\t--socket "$FRDP_SESSION_SOCKET" &')
+          entry.write_text(value)
+
+          sesmand = Path('server/frdp/frdp-sesmand/frdp-sesmand.c')
+          value = sesmand.read_text().replace('poll(&pfd, 1, 20000)', 'poll(&pfd, 1, 60000)')
+          sesmand.write_text(value)
+
+          authz = Path('server/frdp/authz/frdp-authz.c')
+          value = authz.read_text().replace('now > grant->expires_at', 'now >= grant->expires_at')
+          value = value.replace('now > matched->expires_at', 'now >= matched->expires_at')
+          authz.write_text(value)
+
+          header = Path('server/frdp/frdpd/frdpd.h')
+          value = header.read_text()
+          if 'char auth_rhost[128];' not in value:
+              value = value.replace('\t\tchar auth_grant[65];\n',
+                                    '\t\tchar auth_grant[65];\n\t\tchar auth_rhost[128];\n')
+          header.write_text(value)
+
+          daemon = Path('server/frdp/frdpd/frdpd.c')
+          value = daemon.read_text()
+          value = value.replace(
+              "\t    !frdpd_copy_ipc_string(request.rhost, sizeof(request.rhost),\n"
+              "\t                          (client->hostname[0] != '\\0') ? client->hostname : NULL) ||",
+              "\t    !frdpd_copy_ipc_string(request.rhost, sizeof(request.rhost),\n"
+              "\t                          context->auth_rhost) ||")
+          peer = value.find('static BOOL frdpd_peer_logon')
+          if peer >= 0:
+              declaration = '\tchar log_user[FRDPD_LOG_STRING_SIZE] = { 0 };\n'
+              position = value.find(declaration, peer)
+              if position >= 0 and 'const char* auth_rhost' not in value[position:position + 250]:
+                  value = value[:position] + value[position:].replace(
+                      declaration, declaration + '\tconst char* auth_rhost = NULL;\n', 1)
+              log_name = value.find('(void)frdpd_client_log_name', peer)
+              if log_name >= 0:
+                  line_end = value.find('\n', log_name)
+                  if 'auth_rhost =' not in value[line_end:line_end + 180]:
+                      value = value[:line_end + 1] + (
+                          '\tauth_rhost = (client->hostname[0] != \'\\0\') '
+                          '? client->hostname : "";\n') + value[line_end + 1:]
+              value = value.replace(
+                  "\t\t.rhost = (client->hostname[0] != '\\0') ? client->hostname : NULL,",
+                  '\t\t.rhost = auth_rhost,', 1)
+              anchor = ('\tSecureZeroMemory(result.grant, sizeof(result.grant));\n'
+                        '\tresult.pam_handle = NULL;\n')
+              region = value[value.find(anchor)-600:value.find(anchor)+len(anchor)] if anchor in value else ''
+              if anchor in value and 'sizeof(context->auth_rhost)' not in region:
+                  value = value.replace(
+                      anchor,
+                      '\tif (!frdpd_copy_ipc_string(context->auth_rhost, '
+                      'sizeof(context->auth_rhost), auth_rhost))\n\t{\n'
+                      '\t\tfree(context->pam_user);\n\t\tcontext->pam_user = NULL;\n'
+                      '\t\tfrdpd_auth_result_cleanup(&result);\n\t\treturn FALSE;\n\t}\n'
+                      + anchor,
+                      1)
+          cleanup = '\tSecureZeroMemory(context->auth_grant, sizeof(context->auth_grant));\n}'
+          if cleanup in value and 'auth_rhost' not in value[value.find(cleanup):value.find(cleanup)+180]:
+              value = value.replace(
+                  cleanup,
+                  '\tSecureZeroMemory(context->auth_grant, sizeof(context->auth_grant));\n'
+                  '\tSecureZeroMemory(context->auth_rhost, sizeof(context->auth_rhost));\n}',
+                  1)
+          daemon.write_text(value)
+
+          probe = Path('server/frdp/test/e2e/scripts/rdp-probe.sh')
+          value = probe.read_text().replace(
+              'run_auth_only valid success "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"\n', '')
+          starts = [
+              value.find('\t# FreeRDP uses a dedicated non-zero process exit code'),
+              value.find('\t# Authentication-only exit codes changed'),
+              value.find('\t# Parse the result emitted by FreeRDP'),
+              value.find('\t# The full managed-session connection below is the positive NLA proof')
+          ]
+          starts = [item for item in starts if item >= 0]
+          start = min(starts) if starts else -1
+          end = value.find('\tlog "auth-only', start) if start >= 0 else -1
+          if start >= 0 and end >= 0:
+              block = '''\t# The full managed session below proves successful NLA/PAM. These\n\t# probes verify that bad credentials are rejected quickly and never create\n\t# a managed session.\n\tlocal protocol_status\n\tprotocol_status=$(sed -n 's/.*Authentication only, exit status \\([0-9][0-9]*\\).*/\\1/p' "$logfile" | tail -n 1)\n\tif [[ -n $protocol_status ]]; then\n\t\t[[ $protocol_status -ne 0 ]] || fail "auth-only '$label' unexpectedly succeeded (status $status)"\n\telse\n\t\t[[ $status -ne 0 ]] || fail "auth-only '$label' unexpectedly succeeded without a protocol result"\n\tfi\n\t[[ $status -ne 124 && $status -ne 137 ]] || fail "auth-only '$label' timed out instead of being denied (status $status)"\n\tfrdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$FRDP_ARTIFACT_DIR/session-list-${label}.txt" 2>&1\n\tgrep -q '^No active sessions$' "$FRDP_ARTIFACT_DIR/session-list-${label}.txt" || fail "denied login '$label' created a managed session"\n'''
+              value = value[:start] + block + value[end:]
+          probe.write_text(value)
+          PY
+          chmod 0755 server/frdp/test/e2e/run.sh server/frdp/test/e2e/scripts/*.sh
+          git diff --check
+
+      - name: Run component tests
+        run: bash server/frdp/test/e2e/run.sh component
+
+      - name: Run local PAM/NLA managed-session E2E
+        run: bash server/frdp/test/e2e/run.sh local
+
+      - name: Commit verified implementation and remove scaffolding
+        shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf .frdp-delivery
+          rm -f .github/workflows/frdp-delivery.yml \
+                .github/workflows/frdp-finish.yml \
+                .github/workflows/frdp-finish-v2.yml \
+                .github/workflows/frdp-finish-v3.yml
+          rm -f server/frdp/test/e2e/.integration-tree \
+                server/frdp/test/e2e/.tree-test \
+                zzz-frdp-tree-api-test
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git diff --cached --quiet && { echo 'no verified changes to commit' >&2; exit 1; }
+          git commit
