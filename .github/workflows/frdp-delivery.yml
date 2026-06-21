@@ -1,0 +1,40 @@
+name: FRDP authorization delivery
+
+on:
+  push:
+    branches: [tmp/frdp-authz-delivery]
+    paths:
+      - '.frdp-delivery/READY'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify and apply payload
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat .frdp-delivery/payload-* > /tmp/frdp-payload.b64
+          base64 --decode /tmp/frdp-payload.b64 > /tmp/frdp-payload.tar.gz
+          echo '33fac0de5111f1969045b38daee180efd7c26059f3422b30c3065e19faa54e20  /tmp/frdp-payload.tar.gz' | sha256sum --check --strict
+          if tar -tzf /tmp/frdp-payload.tar.gz | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+            echo 'unsafe archive path' >&2
+            exit 1
+          fi
+          tar -xzf /tmp/frdp-payload.tar.gz -C .
+          rm -rf .frdp-delivery
+          rm -f .github/workflows/frdp-delivery.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git diff --cached --quiet && { echo 'payload made no changes' >&2; exit 1; }
+          git commit -m 'Implement broker-bound authorization grants'
+          git push origin HEAD:tmp/frdp-authz-delivery
