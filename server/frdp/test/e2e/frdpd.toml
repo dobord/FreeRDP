@@ -1,0 +1,20 @@
+[server]
+listen = "0.0.0.0:3389"
+security = "nla"
+tls_cert = "/etc/frdpd/tls.crt"
+tls_key = "/etc/frdpd/tls.key"
+max_connections = 8
+
+[auth]
+mode = "pam-sssd"
+pam_service = "frdpd"
+auth_socket = "/run/frdp-authd/authd.sock"
+
+[session]
+session_socket = "/run/frdp-sesmand/sesmand.sock"
+
+[channels]
+static_mode = "blocklist"
+static_deny = ""
+dynamic_mode = "blocklist"
+dynamic_deny = ""
