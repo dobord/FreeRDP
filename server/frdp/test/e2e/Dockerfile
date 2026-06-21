@@ -94,8 +94,14 @@ RUN cmake -S /src -B /opt/freerdp-build -GNinja \
         frdpctl \
         xfreerdp \
         TestFreeRDPFrdp \
-    && cmake --install /opt/freerdp-build \
-    && ldconfig
+    && ln -s /opt/freerdp-build/server/frdp/frdpd/frdpd /usr/local/bin/frdpd \
+    && ln -s /opt/freerdp-build/server/frdp/frdp-authd /usr/local/bin/frdp-authd \
+    && ln -s /opt/freerdp-build/server/frdp/frdp-sesmand /usr/local/bin/frdp-sesmand \
+    && ln -s /opt/freerdp-build/server/frdp/frdp-session-agent /usr/local/bin/frdp-session-agent \
+    && ln -s /opt/freerdp-build/server/frdp/frdpctl /usr/local/bin/frdpctl \
+    && ln -s /opt/freerdp-build/client/X11/xfreerdp /usr/local/bin/xfreerdp \
+    && ldd /usr/local/bin/frdpd \
+    && ldd /usr/local/bin/xfreerdp
 
 COPY server/frdp/test/e2e /opt/frdp-e2e
 RUN chmod 0755 /opt/frdp-e2e/scripts/*.sh \
@@ -103,6 +109,5 @@ RUN chmod 0755 /opt/frdp-e2e/scripts/*.sh \
     && chmod 0700 /run/frdp-authd /run/frdp-sesmand
 
 ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
-ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib/x86_64-linux-gnu
 
 ENTRYPOINT ["bash", "/opt/frdp-e2e/scripts/frdpd-entrypoint.sh"]
