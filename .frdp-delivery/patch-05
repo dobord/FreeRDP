@@ -1,0 +1,236 @@
+
++    if (fd >= 0)
++        (void)frdp_ipc_close(fd);
++    return ok ? 0 : -1;
++}
++
+ static int handle_session_request(int fd, frdpIpcMessageType type)
+ {
+     frdpSessionRequest req;
+@@ -907,6 +965,7 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
+     char session_id[sizeof(req.session_id)] = {0};
+     char user[sizeof(req.user)] = {0};
+     char rhost[sizeof(req.rhost)] = {0};
++    char auth_grant[sizeof(req.auth_grant)] = {0};
+     char response_session_id[64] = {0};
+     char display[32] = {0};
+     char agent_socket[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
+@@ -919,22 +978,50 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
+         copy_ipc_string(session_id, sizeof(session_id), req.session_id,
+                         sizeof(req.session_id)) != 0 ||
+         copy_ipc_string(user, sizeof(user), req.user, sizeof(req.user)) != 0 ||
+-        copy_ipc_string(rhost, sizeof(rhost), req.rhost, sizeof(req.rhost)) != 0) {
++        copy_ipc_string(rhost, sizeof(rhost), req.rhost, sizeof(req.rhost)) != 0 ||
++        copy_ipc_string(auth_grant, sizeof(auth_grant), req.auth_grant,
++                        sizeof(req.auth_grant)) != 0) {
+         return send_session_response(fd, 0, NULL, NULL, NULL, "invalid session request");
+     }
+ 
+     if (type == FRDP_IPC_SESSION_REQUEST) {
+-        if (user[0] == '\0')
+-            return send_session_response(fd, 0, NULL, NULL, NULL, "missing user");
+-        if (open_session(user, rhost, correlation_id, req.desktop_width, req.desktop_height,
+-                          req.color_depth, response_session_id, sizeof(response_session_id), display,
+-                          sizeof(display), agent_socket, sizeof(agent_socket)) != 0) {
++        frdpAuthGrantConsumeResponse authorization;
++
++        memset(&authorization, 0, sizeof(authorization));
++        if (user[0] == '\0' || auth_grant[0] == '\0')
++            return send_session_response(fd, 0, NULL, NULL, NULL,
++                                         "missing authenticated identity or authorization grant");
++        if (consume_authorization_grant(correlation_id, auth_grant, user, rhost,
++                                        &authorization) != 0) {
+             char escaped_correlation_id[256] = {0};
+             char escaped_user[256] = {0};
++            char escaped_error[512] = {0};
+ 
+-            escape_log_field(correlation_id[0] ? correlation_id : "unknown", escaped_correlation_id,
+-                             sizeof(escaped_correlation_id));
++            escape_log_field(correlation_id[0] ? correlation_id : "unknown",
++                             escaped_correlation_id, sizeof(escaped_correlation_id));
+             escape_log_field(user, escaped_user, sizeof(escaped_user));
++            escape_log_field(authorization.error[0] ? authorization.error : "IPC failure",
++                             escaped_error, sizeof(escaped_error));
++            syslog(LOG_WARNING,
++                   "correlation_id=%s rejected session authorization user=%s reason=%s",
++                   escaped_correlation_id, escaped_user, escaped_error);
++            return send_session_response(fd, 0, NULL, NULL, NULL,
++                                         authorization.error[0] ? authorization.error
++                                                                : "authorization grant rejected");
++        }
++        memset(auth_grant, 0, sizeof(auth_grant));
++        memset(req.auth_grant, 0, sizeof(req.auth_grant));
++
++        if (open_session(authorization.user, rhost, correlation_id, authorization.uid,
++                         authorization.gid, req.desktop_width, req.desktop_height,
++                         req.color_depth, response_session_id, sizeof(response_session_id), display,
++                         sizeof(display), agent_socket, sizeof(agent_socket)) != 0) {
++            char escaped_correlation_id[256] = {0};
++            char escaped_user[256] = {0};
++
++            escape_log_field(correlation_id[0] ? correlation_id : "unknown",
++                             escaped_correlation_id, sizeof(escaped_correlation_id));
++            escape_log_field(authorization.user, escaped_user, sizeof(escaped_user));
+             syslog(LOG_ERR, "correlation_id=%s failed to create session for %s",
+                    escaped_correlation_id, escaped_user);
+             return send_session_response(fd, 0, NULL, NULL, NULL, "session open failed");
+@@ -949,7 +1036,8 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
+ 
+                 escape_log_field(correlation_id[0] ? correlation_id : "unknown",
+                                  escaped_correlation_id, sizeof(escaped_correlation_id));
+-                escape_log_field(response_session_id, escaped_session_id, sizeof(escaped_session_id));
++                escape_log_field(response_session_id, escaped_session_id,
++                                 sizeof(escaped_session_id));
+                 syslog(LOG_WARNING,
+                        "correlation_id=%s rolling back session_id=%s after response failure",
+                        escaped_correlation_id, escaped_session_id);
+@@ -981,17 +1069,20 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
+     return send_session_response(fd, 0, NULL, NULL, NULL, "unsupported session request");
+ }
+ 
+-static int run_ipc_server(const char *socket_path, const char *pam_service)
++static int run_ipc_server(const char *socket_path, const char *pam_service,
++                          const char *auth_socket)
+ {
+     int fd = -1;
+     mode_t old_umask;
+     struct sockaddr_un addr;
+ 
+-    if (!pam_service_is_valid(pam_service)) {
+-        fprintf(stderr, "invalid PAM service name\n");
++    if (!pam_service_is_valid(pam_service) || !auth_socket || auth_socket[0] != '/' ||
++        strlen(auth_socket) >= sizeof(((struct sockaddr_un *)0)->sun_path)) {
++        fprintf(stderr, "invalid session manager configuration\n");
+         return -1;
+     }
+     g_pam_service = pam_service;
++    g_auth_socket = auth_socket;
+ 
+     if (prepare_socket_path(socket_path) != 0) {
+         char escaped_socket[512] = {0};
+@@ -1102,7 +1193,9 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
+ 
+ static void usage(const char *argv0)
+ {
+-    fprintf(stderr, "Usage: %s [--pam-service <name>] --socket <absolute-socket-path>\n", argv0);
++    fprintf(stderr,
++            "Usage: %s [--pam-service <name>] --auth-socket <absolute-auth-socket> "
++            "--socket <absolute-session-socket>\n", argv0);
+     fprintf(stderr, "       %s [--pam-service <name>] --open-session <user>\n", argv0);
+     fprintf(stderr, "Set FRDP_SESMAND_ALLOW_STANDALONE=1 to enable this development path.\n");
+ }
+@@ -1132,6 +1225,7 @@ int main(int argc, char **argv)
+     const char *socket_path = NULL;
+     const char *standalone_user = NULL;
+     const char *pam_service = "frdpd";
++    const char *auth_socket = NULL;
+ 
+     if (set_no_core() != 0) {
+         fprintf(stderr, "failed to disable core dumps\n");
+@@ -1159,6 +1253,13 @@ int main(int argc, char **argv)
+                 return 2;
+             }
+             pam_service = argv[x];
++        } else if (strcmp(argv[x], "--auth-socket") == 0) {
++            if (++x >= argc) {
++                usage(argv[0]);
++                closelog();
++                return 2;
++            }
++            auth_socket = argv[x];
+         } else if (strcmp(argv[x], "--socket") == 0) {
+             if (++x >= argc) {
+                 usage(argv[0]);
+@@ -1186,7 +1287,12 @@ int main(int argc, char **argv)
+         return 2;
+     }
+     if (socket_path) {
+-        const int rc = run_ipc_server(socket_path, pam_service);
++        if (!auth_socket) {
++            fprintf(stderr, "--auth-socket is required in IPC server mode\n");
++            closelog();
++            return 2;
++        }
++        const int rc = run_ipc_server(socket_path, pam_service, auth_socket);
+         closelog();
+         return (rc == 0) ? 0 : 1;
+     }
+@@ -1216,9 +1322,16 @@ int main(int argc, char **argv)
+     char session_id[64] = {0};
+     char display[32] = {0};
+     char agent_socket[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
+-    if (open_session(standalone_user, NULL, "standalone", 1024, 768, 24, session_id,
+-                      sizeof(session_id), display, sizeof(display), agent_socket,
+-                      sizeof(agent_socket)) == 0) {
++    struct passwd *standalone_pwd = getpwnam(standalone_user);
++    if (!standalone_pwd) {
++        fprintf(stderr, "standalone user lookup failed\n");
++        closelog();
++        return 1;
++    }
++    if (open_session(standalone_user, NULL, "standalone",
++                      (uint32_t)standalone_pwd->pw_uid, (uint32_t)standalone_pwd->pw_gid,
++                      1024, 768, 24, session_id, sizeof(session_id), display, sizeof(display),
++                      agent_socket, sizeof(agent_socket)) == 0) {
+         syslog(LOG_INFO, "created session for %s", escaped_standalone_user);
+     } else {
+         syslog(LOG_ERR, "failed to create session for %s", escaped_standalone_user);
+diff --git a/server/frdp/frdpd/frdpd.c b/server/frdp/frdpd/frdpd.c
+index 9d39f7e..556e40d 100644
+--- a/server/frdp/frdpd/frdpd.c
++++ b/server/frdp/frdpd/frdpd.c
+@@ -1012,14 +1012,17 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
+ 		return TRUE;
+ 	if (context->managed_session_open)
+ 		return TRUE;
+-	if (!client || !context->pam_user)
++	if (!client || !context->pam_user ||
++	    (strlen(context->auth_grant) != sizeof(context->auth_grant) - 1))
+ 		return FALSE;
+ 
+ 	if (!frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
+ 	                          context->correlation_id) ||
+ 	    !frdpd_copy_ipc_string(request.user, sizeof(request.user), context->pam_user) ||
+ 	    !frdpd_copy_ipc_string(request.rhost, sizeof(request.rhost),
+-	                          (client->hostname[0] != '\0') ? client->hostname : NULL))
++	                          (client->hostname[0] != '\0') ? client->hostname : NULL) ||
++	    !frdpd_copy_ipc_string(request.auth_grant, sizeof(request.auth_grant),
++	                          context->auth_grant))
+ 		return FALSE;
+ 
+ 	settings = client->context ? client->context->settings : NULL;
+@@ -1030,9 +1033,12 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
+ 		request.color_depth = freerdp_settings_get_uint32(settings, FreeRDP_ColorDepth);
+ 	}
+ 
+-	if (!frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_REQUEST, &request,
+-	                              &response))
++	const BOOL session_opened = frdpd_session_ipc_request(
++	    config->session_socket, FRDP_IPC_SESSION_REQUEST, &request, &response);
++	SecureZeroMemory(request.auth_grant, sizeof(request.auth_grant));
++	if (!session_opened)
+ 	{
++		SecureZeroMemory(context->auth_grant, sizeof(context->auth_grant));
+ 		WLog_WARN(TAG, "correlation_id=%s session manager rejected login for %s: %s",
+ 		          context->correlation_id,
+ 		          frdpd_log_value(context->pam_user, log_user, sizeof(log_user), "unknown"),
+@@ -1082,6 +1088,7 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
+ 	}
+ 
+ 	context->managed_session_open = TRUE;
++	SecureZeroMemory(context->auth_grant, sizeof(context->auth_grant));
+ 	context->agent_input_warned = FALSE;
+ 	context->agent_frame_warned = FALSE;
+ 	frdpd_reset_framebuffer_state(context);
+@@ -1105,6 +1112,10 @@ static void frdpd_auth_result_cleanup(frdpdAuthResult* result)
+ 	                              result->pam_session_open);
+ 	free(result->pam_user);
+ 	result->pam_user = NULL;
++	SecureZeroMemory(result->grant, sizeof(result->grant));
++	result->uid = 0;
++	result->gid = 0;
++	result->expires_at = 0;
+ 	result->pam_handle = NULL;
+ 	result->pam_credentials_established = FALSE;
+ 	result->pam_session_open = FALSE;
+@@ -1202,6 +1213,7 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
