@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         krb5-user \
         ldap-utils \
         libcjson-dev \
+        libicu-dev \
         libjpeg-dev \
         libkrb5-dev \
         libnss-sss \
