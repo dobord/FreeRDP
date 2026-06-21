@@ -82,6 +82,7 @@ RUN cmake -S /src -B /opt/freerdp-build -GNinja \
         -DWITH_CUPS=OFF \
         -DWITH_PCSC=OFF \
         -DWITH_FFMPEG=OFF \
+        -DWITH_SWSCALE=OFF \
         -DWITH_FUSE=OFF \
         -DWITH_OPENCL=OFF \
         -DCHANNEL_URBDRC=OFF \
