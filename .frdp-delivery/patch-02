@@ -1,0 +1,353 @@
+ : "denied"), escaped_reason,
++                     sizeof(escaped_reason));
+     openlog("frdp-authd", LOG_PID | LOG_NDELAY, LOG_AUTH);
+     syslog(success ? LOG_INFO : LOG_WARNING,
+-           "correlation_id=%s user=%s result=%s", correlation_id, escaped_user,
+-           success ? "success" : "failure");
++           "correlation_id=%s event=%s user=%s result=%s reason=%s", correlation_id,
++           escaped_event, escaped_user, success ? "success" : "failure", escaped_reason);
+     closelog();
+ }
+ 
+-static void clear_secret(char *secret, size_t length)
++static int copy_ipc_string(char *dst, size_t dst_size, const char *src, size_t src_size)
+ {
+-    volatile unsigned char *p = (volatile unsigned char *)secret;
++    size_t length = 0U;
+ 
+-    while (p && length-- > 0)
+-        *p++ = 0;
++    if (!dst || dst_size == 0U || !src)
++        return -1;
++    while (length < src_size && src[length] != '\0')
++        length++;
++    if (length == src_size || length >= dst_size)
++        return -1;
++    memcpy(dst, src, length);
++    dst[length] = '\0';
++    return 0;
+ }
+ 
+-static int copy_ipc_string(char *dst, size_t dst_size, const char *src, size_t src_size)
++static int copy_string(char *dst, size_t dst_size, const char *src)
+ {
+-    size_t len = 0;
++    int result = 0;
+ 
+-    if (!dst || dst_size == 0 || !src)
++    if (!dst || dst_size == 0U || !src)
+         return -1;
++    result = snprintf(dst, dst_size, "%s", src);
++    return (result >= 0 && (size_t)result < dst_size) ? 0 : -1;
++}
+ 
+-    while (len < src_size && src[len] != '\0')
+-        len++;
+-    if (len == src_size || len >= dst_size)
+-        return -1;
++static int send_auth_response(int fd, int success, const char *grant, const char *user,
++                              uint32_t uid, uint32_t gid, uint64_t expires_at,
++                              const char *error)
++{
++    frdpAuthResponse response;
++    frdpIpcHeader header;
++
++    memset(&response, 0, sizeof(response));
++    memset(&header, 0, sizeof(header));
++    response.success = success;
++    response.uid = uid;
++    response.gid = gid;
++    response.expires_at = expires_at;
++    if (grant)
++        (void)copy_string(response.grant, sizeof(response.grant), grant);
++    if (user)
++        (void)copy_string(response.user, sizeof(response.user), user);
++    if (error)
++        (void)copy_string(response.error, sizeof(response.error), error);
+ 
+-    memcpy(dst, src, len);
+-    dst[len] = '\0';
+-    return 0;
++    header.type = FRDP_IPC_AUTH_RESPONSE;
++    header.payload_len = sizeof(response);
++    if (frdp_ipc_send(fd, &header, sizeof(header)) != 0)
++        return -1;
++    return frdp_ipc_send(fd, &response, sizeof(response));
+ }
+ 
+-static int send_auth_response(int fd, int success, const char *error)
++static int send_grant_consume_response(int fd, int success, const frdpAuthzIdentity *identity,
++                                       const char *error)
+ {
+-    frdpAuthResponse resp;
+-    frdpIpcHeader rhdr;
+-
+-    memset(&resp, 0, sizeof(resp));
+-    resp.success = success;
++    frdpAuthGrantConsumeResponse response;
++    frdpIpcHeader header;
++
++    memset(&response, 0, sizeof(response));
++    memset(&header, 0, sizeof(header));
++    response.success = success;
++    if (identity) {
++        (void)copy_string(response.user, sizeof(response.user), identity->user);
++        response.uid = identity->uid;
++        response.gid = identity->gid;
++        response.expires_at = identity->expires_at;
++    }
+     if (error)
+-        snprintf(resp.error, sizeof(resp.error), "%s", error);
++        (void)copy_string(response.error, sizeof(response.error), error);
+ 
+-    rhdr.type = FRDP_IPC_AUTH_RESPONSE;
+-    rhdr.payload_len = sizeof(resp);
+-    if (frdp_ipc_send(fd, &rhdr, sizeof(rhdr)) < 0)
++    header.type = FRDP_IPC_AUTH_GRANT_CONSUME_RESPONSE;
++    header.payload_len = sizeof(response);
++    if (frdp_ipc_send(fd, &header, sizeof(header)) != 0)
+         return -1;
+-    return frdp_ipc_send(fd, &resp, sizeof(resp));
++    return frdp_ipc_send(fd, &response, sizeof(response));
+ }
+ 
+ static int verify_peer(int fd)
+ {
+ #ifdef __linux__
+-    struct ucred cred;
+-    socklen_t len = sizeof(cred);
++    struct ucred credentials;
++    socklen_t length = sizeof(credentials);
+ 
+-    memset(&cred, 0, sizeof(cred));
+-    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0)
++    memset(&credentials, 0, sizeof(credentials));
++    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &length) != 0)
+         return -1;
+-    if (cred.uid != geteuid())
++    if (length != sizeof(credentials) || credentials.uid != geteuid())
+         return -1;
+ #else
+     (void)fd;
++    return -1;
+ #endif
+     return 0;
+ }
+ 
+ static int prepare_socket_path(const char *socket_path)
+ {
+-    struct stat st;
+-    char parent[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
++    struct stat status;
++    char parent[sizeof(((struct sockaddr_un *)0)->sun_path)] = { 0 };
+     char *slash = NULL;
+ 
+-    if (!socket_path || strlen(socket_path) >= sizeof(((struct sockaddr_un *)0)->sun_path))
+-        return -1;
+-    if (socket_path[0] != '/')
++    if (!socket_path || strlen(socket_path) >= sizeof(((struct sockaddr_un *)0)->sun_path) ||
++        socket_path[0] != '/')
+         return -1;
+-
+-    snprintf(parent, sizeof(parent), "%s", socket_path);
++    (void)snprintf(parent, sizeof(parent), "%s", socket_path);
+     slash = strrchr(parent, '/');
+     if (!slash || slash == parent)
+         return -1;
+     *slash = '\0';
+ 
+-    if (lstat(parent, &st) != 0 || !S_ISDIR(st.st_mode))
++    if (lstat(parent, &status) != 0 || !S_ISDIR(status.st_mode))
+         return -1;
+-    if (st.st_uid != 0 && st.st_uid != geteuid())
++    if (status.st_uid != 0 && status.st_uid != geteuid())
+         return -1;
+-    if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0)
++    if ((status.st_mode & (S_IWGRP | S_IWOTH)) != 0)
+         return -1;
+ 
+-    if (lstat(socket_path, &st) != 0) {
++    if (lstat(socket_path, &status) != 0)
+         return (errno == ENOENT) ? 0 : -1;
+-    }
+-    if (!S_ISSOCK(st.st_mode))
+-        return -1;
+-    if (st.st_uid != geteuid())
++    if (!S_ISSOCK(status.st_mode) || status.st_uid != geteuid())
+         return -1;
+     return unlink(socket_path);
+ }
+ 
+ static int set_client_timeouts(int fd)
+ {
+-    struct timeval timeout;
++    struct timeval timeout = { 10, 0 };
+ 
+-    timeout.tv_sec = 10;
+-    timeout.tv_usec = 0;
+     if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0)
+         return -1;
+     if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0)
+@@ -301,88 +367,170 @@ static int set_client_timeouts(int fd)
+     return 0;
+ }
+ 
+-/* Perform a PAM authentication for the given user and password. */
+-int authenticate_user(const char *service, const char *rhost, const char *correlation_id,
+-                      const char *user, const char *password)
++static int set_cloexec(int fd)
+ {
+-    if (!service || !service[0] || !user || !password)
++    const int flags = fcntl(fd, F_GETFD);
++    if (flags < 0)
+         return -1;
+-    size_t pwlen = strlen(password);
+-    /* Allocate a temporary buffer and lock it to prevent swapping. */
+-    char *buf = mmap(NULL, pwlen + 1, PROT_READ | PROT_WRITE,
+-                     MAP_PRIVATE | MAP_ANON, -1, 0);
+-    if (buf == MAP_FAILED)
++    return fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
++}
++
++static int create_cloexec_unix_socket(void)
++{
++    int fd = -1;
++#ifdef SOCK_CLOEXEC
++    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
++    if (fd < 0 && (errno == EINVAL || errno == EPROTONOSUPPORT))
++#endif
++        fd = socket(AF_UNIX, SOCK_STREAM, 0);
++    if (fd < 0)
+         return -1;
+-    memcpy(buf, password, pwlen + 1);
+-    if (mlock(buf, pwlen + 1) != 0) {
+-        /* Hard fail if we cannot lock memory to protect secrets */
+-        memset(buf, 0, pwlen + 1);
+-        munmap(buf, pwlen + 1);
++    if (set_cloexec(fd) != 0) {
++        const int saved = errno;
++        close(fd);
++        errno = saved;
+         return -1;
+     }
++    return fd;
++}
+ 
+-    struct pam_conv conv = {pam_conversation, buf};
+-    pam_handle_t *pamh = NULL;
+-    int credentials_established = 0;
+-    int ret = pam_start(service, user, &conv, &pamh);
+-    if (ret == PAM_SUCCESS) {
+-        if (rhost && rhost[0]) {
+-            ret = pam_set_item(pamh, PAM_RHOST, rhost);
+-        }
+-        if (ret == PAM_SUCCESS) {
+-            ret = pam_set_item(pamh, PAM_TTY, "rdp");
+-        }
+-        if (ret == PAM_SUCCESS) {
+-            ret = pam_set_item(pamh, PAM_RUSER, user);
+-        }
+-        if (ret == PAM_SUCCESS) {
+-            ret = pam_set_item(pamh, PAM_AUTHTOK, buf);
+-        }
+-        if (ret == PAM_SUCCESS) {
+-            ret = pam_authenticate(pamh, 0);
+-        }
+-        if (ret == PAM_SUCCESS) {
+-            ret = pam_acct_mgmt(pamh, 0);
+-        }
+-        /* Establish credentials for the session */
+-        if (ret == PAM_SUCCESS) {
+-            ret = pam_setcred(pamh, PAM_ESTABLISH_CRED);
+-            credentials_established = (ret == PAM_SUCCESS);
++static int accept_cloexec(int fd)
++{
++    int client_fd = -1;
++#ifdef SOCK_CLOEXEC
++    client_fd = accept4(fd, NULL, NULL, SOCK_CLOEXEC);
++    if (client_fd < 0 && (errno == EINVAL || errno == ENOSYS))
++#endif
++        client_fd = accept(fd, NULL, NULL);
++    if (client_fd < 0)
++        return -1;
++    if (set_cloexec(client_fd) != 0) {
++        const int saved = errno;
++        close(client_fd);
++        errno = saved;
++        return -1;
++    }
++    return client_fd;
++}
++
++static int secure_random(uint8_t *buffer, size_t length)
++{
++    size_t offset = 0U;
++#ifdef __linux__
++    while (offset < length) {
++        const ssize_t count = getrandom(buffer + offset, length - offset, 0);
++        if (count > 0) {
++            offset += (size_t)count;
++            continue;
+         }
+-        if (credentials_established) {
+-            int cred_ret = pam_setcred(pamh, PAM_DELETE_CRED);
+-            if (ret == PAM_SUCCESS && cred_ret != PAM_SUCCESS)
+-                ret = cred_ret;
++        if (count < 0 && errno == EINTR)
++            continue;
++        break;
++    }
++    if (offset == length)
++        return 0;
++    offset = 0U;
++#endif
++    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
++    if (fd < 0)
++        return -1;
++    while (offset < length) {
++        const ssize_t count = read(fd, buffer + offset, length - offset);
++        if (count > 0) {
++            offset += (size_t)count;
++            continue;
+         }
+-        pam_set_item(pamh, PAM_AUTHTOK, "");
+-        pam_end(pamh, ret);
++        if (count < 0 && errno == EINTR)
++            continue;
++        close(fd);
++        return -1;
+     }
++    close(fd);
++    return 0;
++}
+ 
+-    /* Verify that the user exists. */
+-    struct passwd *pwd = getpwnam(user);
+-    if (!pwd) {
+-        ret = PAM_USER_UNKNOWN;
++static int authenticate_user(const char *service, const char *rhost, const char *correlation_id,
++                             const char *user, const char *password,
++                             frdpAuthenticatedIdentity *identity)
++{
++    size_t password_length = 0U;
++    char *locked_password = NULL;
++    pam_handle_t *pamh = NULL;
++    int pam_status = PAM_SYSTEM_ERR;
++    int result = -1;
++    const void *pam_user_item = NULL;
++    const char *canonical_user = NULL;
++    struct passwd *password_entry = NULL;
++
++    if (!service || service[0] == '\0' || !user || user[0] == '\0' || !password || !identity)
++        return -1;
++    memset(identity, 0, sizeof(*identity));
++    password_length = strlen(password);
++    locked_password = mmap(NULL, password_length + 1U, PROT_READ | PROT_WRITE,
++                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++    if (locked_password == MAP_FAILED)
++        return -1;
++    memcpy(locked_password, password, password_length + 1U);
++    if (mlock(locked_password, password_length + 1U) != 0)
++        goto cleanup;
++
++    struct pam_conv conversation = { pam_conver
