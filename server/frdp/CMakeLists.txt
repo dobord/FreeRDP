@@ -19,6 +19,8 @@ if(NOT UUID_LIBRARY)
   message(FATAL_ERROR "libuuid is required for WITH_FRDPD helper components")
 endif()
 
+option(WITH_FRDPD_IN_PROCESS_PAM "Enable insecure legacy in-process frdpd PAM fallback for local development" OFF)
+
 add_subdirectory(frdpd)
 
 add_library(frdp-ipc OBJECT

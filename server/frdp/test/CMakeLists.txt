@@ -43,6 +43,7 @@ add_test(NAME TestFreeRDPFrdpCtl
 
 add_test(NAME TestFreeRDPFrdpd
          COMMAND ${CMAKE_COMMAND} -DFRDPD_BINARY=$<TARGET_FILE:frdpd>
+                 -DFRDPD_IN_PROCESS_PAM=$<BOOL:${WITH_FRDPD_IN_PROCESS_PAM}>
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpd.cmake)
 
 set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "FreeRDP/Test")

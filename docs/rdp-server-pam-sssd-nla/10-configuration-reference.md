@@ -12,8 +12,8 @@ This document describes the configuration options available in `frdpd.toml` (see
 ## [auth]
 
 - `mode` (string): Authentication backend. Currently implemented value: `pam-sssd`. Default `pam-sssd`.
-- `pam_service` (string): Name of PAM service file for the legacy in-process PAM path and PAM auth smoke test. Default `frdpd`. The tree installs a non-interactive example as `/etc/pam.d/frdpd` through the `server` component. In the normal `auth_socket` path, the broker-side `frdp-authd --pam-service` setting selects the PAM service.
-- `auth_socket` (path): Absolute Unix socket path for the `frdp-authd` IPC broker in normal server startup. Relative paths and unsafe socket locations are rejected. The installed helper unit listens on `/run/frdp-authd/authd.sock`. Pair it with `[session].session_socket`; configuring only one helper socket is rejected. When omitted, `frdpd` starts only with the explicit `--allow-in-process-pam` legacy/development flag.
+- `pam_service` (string): Name of PAM service file for the PAM auth smoke test and for legacy in-process PAM only when `frdpd` is built with `-DWITH_FRDPD_IN_PROCESS_PAM=ON`. Default `frdpd`. The tree installs a non-interactive example as `/etc/pam.d/frdpd` through the `server` component. In the normal `auth_socket` path, the broker-side `frdp-authd --pam-service` setting selects the PAM service.
+- `auth_socket` (path): Absolute Unix socket path for the `frdp-authd` IPC broker in normal server startup. Relative paths and unsafe socket locations are rejected. The installed helper unit listens on `/run/frdp-authd/authd.sock`. Pair it with `[session].session_socket`; configuring only one helper socket is rejected. When omitted, normal builds reject server startup.
 - `kerberos`, `ntlm_fallback`, `keytab`, `accepted_spn`: planned Kerberos-first production fields. The current parser rejects them until the daemon can enforce the corresponding policy.
 
 ## [session]

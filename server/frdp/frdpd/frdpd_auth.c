@@ -257,12 +257,14 @@ fail:
 BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
                                  const SEC_WINNT_AUTH_IDENTITY* identity, frdpdAuthResult* result)
 {
+#ifdef WITH_FRDPD_IN_PROCESS_PAM
 	char* user = NULL;
 	char* domain = NULL;
 	char* password = NULL;
 	BOOL ok = FALSE;
 	frdpdLockedSecret password_secret = { 0 };
 	frdpdPamAuthRequest request = { 0 };
+#endif
 
 	frdpd_auth_result_set(result, FRDPD_PAM_AUTH_ERROR, 0);
 
@@ -271,6 +273,9 @@ BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
 	if (!frdpd_auth_string_is_empty(config->auth_socket))
 		return frdpd_authenticate_identity_ipc(config, identity, result);
 
+#ifndef WITH_FRDPD_IN_PROCESS_PAM
+	return FALSE;
+#else
 	if (!sspi_CopyAuthIdentityFieldsA((const SEC_WINNT_AUTH_IDENTITY_INFO*)identity, &user, &domain,
 	                                  &password))
 		goto fail;
@@ -334,4 +339,5 @@ fail:
 	free(password);
 
 	return ok;
+#endif
 }

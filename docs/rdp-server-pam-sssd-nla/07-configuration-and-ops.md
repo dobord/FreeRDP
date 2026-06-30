@@ -46,9 +46,8 @@ Install or review the dedicated PAM service `/etc/pam.d/frdpd` from `server/frdp
 - `pam_systemd.so` if logind integration is required;
 - correct behavior for expired passwords, locked accounts, and denied groups.
 
-The NLA password-backed flow is non-interactive. The normal `frdp-authd` broker path, and the legacy
-in-process `frdpd` path when explicitly enabled for local testing, set the password as `PAM_AUTHTOK`
-and answer PAM password prompts with the CredSSP/NLA
+The NLA password-backed flow is non-interactive. The normal `frdp-authd` broker path sets the password
+as `PAM_AUTHTOK` and answers PAM password prompts with the CredSSP/NLA
 password because CredSSP/NLA is not a general-purpose prompt
 transport. The PAM service should use modules/options that consume the existing authentication token,
 such as `use_first_pass` or an equivalent SSSD profile. MFA or extra prompt flows require a separate UX
@@ -69,9 +68,10 @@ password  sufficient pam_sss.so use_authtok
 
 Normal startup requires both helper sockets: `frdp-authd` owns PAM authentication/account checks and
 `frdp-sesmand` owns PAM sessions plus desktop agent launch. The packaged helper units listen on
-`/run/frdp-authd/authd.sock` and `/run/frdp-sesmand/sesmand.sock`. For local legacy testing only,
-`frdpd --allow-in-process-pam` enables the old direct PAM path; add `--no-pam-session` to that legacy
-mode when testing auth/account checks without opening a PAM session in the peer worker.
+`/run/frdp-authd/authd.sock` and `/run/frdp-sesmand/sesmand.sock`. The old direct PAM path is not
+available in normal builds; local legacy testing requires configuring CMake with
+`-DWITH_FRDPD_IN_PROCESS_PAM=ON`, using a config without helper socket entries, and then starting
+`frdpd --allow-in-process-pam`.
 
 ## SSSD operations
 

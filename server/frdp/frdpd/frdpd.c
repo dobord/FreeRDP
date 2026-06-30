@@ -1925,9 +1925,11 @@ static void frdpd_print_usage(const char* app)
 	(void)fprintf(stderr, "  --domain-mode=plain|downlevel|upn|auto\n");
 	(void)fprintf(stderr,
 	              "  --allow-tls-fallback          Also advertise TLS; NLA remains preferred\n");
+#ifdef WITH_FRDPD_IN_PROCESS_PAM
 	(void)fprintf(stderr,
 	              "  --allow-in-process-pam        Legacy/dev direct PAM auth/session in frdpd\n");
 	(void)fprintf(stderr, "  --no-pam-session             Disable PAM session in legacy/dev mode\n");
+#endif
 }
 
 static BOOL frdpd_parse_port(const char* value, UINT16* port)
@@ -2174,11 +2176,21 @@ static BOOL frdpd_parse_args(int argc, char* argv[], frdpdOptions* options)
 		else if (strcmp(arg, "--allow-tls-fallback") == 0)
 			options->server.allow_tls_fallback = TRUE;
 		else if (strcmp(arg, "--allow-in-process-pam") == 0)
+		{
+#ifdef WITH_FRDPD_IN_PROCESS_PAM
 			options->allow_in_process_pam = TRUE;
+#else
+			return FALSE;
+#endif
+		}
 		else if (strcmp(arg, "--no-pam-session") == 0)
 		{
+#ifdef WITH_FRDPD_IN_PROCESS_PAM
 			options->server.open_pam_session = FALSE;
 			options->no_pam_session_set = TRUE;
+#else
+			return FALSE;
+#endif
 		}
 		else if ((strcmp(arg, "--help") == 0) || (strcmp(arg, "-h") == 0))
 			options->show_help = TRUE;
@@ -2237,11 +2249,13 @@ static BOOL frdpd_validate_runtime_topology(frdpdOptions* options)
 
 	if (has_auth_socket || has_session_socket)
 	{
+#ifdef WITH_FRDPD_IN_PROCESS_PAM
 		if (options->allow_in_process_pam)
 		{
 			WLog_ERR(TAG, "--allow-in-process-pam cannot be combined with helper sockets");
 			return FALSE;
 		}
+#endif
 		if (!has_auth_socket || !has_session_socket)
 		{
 			WLog_ERR(TAG, "frdpd helper topology requires both auth_socket and session_socket");
@@ -2255,6 +2269,7 @@ static BOOL frdpd_validate_runtime_topology(frdpdOptions* options)
 		return TRUE;
 	}
 
+#ifdef WITH_FRDPD_IN_PROCESS_PAM
 	if (!options->allow_in_process_pam)
 	{
 		WLog_ERR(TAG,
@@ -2269,6 +2284,10 @@ static BOOL frdpd_validate_runtime_topology(frdpdOptions* options)
 	          "running legacy in-process PAM path; configure frdp-authd and frdp-sesmand for "
 	          "normal use");
 	return TRUE;
+#else
+	WLog_ERR(TAG, "frdpd normal startup requires --auth-socket and --session-socket");
+	return FALSE;
+#endif
 }
 
 static int frdpd_run_server(frdpdOptions* options)

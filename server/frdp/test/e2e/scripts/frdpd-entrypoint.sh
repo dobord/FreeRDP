@@ -336,7 +336,7 @@ children+=("$!")
 wait_socket "$FRDP_AUTH_SOCKET" || fail "frdp-authd socket was not created"
 wait_socket "$FRDP_SESSION_SOCKET" || fail "frdp-sesmand socket was not created"
 
-frdpd --config "$FRDP_CONFIG" --no-pam-session --domain-mode=plain &
+frdpd --config "$FRDP_CONFIG" --domain-mode=plain &
 children+=("$!")
 
 log "FRDP stack started for provider=$FRDP_IDENTITY_PROVIDER user=$FRDP_TEST_USER"

@@ -9,9 +9,9 @@ The target provides an experimental RDP listener and a PAM authentication smoke 
 frdpd --bind=0.0.0.0 --port=3389 --cert=server.crt --key=server.key --pam-service=frdpd
 ```
 
-The listener enables NLA/CredSSP, wires the FreeRDP peer `Logon` callback to PAM, opens a PAM session
-for accepted peers by default, and keeps input and update callbacks as no-op placeholders until desktop
-plumbing is added. Use `--no-pam-session` for auth/account-only testing.
+The listener enables NLA/CredSSP and requires the normal `frdp-authd` and `frdp-sesmand` helper sockets
+for authentication, PAM session ownership, and desktop agent launch. The old in-process PAM fallback is
+available only in builds configured with `-DWITH_FRDPD_IN_PROCESS_PAM=ON` for local development.
 
 ```bash
 frdpd --pam-auth-test USER [--domain DOMAIN] [--service SERVICE] [--rhost HOST]
