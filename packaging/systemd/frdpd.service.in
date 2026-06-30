@@ -1,6 +1,7 @@
 [Unit]
 Description=FreeRDP PAM/SSSD/NLA Server
-After=network.target
+Requires=frdp-authd.service frdp-sesmand.service
+After=network.target frdp-authd.service frdp-sesmand.service
 
 [Service]
 EnvironmentFile=-@CMAKE_INSTALL_FULL_SYSCONFDIR@/frdpd/frdpd.env

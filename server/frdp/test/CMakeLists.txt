@@ -21,7 +21,7 @@ add_executable(${MODULE_NAME}
     ../ipc/frdp-ipc.h
     ../frdpd/channel_policy.c
     ../frdpd/channel_policy.h)
-add_dependencies(${MODULE_NAME} frdpctl frdp-authd frdp-sesmand frdp-session-agent)
+add_dependencies(${MODULE_NAME} frdpd frdpctl frdp-authd frdp-sesmand frdp-session-agent)
 
 target_include_directories(${MODULE_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
@@ -40,5 +40,9 @@ endforeach()
 add_test(NAME TestFreeRDPFrdpCtl
          COMMAND ${CMAKE_COMMAND} -DFRDPCTL_BINARY=$<TARGET_FILE:frdpctl>
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpCtl.cmake)
+
+add_test(NAME TestFreeRDPFrdpd
+         COMMAND ${CMAKE_COMMAND} -DFRDPD_BINARY=$<TARGET_FILE:frdpd>
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpd.cmake)
 
 set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "FreeRDP/Test")
