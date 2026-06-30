@@ -27,6 +27,8 @@ typedef struct
     const char *socket_path;
 } frdpctlListSessionsOptions;
 
+typedef frdpctlListSessionsOptions frdpctlReloadOptions;
+
 static void usage(const char *argv0)
 {
     printf("Usage: %s <command> [options]\n", argv0);
@@ -34,7 +36,7 @@ static void usage(const char *argv0)
     printf("  status [--socket <path>]\n");
     printf("  list-sessions [--socket <path>]\n");
     printf("  kill-session <id> [--socket <path>]\n");
-    printf("  reload                 Reload configuration (not implemented)\n");
+    printf("  reload [--socket <path>]\n");
 }
 
 static int copy_field(char *dst, size_t dst_size, const char *value)
@@ -276,6 +278,59 @@ static int send_session_close_request(const char *socket_path, const char *sessi
     return 0;
 }
 
+static int send_reload_request(const char *socket_path)
+{
+    int fd = -1;
+    frdpIpcHeader header;
+    frdpIpcHeader response_header;
+    frdpControlResponse response;
+
+    memset(&header, 0, sizeof(header));
+    memset(&response_header, 0, sizeof(response_header));
+    memset(&response, 0, sizeof(response));
+
+    fd = frdp_ipc_connect(socket_path);
+    if (fd < 0) {
+        char escaped_socket[sizeof(((struct sockaddr_un *)0)->sun_path) * 4] = { 0 };
+
+        escape_text(socket_path, escaped_socket, sizeof(escaped_socket));
+        fprintf(stderr, "unable to connect to session manager socket %s: %s\n", escaped_socket,
+                strerror(errno));
+        return 3;
+    }
+
+    header.type = FRDP_IPC_SESSION_RELOAD_REQUEST;
+    header.payload_len = 0;
+    if ((frdp_ipc_send(fd, &header, sizeof(header)) != 0) ||
+        (frdp_ipc_recv(fd, &response_header, sizeof(response_header)) !=
+         (int)sizeof(response_header)) ||
+        (response_header.type != FRDP_IPC_SESSION_RELOAD_RESPONSE) ||
+        (response_header.payload_len != sizeof(response)) ||
+        (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))) {
+        fprintf(stderr, "reload IPC failed\n");
+        frdp_ipc_close(fd);
+        return 3;
+    }
+
+    frdp_ipc_close(fd);
+    response.message[sizeof(response.message) - 1] = '\0';
+    response.error[sizeof(response.error) - 1] = '\0';
+    if (!response.success) {
+        char escaped_error[sizeof(response.error) * 4] = { 0 };
+
+        escape_text(response.error[0] ? response.error : "unknown", escaped_error, sizeof(escaped_error));
+        fprintf(stderr, "reload failed: %s\n", escaped_error);
+        return 4;
+    }
+
+    char escaped_message[sizeof(response.message) * 4] = { 0 };
+
+    escape_text(response.message[0] ? response.message : "accepted", escaped_message,
+                sizeof(escaped_message));
+    printf("Reload %s\n", escaped_message);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
@@ -308,12 +363,13 @@ int main(int argc, char **argv)
         }
         return send_session_close_request(options.socket_path, options.session_id);
     } else if (strcmp(cmd, "reload") == 0) {
-        if (argc != 2) {
-            fprintf(stderr, "Usage: %s reload\n", argv[0]);
+        frdpctlReloadOptions options;
+
+        if (parse_list_sessions_options(argc, argv, &options) != 0) {
+            fprintf(stderr, "Usage: %s reload [--socket <path>]\n", argv[0]);
             return 1;
         }
-        fprintf(stderr, "reload is not implemented\n");
-        return 2;
+        return send_reload_request(options.socket_path);
     } else {
         fprintf(stderr, "Unknown command: %s\n", cmd);
         usage(argv[0]);

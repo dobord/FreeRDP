@@ -686,6 +686,26 @@ static int send_session_list_response(int fd)
     return frdp_ipc_send(fd, &resp, sizeof(resp));
 }
 
+static int send_reload_response(int fd, int success, const char *message, const char *error)
+{
+    frdpIpcHeader hdr;
+    frdpControlResponse resp;
+
+    memset(&hdr, 0, sizeof(hdr));
+    memset(&resp, 0, sizeof(resp));
+    resp.success = success;
+    if (message)
+        snprintf(resp.message, sizeof(resp.message), "%s", message);
+    if (error)
+        snprintf(resp.error, sizeof(resp.error), "%s", error);
+
+    hdr.type = FRDP_IPC_SESSION_RELOAD_RESPONSE;
+    hdr.payload_len = sizeof(resp);
+    if (frdp_ipc_send(fd, &hdr, sizeof(hdr)) != 0)
+        return -1;
+    return frdp_ipc_send(fd, &resp, sizeof(resp));
+}
+
 static int verify_peer(int fd)
 {
 #ifdef __linux__
@@ -1103,6 +1123,8 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
         }
         if ((hdr.type == FRDP_IPC_SESSION_LIST_REQUEST) && (hdr.payload_len == 0)) {
             (void)send_session_list_response(cfd);
+        } else if ((hdr.type == FRDP_IPC_SESSION_RELOAD_REQUEST) && (hdr.payload_len == 0)) {
+            (void)send_reload_response(cfd, 1, "accepted", NULL);
         } else if (((hdr.type == FRDP_IPC_SESSION_REQUEST_V2) &&
                     (hdr.payload_len == sizeof(frdpSessionRequestV2))) ||
                    (((hdr.type == FRDP_IPC_SESSION_REQUEST) ||

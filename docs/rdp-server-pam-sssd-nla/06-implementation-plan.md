@@ -165,8 +165,8 @@ Deliverables:
 - [ ] deb/rpm packages (draft packaging files exist, RPM CMake flags are aligned with `WITH_FRDPD`, but actual package builds are not verified);
 - [x] admin CLI `frdpctl` builds and installs under `WITH_FRDPD`;
 - [x] admin CLI `frdpctl status` / `list-sessions` / `kill-session` operations over `frdp-sesmand` session IPC, with local CTest smoke coverage for request/response behavior;
-- [x] admin CLI `frdpctl reload` fails closed with a non-zero exit while live reload IPC is not implemented;
-- [ ] admin CLI `frdpctl reload` IPC operation;
+- [x] admin CLI `frdpctl reload` session IPC operation, with no-op acknowledgement and local request/response CTest coverage;
+- [ ] real config reread/apply path behind `frdpctl reload`;
 - [x] configuration reference, example, and partial parser integration for implemented daemon fields, including `max_connections` and static/dynamic channel filter policy (`10-configuration-reference.md`, `server/frdp/config/frdpd.toml`);
 - [x] runbooks for AD join, keytab rotation, and troubleshooting (`09-runbooks.md`);
 - [ ] dashboards and alert rules;

@@ -3,19 +3,20 @@ if(NOT DEFINED FRDPCTL_BINARY)
 endif()
 
 execute_process(
-  COMMAND "${FRDPCTL_BINARY}" reload
+  COMMAND "${FRDPCTL_BINARY}" reload --socket
   RESULT_VARIABLE reload_result
   OUTPUT_VARIABLE reload_stdout
   ERROR_VARIABLE reload_stderr)
 
-if(NOT reload_result EQUAL 2)
-  message(FATAL_ERROR "frdpctl reload returned ${reload_result}, expected 2")
+if(NOT reload_result EQUAL 1)
+  message(FATAL_ERROR "frdpctl reload --socket returned ${reload_result}, expected 1")
 endif()
 if(NOT reload_stdout STREQUAL "")
-  message(FATAL_ERROR "frdpctl reload wrote unexpected stdout: ${reload_stdout}")
+  message(FATAL_ERROR "frdpctl reload --socket wrote unexpected stdout: ${reload_stdout}")
 endif()
-if(NOT reload_stderr STREQUAL "reload is not implemented\n")
-  message(FATAL_ERROR "frdpctl reload stderr did not report not implemented: ${reload_stderr}")
+set(expected_reload_stderr "Usage: ${FRDPCTL_BINARY} reload [--socket <path>]\n")
+if(NOT reload_stderr STREQUAL expected_reload_stderr)
+  message(FATAL_ERROR "frdpctl reload --socket stderr did not report usage: ${reload_stderr}")
 endif()
 
 execute_process(
@@ -30,7 +31,7 @@ endif()
 if(NOT reload_extra_stdout STREQUAL "")
   message(FATAL_ERROR "frdpctl reload extra wrote unexpected stdout: ${reload_extra_stdout}")
 endif()
-set(expected_reload_extra_stderr "Usage: ${FRDPCTL_BINARY} reload\n")
+set(expected_reload_extra_stderr "Usage: ${FRDPCTL_BINARY} reload [--socket <path>]\n")
 if(NOT reload_extra_stderr STREQUAL expected_reload_extra_stderr)
   message(FATAL_ERROR "frdpctl reload extra stderr did not report usage: ${reload_extra_stderr}")
 endif()

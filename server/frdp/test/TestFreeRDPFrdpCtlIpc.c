@@ -235,6 +235,50 @@ static int handle_close_failure_request(int fd)
 	return write_all(fd, &response, sizeof(response));
 }
 
+static int handle_reload_request(int fd)
+{
+	frdpIpcHeader header = { 0 };
+	frdpIpcHeader response_header = { 0 };
+	frdpControlResponse response = { 0 };
+
+	if (read_exact(fd, &header, sizeof(header)) != 0)
+		return -1;
+	if (header.type != FRDP_IPC_SESSION_RELOAD_REQUEST)
+		return -1;
+	if (header.payload_len != 0)
+		return -1;
+
+	response.success = 1;
+	snprintf(response.message, sizeof(response.message), "accepted");
+	response_header.type = FRDP_IPC_SESSION_RELOAD_RESPONSE;
+	response_header.payload_len = sizeof(response);
+	if (write_all(fd, &response_header, sizeof(response_header)) != 0)
+		return -1;
+	return write_all(fd, &response, sizeof(response));
+}
+
+static int handle_reload_failure_request(int fd)
+{
+	frdpIpcHeader header = { 0 };
+	frdpIpcHeader response_header = { 0 };
+	frdpControlResponse response = { 0 };
+
+	if (read_exact(fd, &header, sizeof(header)) != 0)
+		return -1;
+	if (header.type != FRDP_IPC_SESSION_RELOAD_REQUEST)
+		return -1;
+	if (header.payload_len != 0)
+		return -1;
+
+	response.success = 0;
+	snprintf(response.error, sizeof(response.error), "busy\ntry later");
+	response_header.type = FRDP_IPC_SESSION_RELOAD_RESPONSE;
+	response_header.payload_len = sizeof(response);
+	if (write_all(fd, &response_header, sizeof(response_header)) != 0)
+		return -1;
+	return write_all(fd, &response, sizeof(response));
+}
+
 static int make_socket(char* dir, size_t dir_size, char* path, size_t path_size)
 {
 	int fd = -1;
@@ -489,6 +533,38 @@ static int test_kill_session_escapes_error(void)
 	return 0;
 }
 
+static int test_reload(void)
+{
+	frdpctlRunResult result = { 0 };
+	char* argv[] = { FRDPCTL_BINARY, "reload", "--socket", NULL, NULL };
+
+	if (run_with_server(argv, 3, handle_reload_request, &result) != 0)
+		return -1;
+	if (result.status != 0)
+		return -1;
+	if (strcmp(result.stdout_data, "Reload accepted\n") != 0)
+		return -1;
+	if (strcmp(result.stderr_data, "") != 0)
+		return -1;
+	return 0;
+}
+
+static int test_reload_escapes_error(void)
+{
+	frdpctlRunResult result = { 0 };
+	char* argv[] = { FRDPCTL_BINARY, "reload", "--socket", NULL, NULL };
+
+	if (run_with_server(argv, 3, handle_reload_failure_request, &result) != 0)
+		return -1;
+	if (result.status != 4)
+		return -1;
+	if (strcmp(result.stdout_data, "") != 0)
+		return -1;
+	if (strcmp(result.stderr_data, "reload failed: busy\\x0atry later\n") != 0)
+		return -1;
+	return 0;
+}
+
 int TestFreeRDPFrdpCtlIpc(int argc, char* argv[])
 {
 	(void)argc;
@@ -505,6 +581,10 @@ int TestFreeRDPFrdpCtlIpc(int argc, char* argv[])
 	if (test_kill_session_escapes_success() != 0)
 		return -1;
 	if (test_kill_session_escapes_error() != 0)
+		return -1;
+	if (test_reload() != 0)
+		return -1;
+	if (test_reload_escapes_error() != 0)
 		return -1;
 	return 0;
 }
