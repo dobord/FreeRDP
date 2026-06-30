@@ -7,6 +7,9 @@
 #include <ctype.h>
 #include <stdlib.h>
 
+#define FRDP_CLIPBOARD_DEFAULT_MAX_TEXT_BYTES 65536U
+#define FRDP_CLIPBOARD_MAX_TEXT_BYTES_LIMIT 1048576U
+
 static int copy_string(char *dst, size_t dst_size, const char *src)
 {
     if (!dst || dst_size == 0)
@@ -76,6 +79,44 @@ static int parse_channel_filter_mode(const char *value, frdpChannelFilterMode *m
     }
     if (strcmp(value, "blocklist") == 0 || strcmp(value, "blacklist") == 0) {
         *mode = FRDP_CHANNEL_FILTER_BLOCKLIST;
+        return 0;
+    }
+    return -1;
+}
+
+static int parse_clipboard_mode(const char *value, frdpClipboardMode *mode)
+{
+    if (!value || !mode)
+        return -1;
+    if (strcmp(value, "disabled") == 0) {
+        *mode = FRDP_CLIPBOARD_MODE_DISABLED;
+        return 0;
+    }
+    if (strcmp(value, "text") == 0) {
+        *mode = FRDP_CLIPBOARD_MODE_TEXT;
+        return 0;
+    }
+    return -1;
+}
+
+static int parse_clipboard_direction(const char *value, frdpClipboardDirection *direction)
+{
+    if (!value || !direction)
+        return -1;
+    if (strcmp(value, "disabled") == 0) {
+        *direction = FRDP_CLIPBOARD_DIRECTION_DISABLED;
+        return 0;
+    }
+    if (strcmp(value, "client-to-server") == 0) {
+        *direction = FRDP_CLIPBOARD_DIRECTION_CLIENT_TO_SERVER;
+        return 0;
+    }
+    if (strcmp(value, "server-to-client") == 0) {
+        *direction = FRDP_CLIPBOARD_DIRECTION_SERVER_TO_CLIENT;
+        return 0;
+    }
+    if (strcmp(value, "bidirectional") == 0) {
+        *direction = FRDP_CLIPBOARD_DIRECTION_BIDIRECTIONAL;
         return 0;
     }
     return -1;
@@ -249,6 +290,26 @@ static int validate_channel_filter_lists(const frdpConfig *config, int seen_stat
     return 0;
 }
 
+static int validate_clipboard_policy(const frdpConfig *config, int seen_direction)
+{
+    if (!config)
+        return -1;
+    if ((config->clipboard.max_text_bytes == 0) ||
+        (config->clipboard.max_text_bytes > FRDP_CLIPBOARD_MAX_TEXT_BYTES_LIMIT))
+        return -1;
+
+    if (config->clipboard.mode == FRDP_CLIPBOARD_MODE_DISABLED)
+        return (config->clipboard.direction == FRDP_CLIPBOARD_DIRECTION_DISABLED) ? 0 : -1;
+
+    if (config->clipboard.mode == FRDP_CLIPBOARD_MODE_TEXT) {
+        if (!seen_direction)
+            return -1;
+        return (config->clipboard.direction != FRDP_CLIPBOARD_DIRECTION_DISABLED) ? 0 : -1;
+    }
+
+    return -1;
+}
+
 /* Load key/value pairs from a small fail-closed TOML subset. */
 int frdp_config_load(const char *path, frdpConfig *config)
 {
@@ -264,6 +325,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_auth_section = 0;
     int seen_session_section = 0;
     int seen_channels_section = 0;
+    int seen_clipboard_section = 0;
     int seen_listen = 0;
     int seen_max_connections = 0;
     int seen_security = 0;
@@ -279,8 +341,12 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_channel_dynamic_mode = 0;
     int seen_channel_dynamic_allow = 0;
     int seen_channel_dynamic_deny = 0;
+    int seen_clipboard_mode = 0;
+    int seen_clipboard_direction = 0;
+    int seen_clipboard_max_text_bytes = 0;
     /* Set defaults */
     memset(config, 0, sizeof(*config));
+    config->clipboard.max_text_bytes = FRDP_CLIPBOARD_DEFAULT_MAX_TEXT_BYTES;
     if (copy_string(config->listen, sizeof(config->listen), "0.0.0.0:3389") != 0 ||
         copy_string(config->security, sizeof(config->security), "nla") != 0 ||
         copy_string(config->auth_mode, sizeof(config->auth_mode), "pam-sssd") != 0 ||
@@ -319,7 +385,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
             if ((strcmp(current_section, "server") != 0) &&
                 (strcmp(current_section, "auth") != 0) &&
                 (strcmp(current_section, "session") != 0) &&
-                (strcmp(current_section, "channels") != 0)) {
+                (strcmp(current_section, "channels") != 0) &&
+                (strcmp(current_section, "clipboard") != 0)) {
                 fclose(f);
                 return -1;
             }
@@ -347,6 +414,12 @@ int frdp_config_load(const char *path, frdpConfig *config)
                     return -1;
                 }
                 seen_channels_section = 1;
+            } else if (strcmp(current_section, "clipboard") == 0) {
+                if (seen_clipboard_section) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_clipboard_section = 1;
             }
             continue;
         }
@@ -370,8 +443,10 @@ int frdp_config_load(const char *path, frdpConfig *config)
                                        (strcmp(key, "static_deny") == 0) ||
                                        (strcmp(key, "dynamic_allow") == 0) ||
                                        (strcmp(key, "dynamic_deny") == 0));
-        const int allow_bare_value = (strcmp(current_section, "server") == 0) &&
-                                     (strcmp(key, "max_connections") == 0);
+        const int allow_bare_value = ((strcmp(current_section, "server") == 0) &&
+                                      (strcmp(key, "max_connections") == 0)) ||
+                                     ((strcmp(current_section, "clipboard") == 0) &&
+                                      (strcmp(key, "max_text_bytes") == 0));
         if (allow_bare_value) {
             /* Bare numeric values are accepted for TOML-like integer fields. */
         }
@@ -599,6 +674,44 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 fclose(f);
                 return -1;
             }
+        } else if (strcmp(current_section, "clipboard") == 0) {
+            if (strcmp(key, "mode") == 0) {
+                if (seen_clipboard_mode) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_clipboard_mode = 1;
+                if (parse_clipboard_mode(val, &config->clipboard.mode) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "direction") == 0) {
+                if (seen_clipboard_direction) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_clipboard_direction = 1;
+                if (parse_clipboard_direction(val, &config->clipboard.direction) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "max_text_bytes") == 0) {
+                if (seen_clipboard_max_text_bytes) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_clipboard_max_text_bytes = 1;
+                if (parse_uint32_limit(val, &config->clipboard.max_text_bytes) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else {
+                fclose(f);
+                return -1;
+            }
         } else if (strcmp(current_section, "audit") == 0) {
             fclose(f);
             return -1;
@@ -614,6 +727,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
     if (validate_channel_filter_lists(config, seen_channel_static_allow, seen_channel_static_deny,
                                       seen_channel_dynamic_allow,
                                       seen_channel_dynamic_deny) != 0)
+        return -1;
+    if (validate_clipboard_policy(config, seen_clipboard_direction) != 0)
         return -1;
     return 0;
 }

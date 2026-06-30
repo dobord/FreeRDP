@@ -10,6 +10,18 @@ typedef enum {
     FRDP_CHANNEL_FILTER_ALLOWLIST = 1
 } frdpChannelFilterMode;
 
+typedef enum {
+    FRDP_CLIPBOARD_MODE_DISABLED = 0,
+    FRDP_CLIPBOARD_MODE_TEXT = 1
+} frdpClipboardMode;
+
+typedef enum {
+    FRDP_CLIPBOARD_DIRECTION_DISABLED = 0,
+    FRDP_CLIPBOARD_DIRECTION_CLIENT_TO_SERVER = 1,
+    FRDP_CLIPBOARD_DIRECTION_SERVER_TO_CLIENT = 2,
+    FRDP_CLIPBOARD_DIRECTION_BIDIRECTIONAL = 3
+} frdpClipboardDirection;
+
 typedef struct {
     frdpChannelFilterMode static_mode;
     uint32_t static_allow_count;
@@ -23,6 +35,12 @@ typedef struct {
     char dynamic_deny[FRDP_CONFIG_MAX_CHANNELS][FRDP_CONFIG_CHANNEL_NAME_SIZE];
 } frdpChannelPolicy;
 
+typedef struct {
+    frdpClipboardMode mode;
+    frdpClipboardDirection direction;
+    uint32_t max_text_bytes;
+} frdpClipboardPolicy;
+
 /* Structure representing configuration parsed from frdpd.toml */
 typedef struct {
     char listen[64];
@@ -35,6 +53,7 @@ typedef struct {
     char auth_socket[108];
     char session_socket[108];
     frdpChannelPolicy channels;
+    frdpClipboardPolicy clipboard;
 } frdpConfig;
 
 /* Load configuration from a TOML file into the provided struct. Returns 0 on success. */

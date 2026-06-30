@@ -30,4 +30,11 @@ session_socket = "/run/frdp-sesmand/sesmand.sock"
 # Allowing a name only permits negotiation; clipboard/audio handlers are not implemented yet.
 # drdynvc remains guard-denied until dynamic-channel open enforcement is implemented.
 
+# [clipboard]
+# Clipboard defaults to disabled. Text mode requires an explicit direction and
+# a bounded maximum payload before a runtime handler can be enabled.
+# mode = "disabled"
+# direction = "disabled"
+# max_text_bytes = 65536
+
 # The current parser still rejects [audit] instead of silently ignoring policy.

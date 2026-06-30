@@ -72,6 +72,12 @@ static int test_default_blocklist(void)
 		return -1;
 	if (config.channels.dynamic_deny_count != 0)
 		return -1;
+	if (config.clipboard.mode != FRDP_CLIPBOARD_MODE_DISABLED)
+		return -1;
+	if (config.clipboard.direction != FRDP_CLIPBOARD_DIRECTION_DISABLED)
+		return -1;
+	if (config.clipboard.max_text_bytes != 65536)
+		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "drdynvc") != 0)
@@ -301,6 +307,50 @@ static int test_dynamic_blocklist(void)
 	return 0;
 }
 
+static int test_clipboard_policy(void)
+{
+	frdpConfig config = { 0 };
+	const char* body = "[clipboard]\nmode = \"text\"\n"
+	                   "direction = \"client-to-server\"\nmax_text_bytes = 4096\n";
+
+	if (load_config_body("frdp-clipboard-client-to-server.toml", body, &config) != 0)
+		return -1;
+	if (config.clipboard.mode != FRDP_CLIPBOARD_MODE_TEXT)
+		return -1;
+	if (config.clipboard.direction != FRDP_CLIPBOARD_DIRECTION_CLIENT_TO_SERVER)
+		return -1;
+	if (config.clipboard.max_text_bytes != 4096)
+		return -1;
+
+	body = "[clipboard]\nmode = \"text\"\ndirection = \"server-to-client\"\n";
+	if (load_config_body("frdp-clipboard-server-to-client.toml", body, &config) != 0)
+		return -1;
+	if (config.clipboard.direction != FRDP_CLIPBOARD_DIRECTION_SERVER_TO_CLIENT)
+		return -1;
+	if (config.clipboard.max_text_bytes != 65536)
+		return -1;
+
+	body = "[clipboard]\nmode = \"text\"\ndirection = \"bidirectional\"\nmax_text_bytes = 1048576\n";
+	if (load_config_body("frdp-clipboard-bidirectional.toml", body, &config) != 0)
+		return -1;
+	if (config.clipboard.direction != FRDP_CLIPBOARD_DIRECTION_BIDIRECTIONAL)
+		return -1;
+	if (config.clipboard.max_text_bytes != 1048576)
+		return -1;
+
+	body = "[clipboard]\nmode = \"disabled\"\nmax_text_bytes = 1024\n";
+	if (load_config_body("frdp-clipboard-disabled.toml", body, &config) != 0)
+		return -1;
+	if (config.clipboard.mode != FRDP_CLIPBOARD_MODE_DISABLED)
+		return -1;
+	if (config.clipboard.direction != FRDP_CLIPBOARD_DIRECTION_DISABLED)
+		return -1;
+	if (config.clipboard.max_text_bytes != 1024)
+		return -1;
+
+	return 0;
+}
+
 static int test_invalid_channel_config(void)
 {
 	if (expect_load_failure("frdp-duplicate-max-connections.toml",
@@ -424,6 +474,43 @@ static int test_invalid_channel_config(void)
 	                        "[channels]\nstatic_deny = \"cliprdr\"\n[channels]\nstatic_deny = \"rdpsnd\"\n") !=
 	    0)
 		return -1;
+	if (expect_load_failure("frdp-bad-clipboard-mode.toml",
+	                        "[clipboard]\nmode = \"files\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-bad-clipboard-direction.toml",
+	                        "[clipboard]\ndirection = \"up\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-clipboard-direction-without-mode.toml",
+	                        "[clipboard]\ndirection = \"client-to-server\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-clipboard-text-without-direction.toml",
+	                        "[clipboard]\nmode = \"text\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-clipboard-text-disabled-direction.toml",
+	                        "[clipboard]\nmode = \"text\"\ndirection = \"disabled\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-clipboard-disabled-with-direction.toml",
+	                        "[clipboard]\nmode = \"disabled\"\ndirection = \"server-to-client\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-clipboard-zero-limit.toml",
+	                        "[clipboard]\nmax_text_bytes = 0\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-clipboard-large-limit.toml",
+	                        "[clipboard]\nmax_text_bytes = 1048577\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-clipboard-quoted-limit.toml",
+	                        "[clipboard]\nmax_text_bytes = \"4096\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-clipboard-duplicate-mode.toml",
+	                        "[clipboard]\nmode = \"disabled\"\nmode = \"text\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-clipboard-section.toml",
+	                        "[clipboard]\nmode = \"disabled\"\n[clipboard]\nmode = \"disabled\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-unknown-clipboard-key.toml",
+	                        "[clipboard]\nfiles = \"true\"\n") != 0)
+		return -1;
 	return 0;
 }
 
@@ -445,6 +532,8 @@ int TestFreeRDPFrdpConfig(int argc, char* argv[])
 	if (test_dynamic_allowlist() != 0)
 		return -1;
 	if (test_dynamic_blocklist() != 0)
+		return -1;
+	if (test_clipboard_policy() != 0)
 		return -1;
 	if (test_invalid_channel_config() != 0)
 		return -1;

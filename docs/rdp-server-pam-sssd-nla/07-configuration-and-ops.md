@@ -34,6 +34,11 @@ session_socket = "/run/frdp-sesmand/sesmand.sock"
 # static_allow = "cliprdr,rdpsnd"
 # Allowing a name only permits negotiation; clipboard/audio handlers are not implemented yet.
 
+# [clipboard]
+# mode = "disabled"
+# direction = "disabled"
+# max_text_bytes = 65536
+
 # The current parser still rejects [audit] instead of silently ignoring policy.
 ```
 
