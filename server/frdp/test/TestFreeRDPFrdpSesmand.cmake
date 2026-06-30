@@ -6,6 +6,12 @@ set(expected_usage
     "Usage: ${FRDP_SESMAND_BINARY} [--pam-service <name> | --config <path>] --socket <absolute-socket-path>\n       ${FRDP_SESMAND_BINARY} [--pam-service <name>] --open-session <user>\nSet FRDP_SESMAND_ALLOW_STANDALONE=1 to enable this development path.\n"
 )
 
+set(test_dir "${CMAKE_CURRENT_BINARY_DIR}/TestFreeRDPFrdpSesmand")
+file(REMOVE_RECURSE "${test_dir}")
+file(MAKE_DIRECTORY "${test_dir}")
+set(missing_config "${test_dir}/missing.toml")
+set(socket_path "${test_dir}/frdp-sesmand-test.sock")
+
 function(expect_sesmand_result name expected_code expected_stderr)
   execute_process(
     COMMAND "${FRDP_SESMAND_BINARY}" ${ARGN}
@@ -27,18 +33,17 @@ endfunction()
 expect_sesmand_result("frdp-sesmand --config" 2 "${expected_usage}" --config)
 
 expect_sesmand_result("frdp-sesmand --config without socket" 2 "${expected_usage}" --config
-                      /tmp/frdp-sesmand-missing.toml)
+                      "${missing_config}")
 
 expect_sesmand_result("frdp-sesmand --config with standalone open" 2 "${expected_usage}" --config
-                      /tmp/frdp-sesmand-missing.toml --open-session nobody)
+                      "${missing_config}" --open-session nobody)
 
 expect_sesmand_result("frdp-sesmand --config with pam-service" 2 "${expected_usage}" --config
-                      /tmp/frdp-sesmand-missing.toml --pam-service frdpd --socket
-                      /tmp/frdp-sesmand-test.sock)
+                      "${missing_config}" --pam-service frdpd --socket "${socket_path}")
 
 expect_sesmand_result("frdp-sesmand missing config" 1
-                      "failed to load frdp-sesmand config\n" --config
-                      /tmp/frdp-sesmand-missing.toml --socket /tmp/frdp-sesmand-test.sock)
+                      "failed to load frdp-sesmand config\n" --config "${missing_config}" --socket
+                      "${socket_path}")
 
 expect_sesmand_result("frdp-sesmand invalid pam-service" 1 "invalid PAM service name\n"
-                      --pam-service bad/service --socket /tmp/frdp-sesmand-test.sock)
+                      --pam-service bad/service --socket "${socket_path}")
