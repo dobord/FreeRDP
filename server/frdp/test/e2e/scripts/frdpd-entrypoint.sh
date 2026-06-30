@@ -330,7 +330,7 @@ generate_tls_identity
 
 frdp-authd --pam-service frdpd --socket "$FRDP_AUTH_SOCKET" &
 children+=("$!")
-frdp-sesmand --pam-service frdpd --socket "$FRDP_SESSION_SOCKET" &
+frdp-sesmand --config "$FRDP_CONFIG" --socket "$FRDP_SESSION_SOCKET" &
 children+=("$!")
 
 wait_socket "$FRDP_AUTH_SOCKET" || fail "frdp-authd socket was not created"
