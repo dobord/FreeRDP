@@ -144,6 +144,7 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 		request->pam_handle = NULL;
 		request->pam_credentials_established = FALSE;
 		request->pam_session_open = FALSE;
+		request->normalized_user = NULL;
 	}
 
 	if (!request || frdpd_string_is_empty(request->service) ||
@@ -233,6 +234,11 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 	}
 
 	request->pam_status = pam_status;
+	if (status == FRDPD_PAM_AUTH_OK)
+	{
+		request->normalized_user = normalized_user;
+		normalized_user = NULL;
+	}
 	free(normalized_user);
 	return status;
 }

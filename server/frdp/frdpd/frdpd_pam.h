@@ -39,6 +39,7 @@ typedef struct
 	BOOL pam_credentials_established;
 	BOOL pam_session_open;
 	int pam_status;
+	char* normalized_user;
 } frdpdPamAuthRequest;
 
 BOOL frdpd_pam_build_user(const char* user, const char* domain, frdpdDomainMode mode,

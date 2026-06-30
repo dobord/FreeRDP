@@ -8,6 +8,8 @@
 #ifndef FREERDP_SERVER_FRDPD_AUTH_H
 #define FREERDP_SERVER_FRDPD_AUTH_H
 
+#include <sys/types.h>
+
 #include <winpr/sspi.h>
 
 #include "frdpd_pam.h"
@@ -30,6 +32,9 @@ typedef struct
 	void* pam_handle;
 	BOOL pam_credentials_established;
 	BOOL pam_session_open;
+	uid_t uid;
+	gid_t gid;
+	BOOL has_posix_account;
 } frdpdAuthResult;
 
 BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,

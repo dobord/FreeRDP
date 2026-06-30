@@ -7,10 +7,13 @@
 
 #include "frdpd_auth.h"
 
+#include <errno.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 #include <winpr/crt.h>
 
@@ -28,6 +31,9 @@ static void frdpd_auth_result_set(frdpdAuthResult* result, frdpdPamAuthStatus st
 	result->pam_handle = NULL;
 	result->pam_credentials_established = FALSE;
 	result->pam_session_open = FALSE;
+	result->uid = (uid_t)-1;
+	result->gid = (gid_t)-1;
+	result->has_posix_account = FALSE;
 }
 
 static BOOL frdpd_auth_string_is_empty(const char* value)
@@ -61,6 +67,50 @@ static BOOL frdpd_auth_copy_ipc_string(char* dst, size_t dst_size, const char* s
 
 	rc = snprintf(dst, dst_size, "%s", src);
 	return (rc >= 0) && ((size_t)rc < dst_size);
+}
+
+static BOOL frdpd_auth_lookup_posix_account(const char* user, uid_t* uid, gid_t* gid)
+{
+	struct passwd pwd = { 0 };
+	struct passwd* result = NULL;
+	long buf_size = sysconf(_SC_GETPW_R_SIZE_MAX);
+	BOOL ok = FALSE;
+
+	if (!user || !uid || !gid)
+		return FALSE;
+
+	if (buf_size < 0)
+		buf_size = 16384;
+
+	char* buffer = calloc(1, (size_t)buf_size);
+	if (!buffer)
+		return FALSE;
+
+	while (TRUE)
+	{
+		const int rc = getpwnam_r(user, &pwd, buffer, (size_t)buf_size, &result);
+		if (rc == 0)
+		{
+			ok = (result != NULL);
+			break;
+		}
+		if ((rc != ERANGE) || (buf_size > (1024 * 1024)))
+			break;
+
+		buf_size *= 2;
+		char* resized = realloc(buffer, (size_t)buf_size);
+		if (!resized)
+			break;
+		buffer = resized;
+	}
+	if (ok)
+	{
+		*uid = pwd.pw_uid;
+		*gid = pwd.pw_gid;
+	}
+
+	free(buffer);
+	return ok;
 }
 
 typedef struct
@@ -171,6 +221,21 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	                                                            : FRDPD_PAM_AUTH_DENIED),
 	                      0);
 	ok = response.success ? TRUE : FALSE;
+	if (ok)
+	{
+		uid_t uid = (uid_t)-1;
+		gid_t gid = (gid_t)-1;
+
+		ok = frdpd_auth_lookup_posix_account(pam_user, &uid, &gid);
+		if (result && ok)
+		{
+			result->uid = uid;
+			result->gid = gid;
+			result->has_posix_account = TRUE;
+		}
+		else if (result)
+			result->status = FRDPD_PAM_AUTH_ACCOUNT_DENIED;
+	}
 	if (ok && result)
 	{
 		result->pam_user = pam_user;
@@ -195,7 +260,6 @@ BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
 	char* user = NULL;
 	char* domain = NULL;
 	char* password = NULL;
-	char* pam_user = NULL;
 	BOOL ok = FALSE;
 	frdpdLockedSecret password_secret = { 0 };
 	frdpdPamAuthRequest request = { 0 };
@@ -220,8 +284,6 @@ BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
 		goto fail;
 	if (!frdpd_auth_lock_secret(password, strlen(password) + 1, &password_secret))
 		goto fail;
-	if (!frdpd_pam_build_user(user, domain, config->domain_mode, &pam_user))
-		goto fail;
 
 	request.service = config->pam_service;
 	request.user = user;
@@ -235,20 +297,39 @@ BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
 	const frdpdPamAuthStatus status = frdpd_pam_authenticate(&request);
 	frdpd_auth_result_set(result, status, request.pam_status);
 	ok = (status == FRDPD_PAM_AUTH_OK);
+	if (ok)
+	{
+		uid_t uid = (uid_t)-1;
+		gid_t gid = (gid_t)-1;
+
+		ok = frdpd_auth_lookup_posix_account(request.normalized_user, &uid, &gid);
+		if (result && ok)
+		{
+			result->uid = uid;
+			result->gid = gid;
+			result->has_posix_account = TRUE;
+		}
+		else if (result)
+			result->status = FRDPD_PAM_AUTH_ACCOUNT_DENIED;
+	}
 	if (ok && result)
 	{
-		result->pam_user = pam_user;
+		result->pam_user = request.normalized_user;
 		result->pam_handle = request.pam_handle;
 		result->pam_credentials_established = request.pam_credentials_established;
 		result->pam_session_open = request.pam_session_open;
-		pam_user = NULL;
+		request.normalized_user = NULL;
 		request.pam_handle = NULL;
 	}
 
 fail:
+	if (request.pam_handle)
+		(void)frdpd_pam_close_session(request.pam_handle, request.normalized_user,
+		                              request.pam_credentials_established,
+		                              request.pam_session_open);
 	free(user);
 	free(domain);
-	free(pam_user);
+	free(request.normalized_user);
 	frdpd_auth_clear_locked_secret(&password_secret);
 	free(password);
 
