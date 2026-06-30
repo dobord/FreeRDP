@@ -11,6 +11,8 @@ set(SRCS
     frdpd.h
     frdpd_auth.c
     frdpd_auth.h
+    frdpd_peer.c
+    frdpd_peer.h
     channel_policy.c
     channel_policy.h
     frdpd_pam.c
