@@ -12,9 +12,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#ifndef CMAKE_CURRENT_BINARY_DIR
-#error "CMAKE_CURRENT_BINARY_DIR is not defined"
-#endif
 #ifndef FRDP_AUTHD_BINARY
 #error "FRDP_AUTHD_BINARY is not defined"
 #endif
@@ -31,7 +28,7 @@ typedef struct
 
 static int make_runtime_dir(char* dir, size_t dir_size, const char* name)
 {
-	const int rc = snprintf(dir, dir_size, "%s/%s-XXXXXX", CMAKE_CURRENT_BINARY_DIR, name);
+	const int rc = snprintf(dir, dir_size, "/tmp/frdp-%s-XXXXXX", name);
 
 	if ((rc < 0) || ((size_t)rc >= dir_size))
 		return -1;
