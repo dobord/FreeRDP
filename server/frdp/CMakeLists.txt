@@ -38,6 +38,8 @@ set_property(TARGET frdp-authd PROPERTY FOLDER "Server/frdp")
 
 add_executable(frdp-sesmand
     frdp-sesmand/frdp-sesmand.c
+    config/frdp-config.c
+    config/frdp-config.h
     $<TARGET_OBJECTS:frdp-ipc>)
 target_include_directories(frdp-sesmand SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
 target_link_libraries(frdp-sesmand PRIVATE ${PAM_LIBRARIES} ${UUID_LIBRARY})

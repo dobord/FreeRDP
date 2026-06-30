@@ -34,6 +34,7 @@
 #include <fcntl.h>
 #include <poll.h>
 
+#include "../config/frdp-config.h"
 #include "../ipc/frdp-ipc.h"
 
 /* Session registry entry.  Each session retains its PAM handle and the
@@ -59,7 +60,8 @@ typedef struct {
 static session sessions[MAX_SESSIONS];
 static int session_count = 0;
 static int next_display = FRDP_DISPLAY_MIN;
-static const char *g_pam_service = "frdpd";
+static char g_pam_service[64] = "frdpd";
+static char g_config_path[1024] = {0};
 static char g_agent_socket_dir[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
 static volatile sig_atomic_t g_stop_requested = 0;
 
@@ -832,6 +834,63 @@ static int pam_service_is_valid(const char *service)
     return 1;
 }
 
+static int set_pam_service_name(const char *service)
+{
+    int rc = 0;
+
+    if (!pam_service_is_valid(service))
+        return -1;
+    rc = snprintf(g_pam_service, sizeof(g_pam_service), "%s", service);
+    return (rc >= 0 && (size_t)rc < sizeof(g_pam_service)) ? 0 : -1;
+}
+
+static int copy_config_path(const char *path)
+{
+    int rc = 0;
+
+    if (!path || path[0] == '\0')
+        return -1;
+    rc = snprintf(g_config_path, sizeof(g_config_path), "%s", path);
+    return (rc >= 0 && (size_t)rc < sizeof(g_config_path)) ? 0 : -1;
+}
+
+static int load_configured_pam_service(const char *config_path, char *service, size_t service_size)
+{
+    frdpConfig config;
+    int rc = 0;
+
+    if (!config_path || !service || service_size == 0)
+        return -1;
+    if (frdp_config_load(config_path, &config) != 0)
+        return -1;
+    if (!pam_service_is_valid(config.pam_service))
+        return -1;
+    rc = snprintf(service, service_size, "%s", config.pam_service);
+    return (rc >= 0 && (size_t)rc < service_size) ? 0 : -1;
+}
+
+static int reload_configured_pam_service(char *error, size_t error_size)
+{
+    char pam_service[sizeof(g_pam_service)] = {0};
+
+    if (g_config_path[0] == '\0') {
+        if (error && error_size > 0)
+            snprintf(error, error_size, "%s", "no config path configured");
+        return -1;
+    }
+    if (load_configured_pam_service(g_config_path, pam_service, sizeof(pam_service)) != 0) {
+        if (error && error_size > 0)
+            snprintf(error, error_size, "%s", "config reload failed");
+        return -1;
+    }
+    if (set_pam_service_name(pam_service) != 0) {
+        if (error && error_size > 0)
+            snprintf(error, error_size, "%s", "invalid PAM service name");
+        return -1;
+    }
+    return 0;
+}
+
 static int set_cloexec(int fd)
 {
     const int flags = fcntl(fd, F_GETFD);
@@ -1020,17 +1079,28 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
     return send_session_response(fd, 0, NULL, NULL, NULL, "unsupported session request");
 }
 
-static int run_ipc_server(const char *socket_path, const char *pam_service)
+static int run_ipc_server(const char *socket_path, const char *pam_service, const char *config_path)
 {
     int fd = -1;
     mode_t old_umask;
     struct sockaddr_un addr;
 
-    if (!pam_service_is_valid(pam_service)) {
-        fprintf(stderr, "invalid PAM service name\n");
-        return -1;
+    if (config_path) {
+        char configured_service[sizeof(g_pam_service)] = {0};
+
+        if (copy_config_path(config_path) != 0 ||
+            load_configured_pam_service(config_path, configured_service,
+                                        sizeof(configured_service)) != 0 ||
+            set_pam_service_name(configured_service) != 0) {
+            fprintf(stderr, "failed to load frdp-sesmand config\n");
+            return -1;
+        }
+    } else {
+        if (set_pam_service_name(pam_service) != 0) {
+            fprintf(stderr, "invalid PAM service name\n");
+            return -1;
+        }
     }
-    g_pam_service = pam_service;
 
     if (prepare_socket_path(socket_path) != 0) {
         char escaped_socket[512] = {0};
@@ -1124,7 +1194,16 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
         if ((hdr.type == FRDP_IPC_SESSION_LIST_REQUEST) && (hdr.payload_len == 0)) {
             (void)send_session_list_response(cfd);
         } else if ((hdr.type == FRDP_IPC_SESSION_RELOAD_REQUEST) && (hdr.payload_len == 0)) {
-            (void)send_reload_response(cfd, 1, "accepted", NULL);
+            if (g_config_path[0] != '\0') {
+                char error[sizeof(((frdpControlResponse *)0)->error)] = {0};
+
+                if (reload_configured_pam_service(error, sizeof(error)) == 0)
+                    (void)send_reload_response(cfd, 1, "applied", NULL);
+                else
+                    (void)send_reload_response(cfd, 0, NULL, error);
+            } else {
+                (void)send_reload_response(cfd, 1, "accepted", NULL);
+            }
         } else if (((hdr.type == FRDP_IPC_SESSION_REQUEST_V2) &&
                     (hdr.payload_len == sizeof(frdpSessionRequestV2))) ||
                    (((hdr.type == FRDP_IPC_SESSION_REQUEST) ||
@@ -1145,7 +1224,9 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
 
 static void usage(const char *argv0)
 {
-    fprintf(stderr, "Usage: %s [--pam-service <name>] --socket <absolute-socket-path>\n", argv0);
+    fprintf(stderr,
+            "Usage: %s [--pam-service <name> | --config <path>] --socket <absolute-socket-path>\n",
+            argv0);
     fprintf(stderr, "       %s [--pam-service <name>] --open-session <user>\n", argv0);
     fprintf(stderr, "Set FRDP_SESMAND_ALLOW_STANDALONE=1 to enable this development path.\n");
 }
@@ -1175,6 +1256,8 @@ int main(int argc, char **argv)
     const char *socket_path = NULL;
     const char *standalone_user = NULL;
     const char *pam_service = "frdpd";
+    const char *config_path = NULL;
+    int pam_service_set = 0;
 
     if (set_no_core() != 0) {
         fprintf(stderr, "failed to disable core dumps\n");
@@ -1202,6 +1285,14 @@ int main(int argc, char **argv)
                 return 2;
             }
             pam_service = argv[x];
+            pam_service_set = 1;
+        } else if (strcmp(argv[x], "--config") == 0) {
+            if (++x >= argc) {
+                usage(argv[0]);
+                closelog();
+                return 2;
+            }
+            config_path = argv[x];
         } else if (strcmp(argv[x], "--socket") == 0) {
             if (++x >= argc) {
                 usage(argv[0]);
@@ -1228,8 +1319,13 @@ int main(int argc, char **argv)
         closelog();
         return 2;
     }
+    if (config_path && (!socket_path || standalone_user || pam_service_set)) {
+        usage(argv[0]);
+        closelog();
+        return 2;
+    }
     if (socket_path) {
-        const int rc = run_ipc_server(socket_path, pam_service);
+        const int rc = run_ipc_server(socket_path, pam_service, config_path);
         closelog();
         return (rc == 0) ? 0 : 1;
     }
@@ -1238,12 +1334,11 @@ int main(int argc, char **argv)
         closelog();
         return 2;
     }
-    if (!pam_service_is_valid(pam_service)) {
+    if (set_pam_service_name(pam_service) != 0) {
         fprintf(stderr, "invalid PAM service name\n");
         closelog();
         return 2;
     }
-    g_pam_service = pam_service;
     if (!standalone_open_session_allowed()) {
         fprintf(stderr, "standalone session opening is disabled by default\n");
         syslog(LOG_WARNING, "refused standalone session open without explicit development opt-in");

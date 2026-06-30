@@ -84,7 +84,8 @@ static int wait_for_exit(pid_t pid, int* status)
 	return -1;
 }
 
-static int start_helper(const char* binary, const char* name, frdpTestHelper* helper)
+static int start_helper_with_config(const char* binary, const char* name, const char* config_path,
+                                    frdpTestHelper* helper)
 {
 	if (!binary || !name || !helper)
 		return -1;
@@ -101,7 +102,11 @@ static int start_helper(const char* binary, const char* name, frdpTestHelper* he
 		goto fail;
 	if (helper->pid == 0)
 	{
-		execl(binary, binary, "--socket", helper->socket_path, (char*)NULL);
+		if (config_path)
+			execl(binary, binary, "--config", config_path, "--socket", helper->socket_path,
+			      (char*)NULL);
+		else
+			execl(binary, binary, "--socket", helper->socket_path, (char*)NULL);
 		_exit(127);
 	}
 	if (wait_for_socket(helper->socket_path) != 0)
@@ -124,6 +129,11 @@ fail:
 	memset(helper, 0, sizeof(*helper));
 	helper->pid = -1;
 	return -1;
+}
+
+static int start_helper(const char* binary, const char* name, frdpTestHelper* helper)
+{
+	return start_helper_with_config(binary, name, NULL, helper);
 }
 
 static int stop_helper(frdpTestHelper* helper)
@@ -205,6 +215,31 @@ static int receive_session_response(int fd, int expected_success, const char* ex
 	if (!!response.success != !!expected_success)
 		return -1;
 	if (!memchr(response.error, '\0', sizeof(response.error)))
+		return -1;
+	if (expected_error && strcmp(response.error, expected_error) != 0)
+		return -1;
+	return 0;
+}
+
+static int receive_reload_response(int fd, int expected_success, const char* expected_message,
+                                   const char* expected_error)
+{
+	frdpIpcHeader header = { 0 };
+	frdpControlResponse response = { 0 };
+
+	if (frdp_ipc_recv(fd, &header, sizeof(header)) != (int)sizeof(header))
+		return -1;
+	if ((header.type != FRDP_IPC_SESSION_RELOAD_RESPONSE) ||
+	    (header.payload_len != sizeof(response)))
+		return -1;
+	if (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))
+		return -1;
+	if (!!response.success != !!expected_success)
+		return -1;
+	if (!memchr(response.message, '\0', sizeof(response.message)) ||
+	    !memchr(response.error, '\0', sizeof(response.error)))
+		return -1;
+	if (expected_message && strcmp(response.message, expected_message) != 0)
 		return -1;
 	if (expected_error && strcmp(response.error, expected_error) != 0)
 		return -1;
@@ -419,6 +454,82 @@ cleanup:
 	return rc;
 }
 
+static int test_sesmand_reload(const char* socket_path, int expected_success,
+                               const char* expected_message, const char* expected_error)
+{
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	if (send_header(fd, FRDP_IPC_SESSION_RELOAD_REQUEST, 0) != 0)
+		goto cleanup;
+	rc = receive_reload_response(fd, expected_success, expected_message, expected_error);
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
+static int write_sesmand_config(const char* path, const char* pam_service)
+{
+	FILE* fp = NULL;
+
+	if (!path || !pam_service)
+		return -1;
+	fp = fopen(path, "wb");
+	if (!fp)
+		return -1;
+	if (fprintf(fp, "[auth]\npam_service = \"%s\"\n", pam_service) < 0)
+	{
+		fclose(fp);
+		return -1;
+	}
+	return fclose(fp);
+}
+
+static int test_sesmand_reload_config(void)
+{
+	frdpTestHelper helper;
+	char config_dir[1024] = { 0 };
+	char config_path[1024] = { 0 };
+	int rc = -1;
+
+	memset(&helper, 0, sizeof(helper));
+	helper.pid = -1;
+	if (make_runtime_dir(config_dir, sizeof(config_dir), "frdp-sesmand-reload-config") != 0)
+		return -1;
+	if (snprintf(config_path, sizeof(config_path), "%s/frdpd.toml", config_dir) >=
+	    (int)sizeof(config_path))
+		goto cleanup_dir;
+	if (write_sesmand_config(config_path, "frdpd") != 0)
+		goto cleanup_dir;
+	if (start_helper_with_config(FRDP_SESMAND_BINARY, "frdp-sesmand-reload", config_path,
+	                             &helper) != 0)
+		goto cleanup_dir;
+	if (test_sesmand_reload(helper.socket_path, 1, "applied", NULL) != 0)
+		goto cleanup;
+	if (write_sesmand_config(config_path, "frdpd_reload") != 0)
+		goto cleanup;
+	if (test_sesmand_reload(helper.socket_path, 1, "applied", NULL) != 0)
+		goto cleanup;
+	if (write_sesmand_config(config_path, "bad/service") != 0)
+		goto cleanup;
+	if (test_sesmand_reload(helper.socket_path, 0, NULL, "config reload failed") != 0)
+		goto cleanup;
+	if (test_sesmand_list_empty(helper.socket_path) != 0)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (stop_helper(&helper) != 0)
+		rc = -1;
+cleanup_dir:
+	unlink(config_path);
+	rmdir(config_dir);
+	return rc;
+}
+
 static int test_sesmand_component(void)
 {
 	frdpTestHelper helper;
@@ -437,6 +548,8 @@ static int test_sesmand_component(void)
 	if (test_sesmand_rejects_posix_account_mismatch(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_bad_length(helper.socket_path) != 0)
+		goto cleanup;
+	if (test_sesmand_reload(helper.socket_path, 1, "accepted", NULL) != 0)
 		goto cleanup;
 	/* A final list request proves the registry and service loop remained healthy. */
 	if (test_sesmand_list_empty(helper.socket_path) != 0)
@@ -601,6 +714,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_sesmand_component() != 0)
 	{
 		printf("frdp-sesmand IPC component test failed\n");
+		return -1;
+	}
+	if (test_sesmand_reload_config() != 0)
+	{
+		printf("frdp-sesmand reload config test failed\n");
 		return -1;
 	}
 	if (test_frdpd_live_helper_topology() != 0)
