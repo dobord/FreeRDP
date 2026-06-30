@@ -21,11 +21,11 @@ making the current canonical helper topology repeatably green.
 | Password-backed NLA and PAM | 60% | Integrated FreeRDP server callbacks, CredSSP identity extraction, PAM auth/account handling, locked temporary secret buffers, auth broker IPC required for normal startup, in-process fallback hidden behind a development build option | Windows client and domain interoperability need repeatable evidence; development fallback builds can still process credentials in the peer worker |
 | Privilege-separated topology | 60% | `frdp-authd`, `frdp-sesmand`, per-user agent, Unix sockets, peer credential checks, process hardening, correlation IDs, normal startup requiring both helper sockets, live helper-topology startup smoke coverage, and no default in-process PAM fallback | Authenticated identity is passed as mutable strings without a cryptographically bound, single-use authorization object |
 | Session lifecycle | 45% | PAM session ownership, uid/gid drop, Xvfb agent startup, close requests and cleanup exist | No reconnect, durable registry, logind/cgroup ownership, crash reconciliation, atomic display reservation or resource quotas |
-| Desktop data path | 35% | Input injection, raw/XDamage tile capture, bounded output scheduling, basic resize and opportunistic NSCodec exist | No production RFX/RDPGFX policy, limited text/IME behavior, no systematic performance or resolution interoperability evidence |
+| Desktop data path | 36% | Input injection, raw/XDamage tile capture, bounded output scheduling, basic resize, agent-side resize IPC smoke coverage, and opportunistic NSCodec exist | No production RFX/RDPGFX policy, limited text/IME behavior, no systematic performance or real-client resolution interoperability evidence |
 | Virtual channels | 20% | Static-channel filtering and a DVC authorization hook fail closed | No useful clipboard/audio handlers; `drdynvc` is deliberately guard-denied; no runtime channel tests |
 | Kerberos-first path | 10% | A build-only GSSAPI helper skeleton and architecture documentation exist | No CredSSP/SPNEGO token transport, configured keytab/SPN validation, SSSD principal mapping, account/session binding or security review |
 | Operations and packaging | 25% | Example systemd units, PAM file, configuration, install rules and draft MAC policy files exist | No completed DEB/RPM build, active SELinux/AppArmor validation, upgrade/rollback, socket activation, metrics or operational SLOs |
-| Automated verification | 46% | Unit tests, helper-process component tests, live helper-topology startup smoke coverage and Docker Compose profiles for local PAM, Samba AD and FreeIPA are present | Compose profiles must become green and stable; no Windows `mstsc`, reconnect, load, fuzzing, leak or crash-recovery gates yet |
+| Automated verification | 47% | Unit tests, helper-process component tests, live helper-topology startup smoke coverage, agent resize control-IPC smoke coverage and Docker Compose profiles for local PAM, Samba AD and FreeIPA are present | Compose profiles must become green and stable; no Windows `mstsc`, reconnect, load, fuzzing, leak or crash-recovery gates yet |
 | Overall production readiness | **25–30%** | A testable MVP skeleton with meaningful security boundaries | Several correctness, lifecycle, interoperability and operability gates remain open |
 
 ## Highest-value implementation order
@@ -142,7 +142,7 @@ messages. Extend it with:
 - peer UID rejection and server peer-credential validation;
 - live-socket/stale-socket startup behavior;
 - broker crash during auth and manager crash during open/close;
-- agent protocol frame/input/resize bounds against Xvfb;
+- agent protocol frame/input bounds against Xvfb plus resize control-IPC coverage;
 - sanitizer and Valgrind/LSan variants.
 
 ### Docker Compose E2E
