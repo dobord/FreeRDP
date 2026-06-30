@@ -25,6 +25,7 @@ add_dependencies(${MODULE_NAME} frdpd frdpctl frdp-authd frdp-sesmand frdp-sessi
 
 target_include_directories(${MODULE_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+                                                   FRDPD_BINARY="$<TARGET_FILE:frdpd>"
                                                    FRDPCTL_BINARY="$<TARGET_FILE:frdpctl>"
                                                    FRDP_AUTHD_BINARY="$<TARGET_FILE:frdp-authd>"
                                                    FRDP_SESMAND_BINARY="$<TARGET_FILE:frdp-sesmand>"

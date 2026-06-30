@@ -1,6 +1,7 @@
 #include "ipc/frdp-ipc.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -12,6 +13,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#ifndef FRDPD_BINARY
+#error "FRDPD_BINARY is not defined"
+#endif
 #ifndef FRDP_AUTHD_BINARY
 #error "FRDP_AUTHD_BINARY is not defined"
 #endif
@@ -445,6 +449,145 @@ cleanup:
 	return rc;
 }
 
+static int file_contains(const char* path, const char* needle)
+{
+	char buffer[4096] = { 0 };
+	FILE* fp = NULL;
+	size_t needle_len = 0;
+	size_t used = 0;
+	int found = 0;
+
+	if (!path || !needle)
+		return 0;
+	needle_len = strlen(needle);
+	if ((needle_len == 0) || (needle_len >= sizeof(buffer)))
+		return 0;
+	fp = fopen(path, "rb");
+	if (!fp)
+		return 0;
+	while (!found)
+	{
+		const size_t available = sizeof(buffer) - used - 1U;
+		const size_t read = fread(&buffer[used], 1, available, fp);
+
+		used += read;
+		buffer[used] = '\0';
+		if (strstr(buffer, needle))
+			found = 1;
+		if (read < available)
+			break;
+		if (used > needle_len)
+		{
+			memmove(buffer, &buffer[used - needle_len], needle_len);
+			used = needle_len;
+		}
+		else
+			used = 0;
+	}
+	fclose(fp);
+	return found;
+}
+
+static int run_frdpd_with_live_helpers(const char* auth_socket, const char* session_socket)
+{
+	char dir[1024] = { 0 };
+	char stderr_path[1024] = { 0 };
+	char auth_arg[sizeof(((struct sockaddr_un*)0)->sun_path) + 32] = { 0 };
+	char session_arg[sizeof(((struct sockaddr_un*)0)->sun_path) + 32] = { 0 };
+	pid_t pid = -1;
+	int status = 0;
+	int rc = -1;
+
+	if (!auth_socket || !session_socket)
+		return -1;
+	if (make_runtime_dir(dir, sizeof(dir), "frdpd-topology") != 0)
+		return -1;
+	if (snprintf(stderr_path, sizeof(stderr_path), "%s/stderr.log", dir) >=
+	    (int)sizeof(stderr_path))
+		goto cleanup;
+	if (snprintf(auth_arg, sizeof(auth_arg), "--auth-socket=%s", auth_socket) >=
+	    (int)sizeof(auth_arg))
+		goto cleanup;
+	if (snprintf(session_arg, sizeof(session_arg), "--session-socket=%s", session_socket) >=
+	    (int)sizeof(session_arg))
+		goto cleanup;
+
+	pid = fork();
+	if (pid < 0)
+		goto cleanup;
+	if (pid == 0)
+	{
+		const int err = open(stderr_path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+		const int devnull = open("/dev/null", O_WRONLY);
+
+		if (err < 0)
+			_exit(127);
+		(void)dup2(err, STDERR_FILENO);
+		if (devnull >= 0)
+			(void)dup2(devnull, STDOUT_FILENO);
+		if (err > STDERR_FILENO)
+			close(err);
+		if (devnull > STDOUT_FILENO)
+			close(devnull);
+		execl(FRDPD_BINARY, FRDPD_BINARY, auth_arg, session_arg, "--cert=/missing",
+		      "--key=/missing", (char*)NULL);
+		_exit(127);
+	}
+	if (wait_for_exit(pid, &status) != 0)
+	{
+		kill(pid, SIGKILL);
+		(void)waitpid(pid, NULL, 0);
+		pid = -1;
+		goto cleanup;
+	}
+	pid = -1;
+	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 255))
+		goto cleanup;
+	if (!file_contains(stderr_path, "Certificate or key file not found: cert=/missing key=/missing"))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (pid > 0)
+	{
+		kill(pid, SIGKILL);
+		(void)waitpid(pid, NULL, 0);
+	}
+	unlink(stderr_path);
+	rmdir(dir);
+	return rc;
+}
+
+static int test_frdpd_live_helper_topology(void)
+{
+	frdpTestHelper auth_helper;
+	frdpTestHelper session_helper;
+	int auth_started = 0;
+	int session_started = 0;
+	int rc = -1;
+
+	if (start_helper(FRDP_AUTHD_BINARY, "frdp-authd-topology", &auth_helper) != 0)
+		return -1;
+	auth_started = 1;
+	if (start_helper(FRDP_SESMAND_BINARY, "frdp-sesmand-topology", &session_helper) != 0)
+		goto cleanup;
+	session_started = 1;
+	if (run_frdpd_with_live_helpers(auth_helper.socket_path, session_helper.socket_path) != 0)
+		goto cleanup;
+	if (test_authd_rejects_bad_length(auth_helper.socket_path) != 0)
+		goto cleanup;
+	if (test_sesmand_list_empty(session_helper.socket_path) != 0)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (session_started && (stop_helper(&session_helper) != 0))
+		rc = -1;
+	if (auth_started && (stop_helper(&auth_helper) != 0))
+		rc = -1;
+	return rc;
+}
+
 int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 {
 	(void)argc;
@@ -458,6 +601,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_sesmand_component() != 0)
 	{
 		printf("frdp-sesmand IPC component test failed\n");
+		return -1;
+	}
+	if (test_frdpd_live_helper_topology() != 0)
+	{
+		printf("frdpd live helper topology test failed\n");
 		return -1;
 	}
 	return 0;
