@@ -35,6 +35,21 @@ static BOOL frdpd_auth_string_is_empty(const char* value)
 	return !value || (value[0] == '\0');
 }
 
+static BOOL frdpd_auth_identity_has_empty_password(const SEC_WINNT_AUTH_IDENTITY* identity)
+{
+	const char* passwordA = NULL;
+	const WCHAR* passwordW = NULL;
+	UINT32 password_length = 0;
+	const UINT32 flags = sspi_GetAuthIdentityFlags(identity);
+
+	if (flags & SEC_WINNT_AUTH_IDENTITY_ANSI)
+		return sspi_GetAuthIdentityPasswordA(identity, &passwordA, &password_length) && passwordA &&
+		       (password_length == 0);
+
+	return sspi_GetAuthIdentityPasswordW(identity, &passwordW, &password_length) && passwordW &&
+	       (password_length == 0);
+}
+
 static BOOL frdpd_auth_copy_ipc_string(char* dst, size_t dst_size, const char* src)
 {
 	int rc = 0;
@@ -106,6 +121,12 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	if (!sspi_CopyAuthIdentityFieldsA((const SEC_WINNT_AUTH_IDENTITY_INFO*)identity, &user, &domain,
 	                                  &password))
 		goto fail;
+	if (!password && frdpd_auth_identity_has_empty_password(identity))
+	{
+		password = _strdup("");
+		if (!password)
+			goto fail;
+	}
 	if (!password)
 		goto fail;
 	if (!frdpd_auth_lock_secret(password, strlen(password) + 1, &password_secret))
@@ -189,6 +210,12 @@ BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
 	if (!sspi_CopyAuthIdentityFieldsA((const SEC_WINNT_AUTH_IDENTITY_INFO*)identity, &user, &domain,
 	                                  &password))
 		goto fail;
+	if (!password && frdpd_auth_identity_has_empty_password(identity))
+	{
+		password = _strdup("");
+		if (!password)
+			goto fail;
+	}
 	if (!password)
 		goto fail;
 	if (!frdpd_auth_lock_secret(password, strlen(password) + 1, &password_secret))
