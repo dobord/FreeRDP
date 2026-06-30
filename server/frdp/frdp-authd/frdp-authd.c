@@ -34,6 +34,7 @@
 #include <fcntl.h>
 
 /* IPC definitions */
+#include "../config/frdp-config.h"
 #include "../ipc/frdp-ipc.h"
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -391,6 +392,21 @@ static int pam_service_is_valid(const char *service)
     return 1;
 }
 
+static int load_configured_pam_service(const char *config_path, char *service, size_t service_size)
+{
+    frdpConfig config;
+    int rc = 0;
+
+    if (!config_path || !service || service_size == 0)
+        return -1;
+    if (frdp_config_load(config_path, &config) != 0)
+        return -1;
+    if (!pam_service_is_valid(config.pam_service))
+        return -1;
+    rc = snprintf(service, service_size, "%s", config.pam_service);
+    return (rc >= 0 && (size_t)rc < service_size) ? 0 : -1;
+}
+
 static int set_cloexec(int fd)
 {
     const int flags = fcntl(fd, F_GETFD);
@@ -440,11 +456,20 @@ static int accept_cloexec(int fd)
     return cfd;
 }
 
-static int run_ipc_server(const char *socket_path, const char *pam_service)
+static int run_ipc_server(const char *socket_path, const char *pam_service, const char *config_path)
 {
     mode_t old_umask;
     int fd = -1;
+    char configured_service[64] = {0};
 
+    if (config_path) {
+        if (load_configured_pam_service(config_path, configured_service,
+                                        sizeof(configured_service)) != 0) {
+            fprintf(stderr, "failed to load frdp-authd config\n");
+            return -1;
+        }
+        pam_service = configured_service;
+    }
     if (!pam_service_is_valid(pam_service)) {
         fprintf(stderr, "invalid PAM service name\n");
         return -1;
@@ -579,13 +604,17 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
 
 static void usage(const char *argv0)
 {
-    fprintf(stderr, "Usage: %s [--pam-service <name>] --socket <absolute-socket-path>\n", argv0);
+    fprintf(stderr,
+            "Usage: %s [--pam-service <name> | --config <path>] --socket <absolute-socket-path>\n",
+            argv0);
 }
 
 int main(int argc, char **argv)
 {
     const char *pam_service = "frdpd";
     const char *socket_path = NULL;
+    const char *config_path = NULL;
+    int pam_service_set = 0;
 
     if (set_no_core() != 0) {
         fprintf(stderr, "failed to disable core dumps\n");
@@ -602,6 +631,13 @@ int main(int argc, char **argv)
                 return 2;
             }
             pam_service = argv[x];
+            pam_service_set = 1;
+        } else if (strcmp(argv[x], "--config") == 0) {
+            if (++x >= argc) {
+                usage(argv[0]);
+                return 2;
+            }
+            config_path = argv[x];
         } else if (strcmp(argv[x], "--socket") == 0) {
             if (++x >= argc) {
                 usage(argv[0]);
@@ -617,5 +653,9 @@ int main(int argc, char **argv)
         usage(argv[0]);
         return 2;
     }
-    return run_ipc_server(socket_path, pam_service);
+    if (config_path && (!socket_path || pam_service_set)) {
+        usage(argv[0]);
+        return 2;
+    }
+    return (run_ipc_server(socket_path, pam_service, config_path) == 0) ? 0 : 1;
 }

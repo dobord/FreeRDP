@@ -30,6 +30,8 @@ set_property(TARGET frdp-ipc PROPERTY FOLDER "Server/frdp")
 
 add_executable(frdp-authd
     frdp-authd/frdp-authd.c
+    config/frdp-config.c
+    config/frdp-config.h
     $<TARGET_OBJECTS:frdp-ipc>)
 target_include_directories(frdp-authd SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
 target_link_libraries(frdp-authd PRIVATE ${PAM_LIBRARIES} ${UUID_LIBRARY})

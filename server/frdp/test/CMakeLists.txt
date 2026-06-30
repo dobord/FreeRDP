@@ -42,6 +42,10 @@ add_test(NAME TestFreeRDPFrdpCtl
          COMMAND ${CMAKE_COMMAND} -DFRDPCTL_BINARY=$<TARGET_FILE:frdpctl>
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpCtl.cmake)
 
+add_test(NAME TestFreeRDPFrdpAuthd
+         COMMAND ${CMAKE_COMMAND} -DFRDP_AUTHD_BINARY=$<TARGET_FILE:frdp-authd>
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpAuthd.cmake)
+
 add_test(NAME TestFreeRDPFrdpSesmand
          COMMAND ${CMAKE_COMMAND} -DFRDP_SESMAND_BINARY=$<TARGET_FILE:frdp-sesmand>
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpSesmand.cmake)

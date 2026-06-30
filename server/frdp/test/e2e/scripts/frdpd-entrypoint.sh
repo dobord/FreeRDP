@@ -328,7 +328,7 @@ log "configuring identity provider: $FRDP_IDENTITY_PROVIDER"
 configure_identity
 generate_tls_identity
 
-frdp-authd --pam-service frdpd --socket "$FRDP_AUTH_SOCKET" &
+frdp-authd --config "$FRDP_CONFIG" --socket "$FRDP_AUTH_SOCKET" &
 children+=("$!")
 frdp-sesmand --config "$FRDP_CONFIG" --socket "$FRDP_SESSION_SOCKET" &
 children+=("$!")
