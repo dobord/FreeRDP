@@ -7,7 +7,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 set(DRIVER ${MODULE_NAME}.c)
 
-set(TESTS TestVersion.c TestSettings.c TestUtils.c)
+set(TESTS TestVersion.c TestSettings.c TestUtils.c TestWtsDvcAuthorization.c)
 
 if(BUILD_TESTING_INTERNAL)
   list(APPEND TESTS TestStreamDump.c)
@@ -40,7 +40,11 @@ endif()
 add_compile_definitions(TESTING_OUTPUT_DIRECTORY="${PROJECT_BINARY_DIR}")
 add_compile_definitions(TESTING_SRC_DIRECTORY="${PROJECT_SOURCE_DIR}")
 
-target_link_libraries(${MODULE_NAME} freerdp winpr freerdp-client)
+target_link_libraries(${MODULE_NAME} freerdp winpr)
+
+if(TARGET freerdp-client)
+  target_link_libraries(${MODULE_NAME} freerdp-client)
+endif()
 
 include(AddFuzzerTest)
 add_fuzzer_test("${FUZZERS}" "freerdp-client freerdp winpr")

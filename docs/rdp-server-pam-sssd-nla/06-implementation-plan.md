@@ -121,10 +121,10 @@ Deliverables:
 - [x] display resize (prototype: RDP monitor-layout changes are forwarded to the agent and applied through XRandR before `frdpd` updates peer geometry; the agent control-IPC resize path has focused Xvfb smoke coverage, but real-client runtime interop and resize churn are not covered yet);
 - [x] static channel policy engine (`frdpd` filters client-requested static virtual channels during capability processing with configurable blocklist/allowlist modes, defaults to empty blocklist mode, keeps `drdynvc` guard-denied until DVC transport and handlers are explicitly enabled, and has CTest coverage for config parsing plus `CHANNEL_DEF` validation; useful channel handlers remain open);
 - [x] preparatory dynamic channel filter parsing and policy helper (`dynamic_mode` plus `dynamic_allow`/`dynamic_deny` support exact-match blocklist/allowlist semantics in config/tests, but useful dynamic-channel handlers remain open);
-- [x] server-side WTS dynamic-channel authorization hook and `frdpd` VCM wiring (`frdpd` opens/checks/closes a WTS virtual-channel manager without auto-opening `drdynvc` and installs a policy callback that can deny a server-created DVC before the `CREATE_REQUEST` is sent, but `drdynvc` remains guard-denied and no useful handlers are enabled yet);
+- [x] server-side WTS dynamic-channel authorization hook and `frdpd` VCM wiring (`frdpd` opens/checks/closes a WTS virtual-channel manager without auto-opening `drdynvc` and installs a policy callback that can deny a server-created DVC before the `CREATE_REQUEST` is sent, with focused core CTest coverage for the runtime deny path; `drdynvc` remains guard-denied and no useful handlers are enabled yet);
 - [ ] text clipboard;
 - [ ] baseline audio output;
-- [ ] `drdynvc` transport enablement, useful dynamic channel handlers, and runtime DVC policy tests.
+- [ ] `drdynvc` transport enablement, useful dynamic channel handlers, and client-interoperability DVC policy tests.
 
 Exit criteria: daily interactive desktop use is possible in the lab with Windows and FreeRDP clients.
 
