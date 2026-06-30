@@ -18,7 +18,8 @@ typedef enum {
     FRDP_IPC_AGENT_RESIZE_REQUEST = 10,
     FRDP_IPC_AGENT_RESIZE_RESPONSE = 11,
     FRDP_IPC_SESSION_LIST_REQUEST = 12,
-    FRDP_IPC_SESSION_LIST_RESPONSE = 13
+    FRDP_IPC_SESSION_LIST_RESPONSE = 13,
+    FRDP_IPC_SESSION_REQUEST_V2 = 14
 } frdpIpcMessageType;
 
 typedef enum {
@@ -66,6 +67,19 @@ typedef struct {
     uint32_t desktop_height;
     uint32_t color_depth;
 } frdpSessionRequest;
+
+typedef struct {
+    char correlation_id[64];
+    char session_id[64];
+    char user[64];
+    char rhost[128];
+    uint64_t uid;
+    uint64_t gid;
+    int has_posix_account;
+    uint32_t desktop_width;
+    uint32_t desktop_height;
+    uint32_t color_depth;
+} frdpSessionRequestV2;
 
 /* Session open/close response structure */
 typedef struct {

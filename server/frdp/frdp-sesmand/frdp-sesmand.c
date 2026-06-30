@@ -393,8 +393,9 @@ static int allocate_display_number(int *display)
 
 /* Open a session for the specified user.  This starts a PAM session, forks
  * a child to run the per-user agent and returns 0 on success. */
-static int open_session(const char *user, const char *rhost, const char *correlation_id,
-                        uint32_t desktop_width, uint32_t desktop_height, uint32_t color_depth,
+static int open_session(const char *user, uid_t uid, gid_t gid, const char *rhost,
+                        const char *correlation_id, uint32_t desktop_width,
+                        uint32_t desktop_height, uint32_t color_depth,
                         char *session_id, size_t session_id_size,
                         char *display_out, size_t display_out_size,
                         char *agent_socket_out, size_t agent_socket_out_size)
@@ -475,16 +476,6 @@ static int open_session(const char *user, const char *rhost, const char *correla
              normalize_dimension(desktop_width, 1024),
              normalize_dimension(desktop_height, 768), normalize_color_depth(color_depth));
 
-    /* Retrieve user information for UID/GID drop. */
-    struct passwd *pwd = getpwnam(user);
-    if (!pwd) {
-        destroy_agent_socket(&agent_fd, agent_socket_path);
-        pam_close_session(pamh, 0);
-        pam_setcred(pamh, PAM_DELETE_CRED);
-        pam_end(pamh, PAM_USER_UNKNOWN);
-        return -1;
-    }
-
     if (create_cloexec_pipe(exec_pipe) != 0) {
         destroy_agent_socket(&agent_fd, agent_socket_path);
         pam_close_session(pamh, 0);
@@ -527,10 +518,10 @@ static int open_session(const char *user, const char *rhost, const char *correla
             setenv("FRDP_AGENT_SOCKET", agent_socket_path, 1);
         }
         /* Set groups and UID/GID */
-        if (initgroups(user, pwd->pw_gid) != 0) {
+        if (initgroups(user, gid) != 0) {
             child_exec_failed(exec_pipe[1]);
         }
-        if (setgid(pwd->pw_gid) != 0 || setuid(pwd->pw_uid) != 0) {
+        if (setgid(gid) != 0 || setuid(uid) != 0) {
             child_exec_failed(exec_pipe[1]);
         }
         execlp("frdp-session-agent", "frdp-session-agent", (char *)NULL);
@@ -903,6 +894,7 @@ static void reap_exited_sessions(void)
 static int handle_session_request(int fd, frdpIpcMessageType type)
 {
     frdpSessionRequest req;
+    frdpSessionRequestV2 req_v2;
     char correlation_id[sizeof(req.correlation_id)] = {0};
     char session_id[sizeof(req.session_id)] = {0};
     char user[sizeof(req.user)] = {0};
@@ -910,10 +902,28 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
     char response_session_id[64] = {0};
     char display[32] = {0};
     char agent_socket[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
+    uid_t uid = (uid_t)-1;
+    gid_t gid = (gid_t)-1;
+    int has_posix_account = 0;
 
     memset(&req, 0, sizeof(req));
-    if (frdp_ipc_recv(fd, &req, sizeof(req)) != (int)sizeof(req))
+    memset(&req_v2, 0, sizeof(req_v2));
+    if (type == FRDP_IPC_SESSION_REQUEST_V2) {
+        if (frdp_ipc_recv(fd, &req_v2, sizeof(req_v2)) != (int)sizeof(req_v2))
+            return -1;
+        memcpy(req.correlation_id, req_v2.correlation_id, sizeof(req.correlation_id));
+        memcpy(req.session_id, req_v2.session_id, sizeof(req.session_id));
+        memcpy(req.user, req_v2.user, sizeof(req.user));
+        memcpy(req.rhost, req_v2.rhost, sizeof(req.rhost));
+        req.desktop_width = req_v2.desktop_width;
+        req.desktop_height = req_v2.desktop_height;
+        req.color_depth = req_v2.color_depth;
+        uid = (uid_t)req_v2.uid;
+        gid = (gid_t)req_v2.gid;
+        has_posix_account = req_v2.has_posix_account;
+    } else if (frdp_ipc_recv(fd, &req, sizeof(req)) != (int)sizeof(req)) {
         return -1;
+    }
     if (copy_ipc_string(correlation_id, sizeof(correlation_id), req.correlation_id,
                         sizeof(req.correlation_id)) != 0 ||
         copy_ipc_string(session_id, sizeof(session_id), req.session_id,
@@ -923,12 +933,21 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
         return send_session_response(fd, 0, NULL, NULL, NULL, "invalid session request");
     }
 
-    if (type == FRDP_IPC_SESSION_REQUEST) {
+    if ((type == FRDP_IPC_SESSION_REQUEST) || (type == FRDP_IPC_SESSION_REQUEST_V2)) {
+        struct passwd *pwd = NULL;
+
         if (user[0] == '\0')
             return send_session_response(fd, 0, NULL, NULL, NULL, "missing user");
-        if (open_session(user, rhost, correlation_id, req.desktop_width, req.desktop_height,
-                          req.color_depth, response_session_id, sizeof(response_session_id), display,
-                          sizeof(display), agent_socket, sizeof(agent_socket)) != 0) {
+        if ((type != FRDP_IPC_SESSION_REQUEST_V2) || !has_posix_account ||
+            ((uint64_t)uid != req_v2.uid) || ((uint64_t)gid != req_v2.gid))
+            return send_session_response(fd, 0, NULL, NULL, NULL, "missing POSIX account");
+        pwd = getpwnam(user);
+        if (!pwd || (pwd->pw_uid != uid) || (pwd->pw_gid != gid))
+            return send_session_response(fd, 0, NULL, NULL, NULL, "POSIX account mismatch");
+        if (open_session(user, uid, gid, rhost, correlation_id, req.desktop_width,
+                          req.desktop_height, req.color_depth, response_session_id,
+                          sizeof(response_session_id), display, sizeof(display), agent_socket,
+                          sizeof(agent_socket)) != 0) {
             char escaped_correlation_id[256] = {0};
             char escaped_user[256] = {0};
 
@@ -1084,9 +1103,11 @@ static int run_ipc_server(const char *socket_path, const char *pam_service)
         }
         if ((hdr.type == FRDP_IPC_SESSION_LIST_REQUEST) && (hdr.payload_len == 0)) {
             (void)send_session_list_response(cfd);
-        } else if ((hdr.payload_len == sizeof(frdpSessionRequest)) &&
-            ((hdr.type == FRDP_IPC_SESSION_REQUEST) ||
-             (hdr.type == FRDP_IPC_SESSION_CLOSE_REQUEST))) {
+        } else if (((hdr.type == FRDP_IPC_SESSION_REQUEST_V2) &&
+                    (hdr.payload_len == sizeof(frdpSessionRequestV2))) ||
+                   (((hdr.type == FRDP_IPC_SESSION_REQUEST) ||
+                     (hdr.type == FRDP_IPC_SESSION_CLOSE_REQUEST)) &&
+                    (hdr.payload_len == sizeof(frdpSessionRequest)))) {
             (void)handle_session_request(cfd, hdr.type);
         } else {
             send_session_response(cfd, 0, NULL, NULL, NULL, "unsupported IPC request");
@@ -1216,9 +1237,15 @@ int main(int argc, char **argv)
     char session_id[64] = {0};
     char display[32] = {0};
     char agent_socket[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
-    if (open_session(standalone_user, NULL, "standalone", 1024, 768, 24, session_id,
-                      sizeof(session_id), display, sizeof(display), agent_socket,
-                      sizeof(agent_socket)) == 0) {
+    struct passwd *pwd = getpwnam(standalone_user);
+    if (!pwd) {
+        syslog(LOG_ERR, "unknown standalone session user %s", escaped_standalone_user);
+        closelog();
+        return 1;
+    }
+    if (open_session(standalone_user, pwd->pw_uid, pwd->pw_gid, NULL, "standalone", 1024, 768,
+                      24, session_id, sizeof(session_id), display, sizeof(display),
+                      agent_socket, sizeof(agent_socket)) == 0) {
         syslog(LOG_INFO, "created session for %s", escaped_standalone_user);
     } else {
         syslog(LOG_ERR, "failed to create session for %s", escaped_standalone_user);

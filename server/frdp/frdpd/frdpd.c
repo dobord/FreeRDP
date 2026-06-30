@@ -206,7 +206,7 @@ static BOOL frdpd_copy_ipc_string(char* dst, size_t dst_size, const char* src)
 }
 
 static BOOL frdpd_session_ipc_request(const char* socket_path, frdpIpcMessageType type,
-                                       const frdpSessionRequest* request,
+                                       const void* request, size_t request_size,
                                        frdpSessionResponse* response)
 {
 	int fd = -1;
@@ -222,9 +222,9 @@ static BOOL frdpd_session_ipc_request(const char* socket_path, frdpIpcMessageTyp
 		goto fail;
 
 	header.type = type;
-	header.payload_len = sizeof(*request);
+	header.payload_len = (UINT32)request_size;
 	if ((frdp_ipc_send(fd, &header, sizeof(header)) < 0) ||
-	    (frdp_ipc_send(fd, request, sizeof(*request)) < 0))
+	    (frdp_ipc_send(fd, request, request_size) < 0))
 		goto fail;
 
 	if (frdp_ipc_recv(fd, &response_header, sizeof(response_header)) !=
@@ -936,13 +936,13 @@ static DWORD WINAPI frdpd_session_close_retry_thread(LPVOID arg)
 		frdpSessionRequest request = { 0 };
 		frdpSessionResponse response = { 0 };
 
-		(void)frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
-		                            retry->correlation_id);
-		(void)frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id),
-		                            retry->session_id);
-		(void)frdpd_copy_ipc_string(request.user, sizeof(request.user), retry->user);
-		closed = frdpd_session_ipc_request(retry->socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST,
-		                                  &request, &response);
+			(void)frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
+			                            retry->correlation_id);
+			(void)frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id),
+			                            retry->session_id);
+			(void)frdpd_copy_ipc_string(request.user, sizeof(request.user), retry->user);
+			closed = frdpd_session_ipc_request(retry->socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST,
+			                                  &request, sizeof(request), &response);
 		if (!closed)
 			Sleep(1000);
 	}
@@ -1000,7 +1000,7 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
                                         frdpdPeerContext* context)
 {
 	rdpSettings* settings = NULL;
-	frdpSessionRequest request = { 0 };
+	frdpSessionRequestV2 request = { 0 };
 	frdpSessionResponse response = { 0 };
 	char log_error[FRDPD_LOG_STRING_SIZE] = { 0 };
 	char log_session_id[FRDPD_LOG_STRING_SIZE] = { 0 };
@@ -1014,6 +1014,8 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 		return TRUE;
 	if (!client || !context->pam_user)
 		return FALSE;
+	if (!context->has_posix_account)
+		return FALSE;
 
 	if (!frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
 	                          context->correlation_id) ||
@@ -1021,6 +1023,10 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 	    !frdpd_copy_ipc_string(request.rhost, sizeof(request.rhost),
 	                          (client->hostname[0] != '\0') ? client->hostname : NULL))
 		return FALSE;
+
+	request.uid = (UINT64)context->uid;
+	request.gid = (UINT64)context->gid;
+	request.has_posix_account = TRUE;
 
 	settings = client->context ? client->context->settings : NULL;
 	if (settings)
@@ -1030,8 +1036,8 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 		request.color_depth = freerdp_settings_get_uint32(settings, FreeRDP_ColorDepth);
 	}
 
-	if (!frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_REQUEST, &request,
-	                              &response))
+	if (!frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_REQUEST_V2,
+	                              &request, sizeof(request), &response))
 	{
 		WLog_WARN(TAG, "correlation_id=%s session manager rejected login for %s: %s",
 		          context->correlation_id,
@@ -1064,7 +1070,7 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 			                            context->pam_user);
 			rollback_closed = frdpd_session_ipc_request(
 			    config->session_socket, FRDP_IPC_SESSION_CLOSE_REQUEST, &close_request,
-			    &close_response);
+			    sizeof(close_request), &close_response);
 			if (!rollback_closed && (context->session_id[0] != '\0'))
 			{
 				context->managed_session_open = TRUE;
@@ -1106,6 +1112,9 @@ static void frdpd_auth_result_cleanup(frdpdAuthResult* result)
 	free(result->pam_user);
 	result->pam_user = NULL;
 	result->pam_handle = NULL;
+	result->uid = (uid_t)-1;
+	result->gid = (gid_t)-1;
+	result->has_posix_account = FALSE;
 	result->pam_credentials_established = FALSE;
 	result->pam_session_open = FALSE;
 }
@@ -1155,7 +1164,7 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 	}
 
 	closed = frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_CLOSE_REQUEST,
-	                                  &request, &response);
+	                                  &request, sizeof(request), &response);
 
 	if (!closed)
 	{
@@ -1198,6 +1207,9 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 	                              context->pam_credentials_established,
 	                              context->pam_session_open);
 	context->pam_handle = NULL;
+	context->uid = (uid_t)-1;
+	context->gid = (gid_t)-1;
+	context->has_posix_account = FALSE;
 	context->pam_credentials_established = FALSE;
 	context->pam_session_open = FALSE;
 	free(context->pam_user);
@@ -1355,6 +1367,9 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	free(context->pam_user);
 	context->pam_user = result.pam_user;
 	context->pam_handle = result.pam_handle;
+	context->uid = result.uid;
+	context->gid = result.gid;
+	context->has_posix_account = result.has_posix_account;
 	context->pam_credentials_established = result.pam_credentials_established;
 	context->pam_session_open = result.pam_session_open;
 	result.pam_user = NULL;
