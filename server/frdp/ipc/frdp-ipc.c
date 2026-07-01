@@ -93,6 +93,122 @@ static int frdp_ipc_set_cloexec(int fd)
     return 0;
 }
 
+static int frdp_ipc_create_cloexec_unix_socket(void)
+{
+    int fd = -1;
+
+#ifdef SOCK_CLOEXEC
+    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if ((fd == -1) && (errno == EINVAL || errno == EPROTONOSUPPORT))
+#endif
+        fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0)
+        return -1;
+    if (frdp_ipc_set_cloexec(fd) != 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+    return fd;
+}
+
+static int frdp_ipc_set_nonblock(int fd)
+{
+    const int flags = fcntl(fd, F_GETFL);
+
+    if (flags < 0)
+        return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+static int frdp_ipc_socket_path_has_live_listener(const char *socket_path)
+{
+    int fd = -1;
+    int saved = 0;
+    struct sockaddr_un addr;
+
+    fd = frdp_ipc_create_cloexec_unix_socket();
+    if (fd < 0)
+        return -1;
+    if (frdp_ipc_set_nonblock(fd) != 0) {
+        saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
+
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+        close(fd);
+        errno = EADDRINUSE;
+        return 1;
+    }
+
+    saved = errno;
+    close(fd);
+    errno = saved;
+    if (saved == EAGAIN || saved == EINPROGRESS || saved == EALREADY) {
+        errno = EADDRINUSE;
+        return 1;
+    }
+    if (saved == ECONNREFUSED || saved == ENOENT)
+        return 0;
+    return -1;
+}
+
+int frdp_ipc_prepare_listener_socket_path(const char *socket_path)
+{
+    struct stat st;
+    struct stat current;
+    char parent[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
+    char *slash = NULL;
+    int live_status = 0;
+
+    if (!socket_path || strlen(socket_path) >= sizeof(((struct sockaddr_un *)0)->sun_path))
+        return -1;
+    if (socket_path[0] != '/')
+        return -1;
+
+    snprintf(parent, sizeof(parent), "%s", socket_path);
+    slash = strrchr(parent, '/');
+    if (!slash || slash == parent)
+        return -1;
+    *slash = '\0';
+
+    if (lstat(parent, &st) != 0 || !S_ISDIR(st.st_mode))
+        return -1;
+    if (st.st_uid != 0 && st.st_uid != geteuid())
+        return -1;
+    if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0)
+        return -1;
+
+    if (lstat(socket_path, &st) != 0)
+        return (errno == ENOENT) ? 0 : -1;
+    if (!S_ISSOCK(st.st_mode))
+        return -1;
+    if (st.st_uid != geteuid())
+        return -1;
+
+    live_status = frdp_ipc_socket_path_has_live_listener(socket_path);
+    if (live_status != 0)
+        return -1;
+
+    if (lstat(socket_path, &current) != 0)
+        return (errno == ENOENT) ? 0 : -1;
+    if (!S_ISSOCK(current.st_mode))
+        return -1;
+    if (current.st_dev != st.st_dev || current.st_ino != st.st_ino) {
+        errno = EADDRINUSE;
+        return -1;
+    }
+
+    return unlink(socket_path);
+}
+
 /* Connect to a UNIX domain socket and return a file descriptor */
 int frdp_ipc_connect(const char *socket_path)
 {

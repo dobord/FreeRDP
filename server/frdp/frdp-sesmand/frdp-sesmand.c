@@ -726,39 +726,6 @@ static int verify_peer(int fd)
     return 0;
 }
 
-static int prepare_socket_path(const char *socket_path)
-{
-    struct stat st;
-    char parent[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
-    char *slash = NULL;
-
-    if (!socket_path || strlen(socket_path) >= sizeof(((struct sockaddr_un *)0)->sun_path))
-        return -1;
-    if (socket_path[0] != '/')
-        return -1;
-
-    snprintf(parent, sizeof(parent), "%s", socket_path);
-    slash = strrchr(parent, '/');
-    if (!slash || slash == parent)
-        return -1;
-    *slash = '\0';
-
-    if (lstat(parent, &st) != 0 || !S_ISDIR(st.st_mode))
-        return -1;
-    if (st.st_uid != 0 && st.st_uid != geteuid())
-        return -1;
-    if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0)
-        return -1;
-
-    if (lstat(socket_path, &st) != 0)
-        return (errno == ENOENT) ? 0 : -1;
-    if (!S_ISSOCK(st.st_mode))
-        return -1;
-    if (st.st_uid != geteuid())
-        return -1;
-    return unlink(socket_path);
-}
-
 static int create_agent_socket(const char *socket_path)
 {
     int fd = -1;
@@ -767,7 +734,7 @@ static int create_agent_socket(const char *socket_path)
 
     if (!socket_path || socket_path[0] == '\0')
         return -1;
-    if (prepare_socket_path(socket_path) != 0)
+    if (frdp_ipc_prepare_listener_socket_path(socket_path) != 0)
         return -1;
 
     fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -1102,7 +1069,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
         }
     }
 
-    if (prepare_socket_path(socket_path) != 0) {
+    if (frdp_ipc_prepare_listener_socket_path(socket_path) != 0) {
         char escaped_socket[512] = {0};
 
         escape_log_field(socket_path ? socket_path : "(null)", escaped_socket, sizeof(escaped_socket));

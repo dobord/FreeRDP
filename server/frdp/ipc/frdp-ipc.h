@@ -177,4 +177,11 @@ int frdp_ipc_recv(int fd, void *buf, size_t len);
 /* Close a previously opened fd */
 int frdp_ipc_close(int fd);
 
+/*
+ * Validate a listener socket pathname before bind().
+ * Existing live sockets are rejected without unlinking; stale same-owner
+ * socket nodes are removed so the caller can bind a fresh listener.
+ */
+int frdp_ipc_prepare_listener_socket_path(const char *socket_path);
+
 #endif /* FRDP_IPC_H */
