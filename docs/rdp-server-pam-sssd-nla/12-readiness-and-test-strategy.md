@@ -19,13 +19,13 @@ making the current canonical helper topology repeatably green.
 |---|---:|---|---|
 | Build integration | 65% | `WITH_FRDPD` builds the listener, helpers, agent, control CLI and focused tests | The branch is far behind and diverged from `master`; package builds and a supported dependency matrix are not green |
 | Password-backed NLA and PAM | 60% | Integrated FreeRDP server callbacks, CredSSP identity extraction, PAM auth/account handling, locked temporary secret buffers, auth broker IPC required for normal startup, in-process fallback hidden behind a development build option | Windows client and domain interoperability need repeatable evidence; development fallback builds can still process credentials in the peer worker |
-| Privilege-separated topology | 61% | `frdp-authd`, `frdp-sesmand`, per-user agent, Unix sockets, peer credential checks, process hardening, correlation IDs, normal startup requiring both helper sockets, live helper-topology startup smoke coverage, live-helper socket collision protection, and no default in-process PAM fallback | Authenticated identity is passed as mutable strings without a cryptographically bound, single-use authorization object |
+| Privilege-separated topology | 66% | `frdp-authd`, `frdp-sesmand`, per-user agent, Unix sockets, peer credential checks, process hardening, correlation IDs, normal startup requiring both helper sockets, signed single-use session-open auth tokens, live helper-topology startup smoke coverage, live-helper socket collision protection, and no default in-process PAM fallback | Helper IPC still relies on native C struct layout, the auth token does not yet carry the full canonical account payload, and per-peer rate limits are missing |
 | Session lifecycle | 45% | PAM session ownership, uid/gid drop, Xvfb agent startup, close requests and cleanup exist | No reconnect, durable registry, logind/cgroup ownership, crash reconciliation, atomic display reservation or resource quotas |
 | Desktop data path | 36% | Input injection, raw/XDamage tile capture, bounded output scheduling, basic resize, agent-side resize IPC smoke coverage, and opportunistic NSCodec exist | No production RFX/RDPGFX policy, limited text/IME behavior, no systematic performance or real-client resolution interoperability evidence |
 | Virtual channels | 27% | Static-channel filtering, a DVC authorization hook, and disabled-by-default text clipboard policy fail closed; focused config and WTS deny-path coverage exists | No useful clipboard/audio handlers; `drdynvc` is deliberately guard-denied; no live-client channel tests |
 | Kerberos-first path | 10% | A build-only GSSAPI helper skeleton and architecture documentation exist | No CredSSP/SPNEGO token transport, configured keytab/SPN validation, SSSD principal mapping, account/session binding or security review |
 | Operations and packaging | 25% | Example systemd units, PAM file, configuration, install rules and draft MAC policy files exist | No completed DEB/RPM build, active SELinux/AppArmor validation, upgrade/rollback, socket activation, metrics or operational SLOs |
-| Automated verification | 48% | Unit tests, helper-process component tests, live helper-topology startup smoke coverage, truncated auth/session helper client coverage, agent resize control-IPC smoke coverage and Docker Compose profiles for local PAM, Samba AD and FreeIPA are present | Compose profiles must become green and stable; no Windows `mstsc`, reconnect, load, fuzzing, leak or crash-recovery gates yet |
+| Automated verification | 49% | Unit tests, helper-process component tests, live helper-topology startup smoke coverage, truncated auth/session helper client coverage, invalid session-open authorization coverage, agent resize control-IPC smoke coverage and Docker Compose profiles for local PAM, Samba AD and FreeIPA are present | Compose profiles must become green and stable; no Windows `mstsc`, reconnect, load, fuzzing, leak or crash-recovery gates yet |
 | Overall production readiness | **25–30%** | A testable MVP skeleton with meaningful security boundaries | Several correctness, lifecycle, interoperability and operability gates remain open |
 
 ## Highest-value implementation order
@@ -60,6 +60,12 @@ Do not add another large subsystem until all of the following are true:
    collision guard exists for current helper listener startup, and auth/session
    helper IPC now rejects oversized request payloads, but per-peer rate limits
    remain open.
+
+Current status: the normal password-backed helper path now uses an HMAC-signed,
+short-lived V3 session-open token bound to user, remote host, correlation id,
+nonce and expiry; `frdp-sesmand` rejects legacy V2 session-open requests and
+consumes accepted token nonces once. IPC serialization/versioning and per-peer
+rate limits remain open.
 
 Exit criterion: the peer worker cannot authenticate or open a user session
 without both brokers, and replaying or modifying a session request fails.
