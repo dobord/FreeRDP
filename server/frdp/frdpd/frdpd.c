@@ -214,7 +214,6 @@ static BOOL frdpd_session_ipc_request(const char* socket_path, frdpIpcMessageTyp
 {
 	int fd = -1;
 	BOOL ok = FALSE;
-	frdpIpcHeader response_header = { 0 };
 
 	if (!socket_path || (socket_path[0] == '\0') || !request || !response)
 		return FALSE;
@@ -223,16 +222,19 @@ static BOOL frdpd_session_ipc_request(const char* socket_path, frdpIpcMessageTyp
 	if (fd < 0)
 		goto fail;
 
-	if ((frdp_ipc_send_header(fd, type, (UINT32)request_size) < 0) ||
-	    (frdp_ipc_send(fd, request, request_size) < 0))
+	if (type == FRDP_IPC_SESSION_REQUEST_V3)
+	{
+		if ((request_size != sizeof(frdpSessionRequestV3)) ||
+		    (frdp_ipc_send_session_request_v3(fd, (const frdpSessionRequestV3*)request) != 0))
+			goto fail;
+	}
+	else if ((frdp_ipc_send_header(fd, type, (UINT32)request_size) < 0) ||
+	         (frdp_ipc_send(fd, request, request_size) < 0))
+	{
 		goto fail;
+	}
 
-	if (frdp_ipc_recv_header(fd, &response_header) != (int)sizeof(response_header))
-		goto fail;
-	if ((response_header.type != FRDP_IPC_SESSION_RESPONSE) ||
-	    (response_header.payload_len != sizeof(*response)))
-		goto fail;
-	if (frdp_ipc_recv(fd, response, sizeof(*response)) != (int)sizeof(*response))
+	if (frdp_ipc_recv_session_response(fd, response) != 0)
 		goto fail;
 
 	response->session_id[sizeof(response->session_id) - 1] = '\0';

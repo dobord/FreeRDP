@@ -682,9 +682,7 @@ static int send_session_response(int fd, int success, const char *session_id,
     if (error)
         snprintf(resp.error, sizeof(resp.error), "%s", error);
 
-    if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RESPONSE, sizeof(resp)) < 0)
-        return -1;
-    return frdp_ipc_send(fd, &resp, sizeof(resp));
+    return frdp_ipc_send_session_response(fd, &resp);
 }
 
 static int send_session_list_response(int fd)
@@ -1039,7 +1037,7 @@ static void reap_exited_sessions(void)
     }
 }
 
-static int handle_session_request(int fd, frdpIpcMessageType type)
+static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payload_len)
 {
     frdpSessionRequest req;
     frdpSessionRequestV2 req_v2;
@@ -1060,7 +1058,7 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
     memset(&req_v2, 0, sizeof(req_v2));
     memset(&req_v3, 0, sizeof(req_v3));
     if (type == FRDP_IPC_SESSION_REQUEST_V3) {
-        if (frdp_ipc_recv(fd, &req_v3, sizeof(req_v3)) != (int)sizeof(req_v3))
+        if (frdp_ipc_recv_session_request_v3_payload(fd, &req_v3, payload_len) != 0)
             return -1;
         memcpy(req.correlation_id, req_v3.correlation_id, sizeof(req.correlation_id));
         memcpy(req.session_id, req_v3.session_id, sizeof(req.session_id));
@@ -1330,13 +1328,13 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                 (void)send_reload_response(cfd, 1, "accepted", NULL);
             }
         } else if (((hdr.type == FRDP_IPC_SESSION_REQUEST_V3) &&
-                    (hdr.payload_len == sizeof(frdpSessionRequestV3))) ||
+                    (hdr.payload_len == FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE)) ||
                    ((hdr.type == FRDP_IPC_SESSION_REQUEST_V2) &&
                     (hdr.payload_len == sizeof(frdpSessionRequestV2))) ||
                    (((hdr.type == FRDP_IPC_SESSION_REQUEST) ||
                      (hdr.type == FRDP_IPC_SESSION_CLOSE_REQUEST)) &&
                     (hdr.payload_len == sizeof(frdpSessionRequest)))) {
-            (void)handle_session_request(cfd, hdr.type);
+            (void)handle_session_request(cfd, hdr.type, hdr.payload_len);
         } else {
             send_session_response(cfd, 0, NULL, NULL, NULL, "unsupported IPC request");
         }

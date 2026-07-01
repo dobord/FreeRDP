@@ -171,9 +171,7 @@ static int handle_close_request(int fd)
 
 	response.success = 1;
 	snprintf(response.session_id, sizeof(response.session_id), "%s", request.session_id);
-	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RESPONSE, sizeof(response)) != 0)
-		return -1;
-	return write_all(fd, &response, sizeof(response));
+	return frdp_ipc_send_session_response(fd, &response);
 }
 
 static int handle_close_control_success_request(int fd)
@@ -193,9 +191,7 @@ static int handle_close_control_success_request(int fd)
 
 	response.success = 1;
 	snprintf(response.session_id, sizeof(response.session_id), "session\n1");
-	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RESPONSE, sizeof(response)) != 0)
-		return -1;
-	return write_all(fd, &response, sizeof(response));
+	return frdp_ipc_send_session_response(fd, &response);
 }
 
 static int handle_close_failure_request(int fd)
@@ -215,9 +211,7 @@ static int handle_close_failure_request(int fd)
 
 	response.success = 0;
 	snprintf(response.error, sizeof(response.error), "denied\nbad\\path");
-	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RESPONSE, sizeof(response)) != 0)
-		return -1;
-	return write_all(fd, &response, sizeof(response));
+	return frdp_ipc_send_session_response(fd, &response);
 }
 
 static int handle_reload_request(int fd)

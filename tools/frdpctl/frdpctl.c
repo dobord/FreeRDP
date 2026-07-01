@@ -211,11 +211,9 @@ static int send_session_list_request(const char *socket_path, int status_only)
 static int send_session_close_request(const char *socket_path, const char *session_id)
 {
     int fd = -1;
-    frdpIpcHeader response_header;
     frdpSessionRequest request;
     frdpSessionResponse response;
 
-    memset(&response_header, 0, sizeof(response_header));
     memset(&request, 0, sizeof(request));
     memset(&response, 0, sizeof(response));
 
@@ -237,10 +235,7 @@ static int send_session_close_request(const char *socket_path, const char *sessi
 
     if ((frdp_ipc_send_header(fd, FRDP_IPC_SESSION_CLOSE_REQUEST, sizeof(request)) != 0) ||
         (frdp_ipc_send(fd, &request, sizeof(request)) != 0) ||
-        (frdp_ipc_recv_header(fd, &response_header) != (int)sizeof(response_header)) ||
-        (response_header.type != FRDP_IPC_SESSION_RESPONSE) ||
-        (response_header.payload_len != sizeof(response)) ||
-        (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))) {
+        (frdp_ipc_recv_session_response(fd, &response) != 0)) {
         fprintf(stderr, "session close IPC failed\n");
         frdp_ipc_close(fd);
         return 3;

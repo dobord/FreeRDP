@@ -225,15 +225,9 @@ static int receive_auth_failure(int fd, const char* expected_error)
 
 static int receive_session_response(int fd, int expected_success, const char* expected_error)
 {
-	frdpIpcHeader header = { 0 };
 	frdpSessionResponse response = { 0 };
 
-	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
-		return -1;
-	if ((header.type != FRDP_IPC_SESSION_RESPONSE) ||
-	    (header.payload_len != sizeof(response)))
-		return -1;
-	if (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))
+	if (frdp_ipc_recv_session_response(fd, &response) != 0)
 		return -1;
 	if (!!response.success != !!expected_success)
 	{
@@ -620,8 +614,7 @@ static int test_sesmand_rejects_missing_authorization(const char* socket_path)
 	request.has_posix_account = 1;
 	request.uid = 0;
 	request.gid = 0;
-	if (send_header(fd, FRDP_IPC_SESSION_REQUEST_V3, sizeof(request)) != 0 ||
-	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
+	if (frdp_ipc_send_session_request_v3(fd, &request) != 0)
 		goto cleanup;
 	rc = receive_session_response(fd, 0, "missing authorization");
 
@@ -646,8 +639,7 @@ static int test_sesmand_rejects_invalid_authorization(const char* socket_path)
 	request.has_posix_account = 1;
 	request.uid = 0;
 	request.gid = 0;
-	if (send_header(fd, FRDP_IPC_SESSION_REQUEST_V3, sizeof(request)) != 0 ||
-	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
+	if (frdp_ipc_send_session_request_v3(fd, &request) != 0)
 		goto cleanup;
 	rc = receive_session_response(fd, 0, "invalid authorization");
 
@@ -715,8 +707,7 @@ static int test_sesmand_rejects_posix_groups_mismatch(void)
 	request.gid = gid;
 	request.group_count = group_count;
 	memcpy(request.groups, wrong_groups, group_count * sizeof(wrong_groups[0]));
-	if (send_header(fd, FRDP_IPC_SESSION_REQUEST_V3, sizeof(request)) != 0 ||
-	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
+	if (frdp_ipc_send_session_request_v3(fd, &request) != 0)
 		goto cleanup;
 	stage = "receive";
 	rc = receive_session_response(fd, 0, "POSIX groups mismatch");
