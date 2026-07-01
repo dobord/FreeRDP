@@ -45,6 +45,8 @@ typedef struct {
     uint32_t payload_len;
 } frdpIpcHeader;
 
+#define FRDP_IPC_MAX_REQUEST_PAYLOAD_LEN 4096U
+
 /* Authentication request structure */
 typedef struct {
     char correlation_id[64];
@@ -183,5 +185,8 @@ int frdp_ipc_close(int fd);
  * socket nodes are removed so the caller can bind a fresh listener.
  */
 int frdp_ipc_prepare_listener_socket_path(const char *socket_path);
+
+/* Return non-zero when an inbound request payload is within the supported bound. */
+int frdp_ipc_request_payload_len_is_bounded(uint32_t payload_len);
 
 #endif /* FRDP_IPC_H */

@@ -536,6 +536,11 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             close(cfd);
             continue;
         }
+        if (!frdp_ipc_request_payload_len_is_bounded(hdr.payload_len)) {
+            send_auth_response(cfd, 0, "IPC payload too large");
+            close(cfd);
+            continue;
+        }
         if (hdr.type == FRDP_IPC_AUTH_REQUEST_V2 && hdr.payload_len == sizeof(frdpAuthRequest)) {
             frdpAuthRequest req;
             if (frdp_ipc_recv(cfd, &req, sizeof(req)) == (int)sizeof(req)) {

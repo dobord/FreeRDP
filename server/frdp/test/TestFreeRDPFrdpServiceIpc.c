@@ -278,6 +278,22 @@ cleanup:
 	return rc;
 }
 
+static int test_authd_rejects_oversized_payload(const char* socket_path)
+{
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	if (send_header(fd, FRDP_IPC_AUTH_REQUEST_V2, FRDP_IPC_MAX_REQUEST_PAYLOAD_LEN + 1U) != 0)
+		goto cleanup;
+	rc = receive_auth_failure(fd, "IPC payload too large");
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
 static int test_authd_rejects_unterminated_request(const char* socket_path)
 {
 	frdpAuthRequest request = { 0 };
@@ -309,6 +325,8 @@ static int test_authd_component(void)
 	if (test_authd_rejects_bad_length(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_authd_rejects_unknown_type(helper.socket_path) != 0)
+		goto cleanup;
+	if (test_authd_rejects_oversized_payload(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_authd_rejects_unterminated_request(helper.socket_path) != 0)
 		goto cleanup;
@@ -454,6 +472,22 @@ cleanup:
 	return rc;
 }
 
+static int test_sesmand_rejects_oversized_payload(const char* socket_path)
+{
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	if (send_header(fd, FRDP_IPC_SESSION_REQUEST, FRDP_IPC_MAX_REQUEST_PAYLOAD_LEN + 1U) != 0)
+		goto cleanup;
+	rc = receive_session_response(fd, 0, "IPC payload too large");
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
 static int test_sesmand_reload(const char* socket_path, int expected_success,
                                const char* expected_message, const char* expected_error)
 {
@@ -548,6 +582,8 @@ static int test_sesmand_component(void)
 	if (test_sesmand_rejects_posix_account_mismatch(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_bad_length(helper.socket_path) != 0)
+		goto cleanup;
+	if (test_sesmand_rejects_oversized_payload(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_reload(helper.socket_path, 1, "accepted", NULL) != 0)
 		goto cleanup;

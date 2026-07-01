@@ -1158,6 +1158,11 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             close(cfd);
             continue;
         }
+        if (!frdp_ipc_request_payload_len_is_bounded(hdr.payload_len)) {
+            send_session_response(cfd, 0, NULL, NULL, NULL, "IPC payload too large");
+            close(cfd);
+            continue;
+        }
         if ((hdr.type == FRDP_IPC_SESSION_LIST_REQUEST) && (hdr.payload_len == 0)) {
             (void)send_session_list_response(cfd);
         } else if ((hdr.type == FRDP_IPC_SESSION_RELOAD_REQUEST) && (hdr.payload_len == 0)) {

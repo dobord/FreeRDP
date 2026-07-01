@@ -209,6 +209,11 @@ int frdp_ipc_prepare_listener_socket_path(const char *socket_path)
     return unlink(socket_path);
 }
 
+int frdp_ipc_request_payload_len_is_bounded(uint32_t payload_len)
+{
+    return payload_len <= FRDP_IPC_MAX_REQUEST_PAYLOAD_LEN;
+}
+
 /* Connect to a UNIX domain socket and return a file descriptor */
 int frdp_ipc_connect(const char *socket_path)
 {
