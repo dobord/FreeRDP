@@ -1,10 +1,32 @@
 Source: frdpd
 Section: net
 Priority: optional
-Maintainer: Example Maintainer <maintainer@example.com>
-Build-Depends: debhelper (>= 13), cmake, make, gcc, libpam-dev, libgssapi-krb5-dev, libssl-dev, uuid-dev, libx11-dev, libxtst-dev, libxdamage-dev, libxrandr-dev
+Maintainer: FreeRDP Maintainers <team@freerdp.com>
+Build-Depends: debhelper-compat (= 13),
+ cmake,
+ make,
+ ninja-build,
+ gcc,
+ pkg-config,
+ zlib1g-dev,
+ libpam0g-dev,
+ libkrb5-dev,
+ libssl-dev,
+ uuid-dev,
+ libsystemd-dev,
+ libjansson-dev | libjson-c-dev | libcjson-dev,
+ libcairo2-dev,
+ libavcodec-dev,
+ libavformat-dev,
+ libavutil-dev,
+ libswscale-dev,
+ libx11-dev,
+ libxext-dev,
+ libxtst-dev,
+ libxdamage-dev,
+ libxrandr-dev
 Standards-Version: 4.6.0
-Homepage: https://example.com/frdpd
+Homepage: https://www.freerdp.com/
 
 Package: frdpd
 Architecture: any

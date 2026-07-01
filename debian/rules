@@ -1,0 +1,71 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
+BUILD_DIR = ../build-debian-frdpd-package
+SERVER_TARGETS = winpr-tools frdpd frdp-authd frdp-sesmand frdp-session-agent frdpctl
+LTO_FLAGS = -flto=auto -ffat-lto-objects
+BUILD_FLAGS = DEB_BUILD_MAINT_OPTIONS='$(DEB_BUILD_MAINT_OPTIONS)' dpkg-buildflags
+PARALLEL_JOBS = $(or $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS))),$(shell nproc))
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+
+# Keep the preview server package build tree outside the source directory and
+# away from ad hoc local build directories. LTO is kept off so local smoke
+# builds stay predictable, while Debian hardening and prefix-map flags remain
+# active.
+export CPPFLAGS := $(shell $(BUILD_FLAGS) --get CPPFLAGS)
+export CFLAGS := $(filter-out $(LTO_FLAGS),$(shell $(BUILD_FLAGS) --get CFLAGS))
+export CXXFLAGS := $(filter-out $(LTO_FLAGS),$(shell $(BUILD_FLAGS) --get CXXFLAGS))
+export LDFLAGS := $(filter-out $(LTO_FLAGS),$(shell $(BUILD_FLAGS) --get LDFLAGS))
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	cmake -S . -B $(BUILD_DIR) -GNinja \
+		-DWITH_FRDPD=ON \
+		-DWITH_SERVER=ON \
+		-DWITH_CLIENT=OFF \
+		-DWITH_CLIENT_COMMON=OFF \
+		-DWITH_CLIENT_CHANNELS=OFF \
+		-DWITH_CLIENT_SDL=OFF \
+		-DWITH_CUPS=OFF \
+		-DWITH_SAMPLE=OFF \
+		-DWITH_SHADOW=OFF \
+		-DWITH_PROXY=OFF \
+		-DWITH_WAYLAND=OFF \
+		-DWITH_PCSC=OFF \
+		-DWITH_PKCS11=OFF \
+		-DWITH_SMARTCARD_EMULATE=OFF \
+		-DWITH_SMARTCARD_PCSC=OFF \
+		-DWITH_VAAPI_H264_ENCODING=OFF \
+		-DWITH_REPRODUCIBLE_BUILD_FLAGS=OFF \
+		-DFRDP_SYSTEMD_SYSTEM_UNIT_DIR=/lib/systemd/system \
+		-DCMAKE_C_FLAGS="$(CPPFLAGS) $(CFLAGS)" \
+		-DCMAKE_CXX_FLAGS="$(CPPFLAGS) $(CXXFLAGS)" \
+		-DCMAKE_EXE_LINKER_FLAGS="$(LDFLAGS)" \
+		-DCMAKE_SHARED_LINKER_FLAGS="$(LDFLAGS)" \
+		-DCMAKE_MODULE_LINKER_FLAGS="$(LDFLAGS)" \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_SYSCONFDIR=/etc \
+		-DCMAKE_INSTALL_LOCALSTATEDIR=/var \
+		-DCMAKE_INSTALL_RUNSTATEDIR=/run \
+		-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
+		-DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+override_dh_auto_build:
+	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS) --target $(SERVER_TARGETS)
+
+override_dh_auto_install:
+	DESTDIR=$(CURDIR)/debian/frdpd cmake --install $(BUILD_DIR) --component libraries
+	DESTDIR=$(CURDIR)/debian/frdpd cmake --install $(BUILD_DIR) --component server
+
+override_dh_shlibdeps:
+	dh_shlibdeps -- -l$(CURDIR)/debian/frdpd/usr/lib/$(DEB_HOST_MULTIARCH)
+
+override_dh_auto_clean:
+	rm -rf $(BUILD_DIR)
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	ctest --test-dir $(BUILD_DIR) -R '^TestFreeRDPFrdp' --output-on-failure
+endif

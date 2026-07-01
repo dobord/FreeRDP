@@ -1,0 +1,5 @@
+frdpd (0.1.0-1) unstable; urgency=medium
+
+  * Initial Debian packaging for the FreeRDP PAM/SSSD/NLA server preview.
+
+ -- FreeRDP Maintainers <team@freerdp.com>  Tue, 30 Jun 2026 21:42:27 +0000

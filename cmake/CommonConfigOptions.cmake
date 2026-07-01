@@ -19,7 +19,7 @@ endif()
 
 # known issue on android, thus disabled until we support newer CMake
 # https://github.com/android/ndk/issues/1444
-if(NOT ANDROID OR ("${CMAKE_VERSION}" GREATER_EQUAL "3.20.0"))
+if(NOT DEFINED CMAKE_INTERPROCEDURAL_OPTIMIZATION AND (NOT ANDROID OR ("${CMAKE_VERSION}" GREATER_EQUAL "3.20.0")))
   if(POLICY CMP0138)
     cmake_policy(SET CMP0138 NEW)
   endif()

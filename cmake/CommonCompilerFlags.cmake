@@ -37,8 +37,11 @@ list(APPEND COMMON_COMPILER_FLAGS -fsigned-char)
 include(ExportAllSymbols)
 include(CompilerSanitizerOptions)
 
-if(CMAKE_C_COMPILER_ID MATCHES ".*Clang.*" OR (CMAKE_C_COMPILER_ID MATCHES "GNU" AND CMAKE_C_COMPILER_VERSION
-                                                                                     VERSION_GREATER_EQUAL 10)
+option(WITH_REPRODUCIBLE_BUILD_FLAGS "enable compiler prefix-map flags for reproducible paths" ON)
+
+if(WITH_REPRODUCIBLE_BUILD_FLAGS
+   AND (CMAKE_C_COMPILER_ID MATCHES ".*Clang.*" OR (CMAKE_C_COMPILER_ID MATCHES "GNU" AND CMAKE_C_COMPILER_VERSION
+                                                    VERSION_GREATER_EQUAL 10))
 )
   add_compile_options($<$<NOT:$<CONFIG:Debug>>:-fdebug-prefix-map=${CMAKE_SOURCE_DIR}=.>)
   add_compile_options($<$<NOT:$<CONFIG:Debug>>:-fmacro-prefix-map=${CMAKE_SOURCE_DIR}=.>)

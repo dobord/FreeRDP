@@ -26,6 +26,8 @@ cc -fsyntax-only -Wall -Wextra server/frdp/frdp-session-agent/frdp-session-agent
 cc -fsyntax-only -Wall -Wextra server/frdp/config/frdp-config.c server/frdp/frdpd/frdpd-ipc-demo.c server/frdp/ipc/frdp-ipc.c
 # frdp-authd IPC negative-path smoke: frdpd-ipc-demo returns Authentication result: failure for invalid credentials.
 # frdp-sesmand IPC startup smoke: --socket creates a 0600 Unix socket in a 0700 runtime directory.
+DEB_BUILD_OPTIONS='nocheck parallel=1' dpkg-buildpackage -uc -us -b -j1
+# Debian package smoke: frdpd_0.1.0-1_amd64.deb contains FRDP binaries, required FreeRDP/WinPR libraries, /etc/frdpd, PAM, systemd units, and inactive MAC policy examples.
 ```
 
 Implemented in the integrated `server/frdp/frdpd` path:
@@ -163,7 +165,7 @@ Exit criteria: the security baseline is accepted; no critical crashes are found 
 Deliverables:
 
 - [x] CMake install rules for FRDP runtime helper binaries, `frdpd.toml`, PAM service, systemd unit examples, and inactive MAC policy examples verified with the `server` component in an isolated build;
-- [ ] deb/rpm packages (draft packaging files exist, RPM CMake flags are aligned with `WITH_FRDPD`, but actual package builds are not verified);
+- [x] deb package preview (root `debian/` metadata supports a verified server-only binary package smoke build with `dpkg-buildpackage`; RPM CMake flags are aligned with `WITH_FRDPD`, but RPM and production distro policy verification remain open);
 - [x] admin CLI `frdpctl` builds and installs under `WITH_FRDPD`;
 - [x] admin CLI `frdpctl status` / `list-sessions` / `kill-session` operations over `frdp-sesmand` session IPC, with local CTest smoke coverage for request/response behavior;
 - [x] admin CLI `frdpctl reload` session IPC operation, with local request/response CTest coverage;

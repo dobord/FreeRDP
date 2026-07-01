@@ -12,12 +12,12 @@ if [ -z "$BUILD_DEPS" ] || [ -z "$BUILD_PKG" ]; then
   exit 1
 fi
 
-# First create a link to the debian/control folder
 cd "$SCRIPT_PATH/../.."
-./packaging/scripts/prepare_deb_freerdp-nightly.sh
+
+git rev-parse --short HEAD >.source_version
 
 # Check all dependencies are installed
 $BUILD_DEPS "debian/control"
 
 # And finally build the package
-$BUILD_PKG
+$BUILD_PKG "$@"
