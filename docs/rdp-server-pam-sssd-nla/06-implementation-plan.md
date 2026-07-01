@@ -44,7 +44,7 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - canonical `auth_socket` configuration and `--auth-socket=<path>` CLI override for routing password-backed auth/account checks through `frdp-authd` IPC;
 - config-driven `frdp-authd --config <path>` helper startup for reading `[auth].pam_service`;
 - canonical `session_socket` configuration and `--session-socket=<path>` CLI override for opening and closing `frdp-sesmand` sessions over IPC;
-- shared IPC client operations use bounded socket send/receive timeouts, suppress `SIGPIPE` on disconnected peers, and use an explicit little-endian wire format for the common IPC header;
+- shared IPC client operations use bounded socket send/receive timeouts, suppress `SIGPIPE` on disconnected peers, and use explicit little-endian/fixed-field wire formats for the common IPC header plus auth broker request/response payloads;
 - signed, expiring auth-token handoff for managed session opens; `frdp-authd` issues an HMAC token over a length-prefixed payload after successful auth/account/group lookup, integrated `frdpd` forwards the broker-provided POSIX uid/gid/bounded supplementary-group/account state through `FRDP_IPC_SESSION_REQUEST_V3`, and `frdp-sesmand` verifies the token and consumes its nonce once before opening a session;
 - helper listener startup rejects live Unix socket path collisions without unlinking the existing helper socket, while still removing same-node stale sockets;
 - per-peer correlation ids on integrated `frdpd` accept/auth/logon/activate/disconnect logs, propagated to `frdp-authd` auth/account IPC audit events;
@@ -154,7 +154,7 @@ Exit criteria: a domain-joined Windows client authenticates with Kerberos where 
 Deliverables:
 
 - [ ] ASAN/UBSAN builds;
-- [x] focused unit/CTest coverage for implemented static/dynamic channel config parsing, filter modes, capability validation, `max_connections` parsing, `frdpctl` CLI/session-IPC behavior, legacy V2 session-open rejection, invalid V3 auth-token rejection, auth-token uid/gid/group/account-state tamper rejection, POSIX group mismatch rejection with a valid V3 token, delimiter-collision-resistant token serialization, explicit little-endian IPC header encoding, and live auth/session helper survival after truncated IPC clients close the connection;
+- [x] focused unit/CTest coverage for implemented static/dynamic channel config parsing, filter modes, capability validation, `max_connections` parsing, `frdpctl` CLI/session-IPC behavior, legacy V2 session-open rejection, invalid V3 auth-token rejection, auth-token uid/gid/group/account-state tamper rejection, POSIX group mismatch rejection with a valid V3 token, delimiter-collision-resistant token serialization, explicit little-endian IPC header encoding, explicit auth broker request/response payload encoding, and live auth/session helper survival after truncated IPC clients close the connection;
 - [ ] fuzzing harnesses for channel parsers and selected RDP inputs;
 - [ ] protocol regression suite;
 - [ ] load testing harness;
