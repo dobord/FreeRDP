@@ -26,6 +26,7 @@
 #include <winpr/interlocked.h>
 #include <winpr/path.h>
 #include <winpr/rpc.h>
+#include <winpr/sspi.h>
 #include <winpr/ssl.h>
 #include <winpr/synch.h>
 #include <winpr/sysinfo.h>
@@ -1300,6 +1301,14 @@ static void frdpd_release_connection(frdpdServerConfig* config)
 		(void)InterlockedDecrement(&config->active_connections);
 }
 
+static void frdpd_peer_clear_owned_auth_identity(freerdp_peer* client,
+                                                 const SEC_WINNT_AUTH_IDENTITY* identity)
+{
+	if (!client || (identity != &client->identity))
+		return;
+	sspi_FreeAuthIdentity(&client->identity);
+}
+
 static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY* identity,
                              BOOL automatic)
 {
@@ -1343,6 +1352,7 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	};
 
 	const BOOL ok = frdpd_authenticate_identity(&auth, identity, &result);
+	frdpd_peer_clear_owned_auth_identity(client, identity);
 	context->auth_status = result.status;
 	context->pam_status = result.pam_status;
 
