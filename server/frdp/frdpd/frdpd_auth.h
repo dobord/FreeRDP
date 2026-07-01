@@ -12,6 +12,7 @@
 
 #include <winpr/sspi.h>
 
+#include "../ipc/frdp-ipc.h"
 #include "frdpd_pam.h"
 
 typedef struct
@@ -34,6 +35,8 @@ typedef struct
 	BOOL pam_session_open;
 	uid_t uid;
 	gid_t gid;
+	uint32_t group_count;
+	uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS];
 	BOOL has_posix_account;
 	char authorization_id[192];
 } frdpdAuthResult;

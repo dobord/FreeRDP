@@ -17,6 +17,7 @@
 #include <freerdp/peer.h>
 
 #include "../config/frdp-config.h"
+#include "../ipc/frdp-ipc.h"
 #include "frdpd_pam.h"
 
 #ifdef __cplusplus
@@ -68,6 +69,8 @@ extern "C"
 		char authorization_id[192];
 		uid_t uid;
 		gid_t gid;
+		UINT32 group_count;
+		UINT64 groups[FRDP_IPC_MAX_AUTH_GROUPS];
 		BOOL has_posix_account;
 		BOOL pam_credentials_established;
 		BOOL pam_session_open;

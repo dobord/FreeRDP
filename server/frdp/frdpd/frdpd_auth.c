@@ -33,6 +33,8 @@ static void frdpd_auth_result_set(frdpdAuthResult* result, frdpdPamAuthStatus st
 	result->pam_session_open = FALSE;
 	result->uid = (uid_t)-1;
 	result->gid = (gid_t)-1;
+	result->group_count = 0;
+	memset(result->groups, 0, sizeof(result->groups));
 	result->has_posix_account = FALSE;
 	memset(result->authorization_id, 0, sizeof(result->authorization_id));
 }
@@ -230,7 +232,8 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 		                                response.authorization_id) ||
 		    !response.has_posix_account ||
 		    ((uint64_t)(uid_t)response.uid != response.uid) ||
-		    ((uint64_t)(gid_t)response.gid != response.gid))
+		    ((uint64_t)(gid_t)response.gid != response.gid) ||
+		    (response.group_count > FRDP_IPC_MAX_AUTH_GROUPS))
 		{
 			if (result)
 				result->status = response.has_posix_account ? FRDPD_PAM_AUTH_ERROR
@@ -240,6 +243,8 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 		}
 		result->uid = (uid_t)response.uid;
 		result->gid = (gid_t)response.gid;
+		result->group_count = response.group_count;
+		memcpy(result->groups, response.groups, response.group_count * sizeof(response.groups[0]));
 		result->has_posix_account = TRUE;
 	}
 	if (ok && result)

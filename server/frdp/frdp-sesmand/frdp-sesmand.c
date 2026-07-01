@@ -403,14 +403,30 @@ static int allocate_display_number(int *display)
     return -1;
 }
 
+static int copy_groups_to_native(const uint64_t *groups, uint32_t group_count,
+                                 gid_t *native_groups, size_t native_group_count)
+{
+    if (!groups || !native_groups || (group_count == 0) ||
+        (group_count > FRDP_IPC_MAX_AUTH_GROUPS) || (group_count > native_group_count))
+        return -1;
+
+    for (uint32_t x = 0; x < group_count; x++) {
+        const gid_t native_group = (gid_t)groups[x];
+
+        if ((uint64_t)native_group != groups[x])
+            return -1;
+        native_groups[x] = native_group;
+    }
+    return 0;
+}
+
 /* Open a session for the specified user.  This starts a PAM session, forks
  * a child to run the per-user agent and returns 0 on success. */
-static int open_session(const char *user, uid_t uid, gid_t gid, const char *rhost,
-                        const char *correlation_id, uint32_t desktop_width,
-                        uint32_t desktop_height, uint32_t color_depth,
-                        char *session_id, size_t session_id_size,
-                        char *display_out, size_t display_out_size,
-                        char *agent_socket_out, size_t agent_socket_out_size)
+static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *groups,
+                        uint32_t group_count, const char *rhost, const char *correlation_id,
+                        uint32_t desktop_width, uint32_t desktop_height, uint32_t color_depth,
+                        char *session_id, size_t session_id_size, char *display_out,
+                        size_t display_out_size, char *agent_socket_out, size_t agent_socket_out_size)
 {
     char geometry_str[32];
     uuid_t new_id;
@@ -420,8 +436,12 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const char *rhos
     char ready_fd_str[16] = {0};
     int exec_pipe[2] = {-1, -1};
     int agent_fd = -1;
+    gid_t native_groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
 
     if (session_count >= MAX_SESSIONS)
+        return -1;
+    if (copy_groups_to_native(groups, group_count, native_groups,
+                              sizeof(native_groups) / sizeof(native_groups[0])) != 0)
         return -1;
     struct pam_conv conv = {pam_conv_fn, NULL};
     pam_handle_t *pamh = NULL;
@@ -529,8 +549,8 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const char *rhos
             setenv("FRDP_AGENT_CONTROL_FD", agent_fd_str, 1);
             setenv("FRDP_AGENT_SOCKET", agent_socket_path, 1);
         }
-        /* Set groups and UID/GID */
-        if (initgroups(user, gid) != 0) {
+        /* Apply the verified group payload before dropping UID/GID. */
+        if (setgroups((size_t)group_count, native_groups) != 0) {
             child_exec_failed(exec_pipe[1]);
         }
         if (setgid(gid) != 0 || setuid(uid) != 0) {
@@ -959,15 +979,58 @@ static int consume_auth_token_nonce(const char *nonce, unsigned long long expire
     return 0;
 }
 
+static int compare_uint64(const void *a, const void *b)
+{
+    const uint64_t left = *(const uint64_t *)a;
+    const uint64_t right = *(const uint64_t *)b;
+
+    return (left > right) - (left < right);
+}
+
+static int lookup_posix_groups(const char *user, gid_t primary_gid, uint64_t *groups,
+                               uint32_t *group_count)
+{
+    gid_t native_groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
+    int count = FRDP_IPC_MAX_AUTH_GROUPS;
+
+    if (!user || !groups || !group_count)
+        return -1;
+    if (getgrouplist(user, primary_gid, native_groups, &count) < 0)
+        return -1;
+    if ((count < 0) || (count > (int)FRDP_IPC_MAX_AUTH_GROUPS))
+        return -1;
+    for (int x = 0; x < count; x++)
+        groups[x] = (uint64_t)native_groups[x];
+    qsort(groups, (size_t)count, sizeof(groups[0]), compare_uint64);
+    *group_count = (uint32_t)count;
+    return 0;
+}
+
+static int posix_groups_match(const char *user, gid_t primary_gid, const uint64_t *groups,
+                              uint32_t group_count)
+{
+    uint64_t current_groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
+    uint32_t current_group_count = 0;
+
+    if ((group_count > FRDP_IPC_MAX_AUTH_GROUPS) || ((group_count > 0U) && !groups))
+        return 0;
+    if (lookup_posix_groups(user, primary_gid, current_groups, &current_group_count) != 0)
+        return 0;
+    return (current_group_count == group_count) &&
+           (memcmp(current_groups, groups, group_count * sizeof(groups[0])) == 0);
+}
+
 static int validate_and_consume_authorization(const char *authorization_id, const char *user,
                                               const char *rhost, const char *correlation_id,
-                                              uint64_t uid, uint64_t gid, int has_posix_account)
+                                              uint64_t uid, uint64_t gid, const uint64_t *groups,
+                                              uint32_t group_count, int has_posix_account)
 {
     char nonce[37] = {0};
     unsigned long long expires_at = 0;
 
     if (frdp_auth_token_verify(authorization_id, user, rhost, correlation_id, uid, gid,
-                               has_posix_account, nonce, sizeof(nonce), &expires_at) != 0)
+                               groups, group_count, has_posix_account, nonce, sizeof(nonce),
+                               &expires_at) != 0)
         return -1;
     return consume_auth_token_nonce(nonce, expires_at);
 }
@@ -1061,8 +1124,12 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
         if ((type == FRDP_IPC_SESSION_REQUEST_V3) && (authorization_id[0] == '\0'))
             return send_session_response(fd, 0, NULL, NULL, NULL, "missing authorization");
         if ((type == FRDP_IPC_SESSION_REQUEST_V3) &&
+            (req_v3.group_count > FRDP_IPC_MAX_AUTH_GROUPS))
+            return send_session_response(fd, 0, NULL, NULL, NULL, "missing POSIX account");
+        if ((type == FRDP_IPC_SESSION_REQUEST_V3) &&
             validate_and_consume_authorization(authorization_id, user, rhost, correlation_id,
-                                               req_v3.uid, req_v3.gid,
+                                               req_v3.uid, req_v3.gid, req_v3.groups,
+                                               req_v3.group_count,
                                                req_v3.has_posix_account) != 0)
             return send_session_response(fd, 0, NULL, NULL, NULL, "invalid authorization");
         if (((type != FRDP_IPC_SESSION_REQUEST_V2) && (type != FRDP_IPC_SESSION_REQUEST_V3)) ||
@@ -1070,15 +1137,19 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
             ((type == FRDP_IPC_SESSION_REQUEST_V2) &&
              (((uint64_t)uid != req_v2.uid) || ((uint64_t)gid != req_v2.gid))) ||
             ((type == FRDP_IPC_SESSION_REQUEST_V3) &&
-             (((uint64_t)uid != req_v3.uid) || ((uint64_t)gid != req_v3.gid))))
+             (((uint64_t)uid != req_v3.uid) || ((uint64_t)gid != req_v3.gid) ||
+              (req_v3.group_count > FRDP_IPC_MAX_AUTH_GROUPS))))
             return send_session_response(fd, 0, NULL, NULL, NULL, "missing POSIX account");
         pwd = getpwnam(user);
         if (!pwd || (pwd->pw_uid != uid) || (pwd->pw_gid != gid))
             return send_session_response(fd, 0, NULL, NULL, NULL, "POSIX account mismatch");
-        if (open_session(user, uid, gid, rhost, correlation_id, req.desktop_width,
-                          req.desktop_height, req.color_depth, response_session_id,
-                          sizeof(response_session_id), display, sizeof(display), agent_socket,
-                          sizeof(agent_socket)) != 0) {
+        if ((type == FRDP_IPC_SESSION_REQUEST_V3) &&
+            !posix_groups_match(user, gid, req_v3.groups, req_v3.group_count))
+            return send_session_response(fd, 0, NULL, NULL, NULL, "POSIX groups mismatch");
+        if (open_session(user, uid, gid, req_v3.groups, req_v3.group_count, rhost,
+                         correlation_id, req.desktop_width, req.desktop_height, req.color_depth,
+                         response_session_id, sizeof(response_session_id), display,
+                         sizeof(display), agent_socket, sizeof(agent_socket)) != 0) {
             char escaped_correlation_id[256] = {0};
             char escaped_user[256] = {0};
 
@@ -1421,15 +1492,25 @@ int main(int argc, char **argv)
     char session_id[64] = {0};
     char display[32] = {0};
     char agent_socket[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
+    uint64_t standalone_groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
+    uint32_t standalone_group_count = 0;
     struct passwd *pwd = getpwnam(standalone_user);
     if (!pwd) {
         syslog(LOG_ERR, "unknown standalone session user %s", escaped_standalone_user);
         closelog();
         return 1;
     }
-    if (open_session(standalone_user, pwd->pw_uid, pwd->pw_gid, NULL, "standalone", 1024, 768,
-                      24, session_id, sizeof(session_id), display, sizeof(display),
-                      agent_socket, sizeof(agent_socket)) == 0) {
+    if (lookup_posix_groups(standalone_user, pwd->pw_gid, standalone_groups,
+                            &standalone_group_count) != 0) {
+        syslog(LOG_ERR, "failed to lookup groups for standalone session user %s",
+               escaped_standalone_user);
+        closelog();
+        return 1;
+    }
+    if (open_session(standalone_user, pwd->pw_uid, pwd->pw_gid, standalone_groups,
+                     standalone_group_count, NULL, "standalone", 1024, 768, 24, session_id,
+                     sizeof(session_id), display, sizeof(display), agent_socket,
+                     sizeof(agent_socket)) == 0) {
         syslog(LOG_INFO, "created session for %s", escaped_standalone_user);
     } else {
         syslog(LOG_ERR, "failed to create session for %s", escaped_standalone_user);

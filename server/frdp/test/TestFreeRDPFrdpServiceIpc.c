@@ -1,7 +1,10 @@
+#include "ipc/frdp-auth-token.h"
 #include "ipc/frdp-ipc.h"
 
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
+#include <pwd.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -243,11 +246,19 @@ static int receive_session_response(int fd, int expected_success, const char* ex
 	if (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))
 		return -1;
 	if (!!response.success != !!expected_success)
+	{
+		fprintf(stderr, "unexpected session success: got=%u expected=%d error=%s\n",
+		        response.success, expected_success, response.error);
 		return -1;
+	}
 	if (!memchr(response.error, '\0', sizeof(response.error)))
 		return -1;
 	if (expected_error && strcmp(response.error, expected_error) != 0)
+	{
+		fprintf(stderr, "unexpected session error: got=%s expected=%s\n", response.error,
+		        expected_error);
 		return -1;
+	}
 	return 0;
 }
 
@@ -272,6 +283,76 @@ static int receive_reload_response(int fd, int expected_success, const char* exp
 	if (expected_message && strcmp(response.message, expected_message) != 0)
 		return -1;
 	if (expected_error && strcmp(response.error, expected_error) != 0)
+		return -1;
+	return 0;
+}
+
+static int compare_uint64(const void* lhs, const void* rhs)
+{
+	const uint64_t a = *(const uint64_t*)lhs;
+	const uint64_t b = *(const uint64_t*)rhs;
+
+	if (a < b)
+		return -1;
+	if (a > b)
+		return 1;
+	return 0;
+}
+
+static int group_list_contains(const uint64_t* groups, uint32_t group_count, uint64_t gid)
+{
+	for (uint32_t x = 0; x < group_count; x++)
+	{
+		if (groups[x] == gid)
+			return 1;
+	}
+	return 0;
+}
+
+static int lookup_current_user(char* user, size_t user_size, uint64_t* uid, uint64_t* gid,
+                               uint64_t* groups, uint32_t* group_count)
+{
+	gid_t native_groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+	int native_group_count = (int)FRDP_IPC_MAX_AUTH_GROUPS;
+	struct passwd* pwd = NULL;
+
+	if (!user || !uid || !gid || !groups || !group_count)
+		return -1;
+	pwd = getpwuid(geteuid());
+	if (!pwd || !pwd->pw_name)
+		return -1;
+	if (snprintf(user, user_size, "%s", pwd->pw_name) >= (int)user_size)
+		return -1;
+	if (getgrouplist(pwd->pw_name, pwd->pw_gid, native_groups, &native_group_count) < 0)
+		return -1;
+	if ((native_group_count <= 0) ||
+	    ((uint32_t)native_group_count > FRDP_IPC_MAX_AUTH_GROUPS))
+		return -1;
+	*uid = (uint64_t)pwd->pw_uid;
+	*gid = (uint64_t)pwd->pw_gid;
+	*group_count = (uint32_t)native_group_count;
+	for (uint32_t x = 0; x < *group_count; x++)
+		groups[x] = (uint64_t)native_groups[x];
+	qsort(groups, *group_count, sizeof(groups[0]), compare_uint64);
+	return 0;
+}
+
+static int make_wrong_groups(const uint64_t* groups, uint32_t group_count, uint64_t* wrong_groups)
+{
+	uint64_t candidate = 0;
+
+	if (!groups || !wrong_groups || (group_count == 0))
+		return -1;
+	memcpy(wrong_groups, groups, group_count * sizeof(groups[0]));
+	candidate = groups[0] + 1U;
+	while (group_list_contains(groups, group_count, candidate))
+		candidate++;
+	wrong_groups[0] = candidate;
+	qsort(wrong_groups, group_count, sizeof(wrong_groups[0]), compare_uint64);
+	if ((group_count == 1) && (wrong_groups[0] == groups[0]))
+		return -1;
+	if ((group_count > 1) &&
+	    (memcmp(groups, wrong_groups, group_count * sizeof(groups[0])) == 0))
 		return -1;
 	return 0;
 }
@@ -582,6 +663,90 @@ static int test_sesmand_rejects_invalid_authorization(const char* socket_path)
 
 cleanup:
 	frdp_ipc_close(fd);
+	return rc;
+}
+
+static int test_sesmand_rejects_posix_groups_mismatch(void)
+{
+	frdpTestHelper helper;
+	char dir[1024] = { 0 };
+	char key_path[1024] = { 0 };
+	char user[64] = { 0 };
+	char token[192] = { 0 };
+	uint64_t uid = 0;
+	uint64_t gid = 0;
+	uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+	uint64_t wrong_groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+	uint32_t group_count = 0;
+	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
+	int fd = -1;
+	int rc = -1;
+	const char* stage = "init";
+	frdpSessionRequestV3 request = { 0 };
+
+	memset(&helper, 0, sizeof(helper));
+	helper.pid = -1;
+	if (previous_key_path && !saved_key_path)
+		return -1;
+	stage = "make_runtime_dir";
+	if (make_runtime_dir(dir, sizeof(dir), "frdp-sesmand-groups") != 0)
+		goto cleanup;
+	stage = "key_path";
+	if (snprintf(key_path, sizeof(key_path), "%s/auth-token.key", dir) >=
+	    (int)sizeof(key_path))
+		goto cleanup;
+	stage = "setenv";
+	if (setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0)
+		goto cleanup;
+	stage = "lookup_current_user";
+	if (lookup_current_user(user, sizeof(user), &uid, &gid, groups, &group_count) != 0)
+		goto cleanup;
+	stage = "make_wrong_groups";
+	if (make_wrong_groups(groups, group_count, wrong_groups) != 0)
+		goto cleanup;
+	stage = "create_token";
+	if (frdp_auth_token_create(user, "203.0.113.10", "groups-mismatch", uid, gid,
+	                           wrong_groups, group_count, 1, token, sizeof(token)) != 0)
+		goto cleanup;
+	stage = "start_helper";
+	if (start_helper(FRDP_SESMAND_BINARY, "frdp-sesmand-groups", &helper) != 0)
+		goto cleanup;
+	stage = "connect";
+	fd = frdp_ipc_connect(helper.socket_path);
+	if (fd < 0)
+		goto cleanup;
+	snprintf(request.correlation_id, sizeof(request.correlation_id), "groups-mismatch");
+	snprintf(request.user, sizeof(request.user), "%s", user);
+	snprintf(request.rhost, sizeof(request.rhost), "203.0.113.10");
+	snprintf(request.authorization_id, sizeof(request.authorization_id), "%s", token);
+	request.has_posix_account = 1;
+	request.uid = uid;
+	request.gid = gid;
+	request.group_count = group_count;
+	memcpy(request.groups, wrong_groups, group_count * sizeof(wrong_groups[0]));
+	if (send_header(fd, FRDP_IPC_SESSION_REQUEST_V3, sizeof(request)) != 0 ||
+	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
+		goto cleanup;
+	stage = "receive";
+	rc = receive_session_response(fd, 0, "POSIX groups mismatch");
+
+cleanup:
+	if (rc != 0)
+		fprintf(stderr, "POSIX groups mismatch test failed at stage: %s\n", stage);
+	if (fd >= 0)
+		frdp_ipc_close(fd);
+	if ((helper.pid > 0) && (stop_helper(&helper) != 0))
+		rc = -1;
+	if (saved_key_path)
+	{
+		setenv(FRDP_AUTH_TOKEN_KEY_ENV, saved_key_path, 1);
+		free(saved_key_path);
+	}
+	else
+		unsetenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	unlink(key_path);
+	rmdir(dir);
 	return rc;
 }
 
@@ -938,6 +1103,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_sesmand_rate_limit() != 0)
 	{
 		printf("frdp-sesmand IPC rate-limit test failed\n");
+		return -1;
+	}
+	if (test_sesmand_rejects_posix_groups_mismatch() != 0)
+	{
+		printf("frdp-sesmand POSIX groups mismatch test failed\n");
 		return -1;
 	}
 	if (test_sesmand_reload_config() != 0)

@@ -117,20 +117,35 @@ static int frdp_auth_token_load_key(uint8_t* key, size_t key_len)
 static int frdp_auth_token_payload(char* dst, size_t dst_size, const char* nonce,
                                    unsigned long long expires_at, const char* user,
                                    const char* rhost, const char* correlation_id, uint64_t uid,
-                                   uint64_t gid, int account_ok)
+                                   uint64_t gid, const uint64_t* groups, uint32_t group_count,
+                                   int account_ok)
 {
 	const char* token_nonce = nonce ? nonce : "";
 	const char* token_user = user ? user : "";
 	const char* token_rhost = rhost ? rhost : "";
 	const char* token_correlation_id = correlation_id ? correlation_id : "";
-	const int rc =
-	    snprintf(dst, dst_size, "n:%zu:%s|e:%llu|u:%zu:%s|r:%zu:%s|c:%zu:%s|uid:%" PRIu64
-	                             "|gid:%" PRIu64 "|a:%d",
-	             strlen(token_nonce), token_nonce, expires_at, strlen(token_user), token_user,
-	             strlen(token_rhost), token_rhost, strlen(token_correlation_id),
-	             token_correlation_id, uid, gid, account_ok ? 1 : 0);
+	size_t used = 0;
+	int rc = 0;
 
-	return ((rc > 0) && ((size_t)rc < dst_size)) ? 0 : -1;
+	if ((group_count > FRDP_AUTH_TOKEN_MAX_GROUPS) || ((group_count > 0U) && !groups))
+		return -1;
+	rc = snprintf(dst, dst_size, "n:%zu:%s|e:%llu|u:%zu:%s|r:%zu:%s|c:%zu:%s|uid:%" PRIu64
+	                              "|gid:%" PRIu64 "|gc:%" PRIu32,
+	              strlen(token_nonce), token_nonce, expires_at, strlen(token_user), token_user,
+	              strlen(token_rhost), token_rhost, strlen(token_correlation_id),
+	              token_correlation_id, uid, gid, group_count);
+	if ((rc <= 0) || ((size_t)rc >= dst_size))
+		return -1;
+	used = (size_t)rc;
+	for (uint32_t x = 0; x < group_count; x++)
+	{
+		rc = snprintf(&dst[used], dst_size - used, "|g%" PRIu32 ":%" PRIu64, x, groups[x]);
+		if ((rc <= 0) || ((size_t)rc >= (dst_size - used)))
+			return -1;
+		used += (size_t)rc;
+	}
+	rc = snprintf(&dst[used], dst_size - used, "|a:%d", account_ok ? 1 : 0);
+	return ((rc > 0) && ((size_t)rc < (dst_size - used))) ? 0 : -1;
 }
 
 static int frdp_auth_token_hmac_hex(const char* payload, char* hex, size_t hex_size)
@@ -166,12 +181,12 @@ static int frdp_auth_token_hex_equal(const char* a, const char* b)
 }
 
 int frdp_auth_token_create(const char* user, const char* rhost, const char* correlation_id,
-                           uint64_t uid, uint64_t gid, int account_ok, char* token,
-                           size_t token_size)
+                           uint64_t uid, uint64_t gid, const uint64_t* groups,
+                           uint32_t group_count, int account_ok, char* token, size_t token_size)
 {
 	uuid_t id;
 	char nonce[37] = { 0 };
-	char payload[512] = { 0 };
+	char payload[2048] = { 0 };
 	char hmac_hex[FRDP_AUTH_TOKEN_HEX_LEN + 1U] = { 0 };
 	const unsigned long long expires_at =
 	    (unsigned long long)time(NULL) + FRDP_AUTH_TOKEN_TTL_SECONDS;
@@ -181,7 +196,7 @@ int frdp_auth_token_create(const char* user, const char* rhost, const char* corr
 	uuid_generate(id);
 	uuid_unparse_lower(id, nonce);
 	if (frdp_auth_token_payload(payload, sizeof(payload), nonce, expires_at, user, rhost,
-	                            correlation_id, uid, gid, account_ok) != 0)
+	                            correlation_id, uid, gid, groups, group_count, account_ok) != 0)
 		return -1;
 	if (frdp_auth_token_hmac_hex(payload, hmac_hex, sizeof(hmac_hex)) != 0)
 		return -1;
@@ -193,13 +208,14 @@ int frdp_auth_token_create(const char* user, const char* rhost, const char* corr
 
 int frdp_auth_token_verify(const char* token, const char* user, const char* rhost,
                            const char* correlation_id, uint64_t uid, uint64_t gid,
-                           int account_ok, char* nonce, size_t nonce_size,
+                           const uint64_t* groups, uint32_t group_count, int account_ok,
+                           char* nonce, size_t nonce_size,
                            unsigned long long* expires_at)
 {
 	char parsed_nonce[37] = { 0 };
 	char parsed_hmac[FRDP_AUTH_TOKEN_HEX_LEN + 1U] = { 0 };
 	char expected_hmac[FRDP_AUTH_TOKEN_HEX_LEN + 1U] = { 0 };
-	char payload[512] = { 0 };
+	char payload[2048] = { 0 };
 	unsigned long long parsed_expires_at = 0;
 	int consumed = 0;
 
@@ -215,7 +231,8 @@ int frdp_auth_token_verify(const char* token, const char* user, const char* rhos
 	if (parsed_expires_at < (unsigned long long)time(NULL))
 		return -1;
 	if (frdp_auth_token_payload(payload, sizeof(payload), parsed_nonce, parsed_expires_at, user,
-	                            rhost, correlation_id, uid, gid, account_ok) != 0)
+	                            rhost, correlation_id, uid, gid, groups, group_count,
+	                            account_ok) != 0)
 		return -1;
 	if (frdp_auth_token_hmac_hex(payload, expected_hmac, sizeof(expected_hmac)) != 0)
 		return -1;

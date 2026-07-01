@@ -1021,6 +1021,8 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 		return FALSE;
 	if (context->authorization_id[0] == '\0')
 		return FALSE;
+	if (context->group_count > FRDP_IPC_MAX_AUTH_GROUPS)
+		return FALSE;
 
 	if (!frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
 	                          context->correlation_id) ||
@@ -1033,6 +1035,8 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 
 	request.uid = (UINT64)context->uid;
 	request.gid = (UINT64)context->gid;
+	request.group_count = context->group_count;
+	memcpy(request.groups, context->groups, context->group_count * sizeof(request.groups[0]));
 	request.has_posix_account = TRUE;
 
 	settings = client->context ? client->context->settings : NULL;
@@ -1122,6 +1126,8 @@ static void frdpd_auth_result_cleanup(frdpdAuthResult* result)
 	result->pam_handle = NULL;
 	result->uid = (uid_t)-1;
 	result->gid = (gid_t)-1;
+	result->group_count = 0;
+	memset(result->groups, 0, sizeof(result->groups));
 	result->has_posix_account = FALSE;
 	memset(result->authorization_id, 0, sizeof(result->authorization_id));
 	result->pam_credentials_established = FALSE;
@@ -1218,6 +1224,8 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 	context->pam_handle = NULL;
 	context->uid = (uid_t)-1;
 	context->gid = (gid_t)-1;
+	context->group_count = 0;
+	memset(context->groups, 0, sizeof(context->groups));
 	context->has_posix_account = FALSE;
 	memset(context->authorization_id, 0, sizeof(context->authorization_id));
 	context->pam_credentials_established = FALSE;
@@ -1388,6 +1396,8 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	context->pam_handle = result.pam_handle;
 	context->uid = result.uid;
 	context->gid = result.gid;
+	context->group_count = result.group_count;
+	memcpy(context->groups, result.groups, result.group_count * sizeof(result.groups[0]));
 	context->has_posix_account = result.has_posix_account;
 	memcpy(context->authorization_id, result.authorization_id, sizeof(context->authorization_id));
 	context->pam_credentials_established = result.pam_credentials_established;

@@ -223,8 +223,36 @@ static int copy_ipc_string(char *dst, size_t dst_size, const char *src, size_t s
     return 0;
 }
 
+static int compare_uint64(const void *a, const void *b)
+{
+    const uint64_t left = *(const uint64_t *)a;
+    const uint64_t right = *(const uint64_t *)b;
+
+    return (left > right) - (left < right);
+}
+
+static int lookup_posix_groups(const char *user, gid_t primary_gid, uint64_t *groups,
+                               uint32_t *group_count)
+{
+    gid_t native_groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
+    int count = FRDP_IPC_MAX_AUTH_GROUPS;
+
+    if (!user || !groups || !group_count)
+        return -1;
+    if (getgrouplist(user, primary_gid, native_groups, &count) < 0)
+        return -1;
+    if ((count < 0) || (count > (int)FRDP_IPC_MAX_AUTH_GROUPS))
+        return -1;
+    for (int x = 0; x < count; x++)
+        groups[x] = (uint64_t)native_groups[x];
+    qsort(groups, (size_t)count, sizeof(groups[0]), compare_uint64);
+    *group_count = (uint32_t)count;
+    return 0;
+}
+
 static int send_auth_response(int fd, int success, const char *error,
                               const char *authorization_id, uid_t uid, gid_t gid,
+                              const uint64_t *groups, uint32_t group_count,
                               int has_posix_account)
 {
     frdpAuthResponse resp;
@@ -238,6 +266,12 @@ static int send_auth_response(int fd, int success, const char *error,
         snprintf(resp.authorization_id, sizeof(resp.authorization_id), "%s", authorization_id);
     resp.uid = (uint64_t)uid;
     resp.gid = (uint64_t)gid;
+    if (group_count > FRDP_IPC_MAX_AUTH_GROUPS)
+        return -1;
+    if (groups && (group_count <= FRDP_IPC_MAX_AUTH_GROUPS)) {
+        resp.group_count = group_count;
+        memcpy(resp.groups, groups, group_count * sizeof(resp.groups[0]));
+    }
     resp.has_posix_account = has_posix_account ? 1 : 0;
 
     rhdr.type = FRDP_IPC_AUTH_RESPONSE;
@@ -531,7 +565,8 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             continue;
         }
         if (verify_peer(cfd) != 0) {
-            send_auth_response(cfd, 0, "unauthorized IPC peer", NULL, (uid_t)-1, (gid_t)-1, 0);
+            send_auth_response(cfd, 0, "unauthorized IPC peer", NULL, (uid_t)-1, (gid_t)-1,
+                               NULL, 0, 0);
             close(cfd);
             continue;
         }
@@ -539,7 +574,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
         if ((frdp_ipc_get_peer_uid(cfd, &peer_uid) != 0) ||
             !frdp_ipc_rate_limiter_allow(&rate_limiter, peer_uid)) {
             send_auth_response(cfd, 0, "IPC rate limit exceeded", NULL, (uid_t)-1,
-                               (gid_t)-1, 0);
+                               (gid_t)-1, NULL, 0, 0);
             close(cfd);
             continue;
         }
@@ -549,7 +584,8 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             continue;
         }
         if (!frdp_ipc_request_payload_len_is_bounded(hdr.payload_len)) {
-            send_auth_response(cfd, 0, "IPC payload too large", NULL, (uid_t)-1, (gid_t)-1, 0);
+            send_auth_response(cfd, 0, "IPC payload too large", NULL, (uid_t)-1, (gid_t)-1,
+                               NULL, 0, 0);
             close(cfd);
             continue;
         }
@@ -566,9 +602,11 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                     copy_ipc_string(rhost, sizeof(rhost), req.rhost, sizeof(req.rhost)) != 0 ||
                     copy_ipc_string(password, sizeof(password), req.password, sizeof(req.password)) != 0) {
                     send_auth_response(cfd, 0, "invalid auth request", NULL, (uid_t)-1,
-                                       (gid_t)-1, 0);
+                                       (gid_t)-1, NULL, 0, 0);
                 } else {
                     char authorization_id[sizeof(((frdpAuthResponse *)0)->authorization_id)] = {0};
+                    uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
+                    uint32_t group_count = 0;
                     const int authenticated =
                         authenticate_user(pam_service, rhost, correlation_id, user, password) == 0;
                     struct passwd *pwd = NULL;
@@ -576,26 +614,33 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                         pwd = getpwnam(user);
                     if (authenticated && !pwd)
                         send_auth_response(cfd, 0, "missing POSIX account", NULL, (uid_t)-1,
-                                           (gid_t)-1, 0);
+                                           (gid_t)-1, NULL, 0, 0);
+                    else if (authenticated &&
+                             lookup_posix_groups(user, pwd->pw_gid, groups, &group_count) != 0)
+                        send_auth_response(cfd, 0, "POSIX group lookup failed", NULL, (uid_t)-1,
+                                           (gid_t)-1, NULL, 0, 0);
                     else if (authenticated &&
                              frdp_auth_token_create(user, rhost, correlation_id,
                                                     (uint64_t)pwd->pw_uid,
-                                                    (uint64_t)pwd->pw_gid, 1, authorization_id,
-                                                    sizeof(authorization_id)) != 0)
+                                                    (uint64_t)pwd->pw_gid, groups, group_count, 1,
+                                                    authorization_id, sizeof(authorization_id)) != 0)
                         send_auth_response(cfd, 0, "authorization id generation failed", NULL,
-                                           (uid_t)-1, (gid_t)-1, 0);
+                                           (uid_t)-1, (gid_t)-1, NULL, 0, 0);
                     else
                         send_auth_response(cfd, authenticated, NULL,
                                            authenticated ? authorization_id : NULL,
                                            authenticated ? pwd->pw_uid : (uid_t)-1,
                                            authenticated ? pwd->pw_gid : (gid_t)-1,
+                                           authenticated ? groups : NULL,
+                                           authenticated ? group_count : 0,
                                            authenticated ? 1 : 0);
                 }
                 clear_secret(password, sizeof(password));
                 clear_secret(req.password, sizeof(req.password));
             }
         } else {
-            send_auth_response(cfd, 0, "unsupported IPC request", NULL, (uid_t)-1, (gid_t)-1, 0);
+            send_auth_response(cfd, 0, "unsupported IPC request", NULL, (uid_t)-1, (gid_t)-1,
+                               NULL, 0, 0);
         }
         close(cfd);
     }

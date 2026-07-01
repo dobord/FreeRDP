@@ -213,6 +213,8 @@ static int test_auth_token_binds_posix_account(void)
 	char key_path[1024] = { 0 };
 	char token[192] = { 0 };
 	char nonce[37] = { 0 };
+	const uint64_t groups[] = { 1001, 2000 };
+	const uint64_t changed_groups[] = { 1001, 2001 };
 	unsigned long long expires_at = 0;
 	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
 	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
@@ -230,28 +232,31 @@ static int test_auth_token_binds_posix_account(void)
 		goto cleanup;
 	if (setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0)
 		goto cleanup;
-	if (frdp_auth_token_create("alice", "198.51.100.8", "corr-1", 1000, 1001, 1, token,
-	                           sizeof(token)) != 0)
+	if (frdp_auth_token_create("alice", "198.51.100.8", "corr-1", 1000, 1001, groups, 2, 1,
+	                           token, sizeof(token)) != 0)
 		goto cleanup;
-	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1000, 1001, 1, nonce,
-	                           sizeof(nonce), &expires_at) != 0)
+	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1000, 1001, groups,
+	                           2, 1, nonce, sizeof(nonce), &expires_at) != 0)
 		goto cleanup;
 	if (nonce[0] == '\0' || expires_at == 0)
 		goto cleanup;
-	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1002, 1001, 1, nonce,
-	                           sizeof(nonce), &expires_at) == 0)
+	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1002, 1001, groups,
+	                           2, 1, nonce, sizeof(nonce), &expires_at) == 0)
 		goto cleanup;
-	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1000, 1002, 1, nonce,
-	                           sizeof(nonce), &expires_at) == 0)
+	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1000, 1002, groups,
+	                           2, 1, nonce, sizeof(nonce), &expires_at) == 0)
 		goto cleanup;
-	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1000, 1001, 0, nonce,
-	                           sizeof(nonce), &expires_at) == 0)
+	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1000, 1001, groups,
+	                           2, 0, nonce, sizeof(nonce), &expires_at) == 0)
+		goto cleanup;
+	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1000, 1001,
+	                           changed_groups, 2, 1, nonce, sizeof(nonce), &expires_at) == 0)
 		goto cleanup;
 	memset(token, 0, sizeof(token));
-	if (frdp_auth_token_create("alice", "h|c", "x", 1000, 1001, 1, token, sizeof(token)) !=
-	    0)
+	if (frdp_auth_token_create("alice", "h|c", "x", 1000, 1001, groups, 2, 1, token,
+	                           sizeof(token)) != 0)
 		goto cleanup;
-	if (frdp_auth_token_verify(token, "alice|h", "c", "x", 1000, 1001, 1, nonce,
+	if (frdp_auth_token_verify(token, "alice|h", "c", "x", 1000, 1001, groups, 2, 1, nonce,
 	                           sizeof(nonce), &expires_at) == 0)
 		goto cleanup;
 	rc = 0;

@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "frdp-auth-token.h"
+
 /* Message types for interprocess communication */
 typedef enum {
     FRDP_IPC_AUTH_REQUEST = 1,
@@ -47,6 +49,7 @@ typedef struct {
 } frdpIpcHeader;
 
 #define FRDP_IPC_MAX_REQUEST_PAYLOAD_LEN 4096U
+#define FRDP_IPC_MAX_AUTH_GROUPS FRDP_AUTH_TOKEN_MAX_GROUPS
 #define FRDP_IPC_RATE_LIMIT_WINDOW_SECONDS 10U
 #define FRDP_IPC_RATE_LIMIT_MAX_REQUESTS 64U
 #define FRDP_IPC_RATE_LIMIT_MAX_PEERS 16U
@@ -77,6 +80,8 @@ typedef struct {
     char authorization_id[192];
     uint64_t uid;
     uint64_t gid;
+    uint32_t group_count;
+    uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS];
     int has_posix_account;
 } frdpAuthResponse;
 
@@ -112,6 +117,8 @@ typedef struct {
     char authorization_id[192];
     uint64_t uid;
     uint64_t gid;
+    uint32_t group_count;
+    uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS];
     int has_posix_account;
     uint32_t desktop_width;
     uint32_t desktop_height;
