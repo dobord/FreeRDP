@@ -17,6 +17,8 @@ add_executable(${MODULE_NAME}
     ${${MODULE_PREFIX}_SRCS}
     ../config/frdp-config.c
     ../config/frdp-config.h
+    ../ipc/frdp-auth-token.c
+    ../ipc/frdp-auth-token.h
     ../ipc/frdp-ipc.c
     ../ipc/frdp-ipc.h
     ../frdpd/channel_policy.c
@@ -24,6 +26,7 @@ add_executable(${MODULE_NAME}
 add_dependencies(${MODULE_NAME} frdpd frdpctl frdp-authd frdp-sesmand frdp-session-agent)
 
 target_include_directories(${MODULE_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_link_libraries(${MODULE_NAME} PRIVATE winpr ${UUID_LIBRARY})
 target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
                                                    FRDPD_BINARY="$<TARGET_FILE:frdpd>"
                                                    FRDPCTL_BINARY="$<TARGET_FILE:frdpctl>"

@@ -61,6 +61,9 @@ typedef struct {
     int success;
     char error[128];
     char authorization_id[192];
+    uint64_t uid;
+    uint64_t gid;
+    int has_posix_account;
 } frdpAuthResponse;
 
 /* Session open/close request structure */

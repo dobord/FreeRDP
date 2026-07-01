@@ -1,3 +1,4 @@
+#include "ipc/frdp-auth-token.h"
 #include "ipc/frdp-ipc.h"
 
 #include <errno.h>
@@ -206,6 +207,68 @@ cleanup:
 	return rc;
 }
 
+static int test_auth_token_binds_posix_account(void)
+{
+	char dir[1024] = { 0 };
+	char key_path[1024] = { 0 };
+	char token[192] = { 0 };
+	char nonce[37] = { 0 };
+	unsigned long long expires_at = 0;
+	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
+	int rc = -1;
+
+	if (previous_key_path && !saved_key_path)
+		return -1;
+	if (make_runtime_dir(dir, sizeof(dir)) != 0)
+	{
+		free(saved_key_path);
+		return -1;
+	}
+	const int key_path_len = snprintf(key_path, sizeof(key_path), "%s/auth-token.key", dir);
+	if ((key_path_len < 0) || ((size_t)key_path_len >= sizeof(key_path)))
+		goto cleanup;
+	if (setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0)
+		goto cleanup;
+	if (frdp_auth_token_create("alice", "198.51.100.8", "corr-1", 1000, 1001, 1, token,
+	                           sizeof(token)) != 0)
+		goto cleanup;
+	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1000, 1001, 1, nonce,
+	                           sizeof(nonce), &expires_at) != 0)
+		goto cleanup;
+	if (nonce[0] == '\0' || expires_at == 0)
+		goto cleanup;
+	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1002, 1001, 1, nonce,
+	                           sizeof(nonce), &expires_at) == 0)
+		goto cleanup;
+	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1000, 1002, 1, nonce,
+	                           sizeof(nonce), &expires_at) == 0)
+		goto cleanup;
+	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1000, 1001, 0, nonce,
+	                           sizeof(nonce), &expires_at) == 0)
+		goto cleanup;
+	memset(token, 0, sizeof(token));
+	if (frdp_auth_token_create("alice", "h|c", "x", 1000, 1001, 1, token, sizeof(token)) !=
+	    0)
+		goto cleanup;
+	if (frdp_auth_token_verify(token, "alice|h", "c", "x", 1000, 1001, 1, nonce,
+	                           sizeof(nonce), &expires_at) == 0)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (saved_key_path)
+	{
+		setenv(FRDP_AUTH_TOKEN_KEY_ENV, saved_key_path, 1);
+		free(saved_key_path);
+	}
+	else
+		unsetenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	unlink(key_path);
+	rmdir(dir);
+	return rc;
+}
+
 int TestFreeRDPFrdpIpc(int argc, char* argv[])
 {
 	(void)argc;
@@ -222,6 +285,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_recv_rejects_short_read() != 0)
 		return -1;
 	if (test_send_recv_reject_null_buffers() != 0)
+		return -1;
+	if (test_auth_token_binds_posix_account() != 0)
 		return -1;
 	return 0;
 }

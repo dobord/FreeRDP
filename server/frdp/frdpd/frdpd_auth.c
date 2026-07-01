@@ -224,28 +224,23 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	ok = response.success ? TRUE : FALSE;
 	if (ok)
 	{
-		uid_t uid = (uid_t)-1;
-		gid_t gid = (gid_t)-1;
-
 		if (!result || (response.authorization_id[0] == '\0') ||
 		    !frdpd_auth_copy_ipc_string(result->authorization_id,
 		                                sizeof(result->authorization_id),
-		                                response.authorization_id))
+		                                response.authorization_id) ||
+		    !response.has_posix_account ||
+		    ((uint64_t)(uid_t)response.uid != response.uid) ||
+		    ((uint64_t)(gid_t)response.gid != response.gid))
 		{
 			if (result)
-				result->status = FRDPD_PAM_AUTH_ERROR;
+				result->status = response.has_posix_account ? FRDPD_PAM_AUTH_ERROR
+				                                            : FRDPD_PAM_AUTH_ACCOUNT_DENIED;
 			ok = FALSE;
 			goto fail;
 		}
-		ok = frdpd_auth_lookup_posix_account(pam_user, &uid, &gid);
-		if (result && ok)
-		{
-			result->uid = uid;
-			result->gid = gid;
-			result->has_posix_account = TRUE;
-		}
-		else if (result)
-			result->status = FRDPD_PAM_AUTH_ACCOUNT_DENIED;
+		result->uid = (uid_t)response.uid;
+		result->gid = (gid_t)response.gid;
+		result->has_posix_account = TRUE;
 	}
 	if (ok && result)
 	{

@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <security/pam_appl.h>
 #include <unistd.h>
 #include <sys/mman.h>
@@ -223,7 +224,8 @@ static int copy_ipc_string(char *dst, size_t dst_size, const char *src, size_t s
 }
 
 static int send_auth_response(int fd, int success, const char *error,
-                              const char *authorization_id)
+                              const char *authorization_id, uid_t uid, gid_t gid,
+                              int has_posix_account)
 {
     frdpAuthResponse resp;
     frdpIpcHeader rhdr;
@@ -234,6 +236,9 @@ static int send_auth_response(int fd, int success, const char *error,
         snprintf(resp.error, sizeof(resp.error), "%s", error);
     if (authorization_id)
         snprintf(resp.authorization_id, sizeof(resp.authorization_id), "%s", authorization_id);
+    resp.uid = (uint64_t)uid;
+    resp.gid = (uint64_t)gid;
+    resp.has_posix_account = has_posix_account ? 1 : 0;
 
     rhdr.type = FRDP_IPC_AUTH_RESPONSE;
     rhdr.payload_len = sizeof(resp);
@@ -531,7 +536,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             continue;
         }
         if (verify_peer(cfd) != 0) {
-            send_auth_response(cfd, 0, "unauthorized IPC peer", NULL);
+            send_auth_response(cfd, 0, "unauthorized IPC peer", NULL, (uid_t)-1, (gid_t)-1, 0);
             close(cfd);
             continue;
         }
@@ -541,7 +546,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             continue;
         }
         if (!frdp_ipc_request_payload_len_is_bounded(hdr.payload_len)) {
-            send_auth_response(cfd, 0, "IPC payload too large", NULL);
+            send_auth_response(cfd, 0, "IPC payload too large", NULL, (uid_t)-1, (gid_t)-1, 0);
             close(cfd);
             continue;
         }
@@ -557,24 +562,37 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                                     sizeof(req.correlation_id)) != 0 ||
                     copy_ipc_string(rhost, sizeof(rhost), req.rhost, sizeof(req.rhost)) != 0 ||
                     copy_ipc_string(password, sizeof(password), req.password, sizeof(req.password)) != 0) {
-                    send_auth_response(cfd, 0, "invalid auth request", NULL);
+                    send_auth_response(cfd, 0, "invalid auth request", NULL, (uid_t)-1,
+                                       (gid_t)-1, 0);
                 } else {
                     char authorization_id[sizeof(((frdpAuthResponse *)0)->authorization_id)] = {0};
                     const int authenticated =
                         authenticate_user(pam_service, rhost, correlation_id, user, password) == 0;
-                    if (authenticated &&
-                        frdp_auth_token_create(user, rhost, correlation_id, authorization_id,
-                                               sizeof(authorization_id)) != 0)
-                        send_auth_response(cfd, 0, "authorization id generation failed", NULL);
+                    struct passwd *pwd = NULL;
+                    if (authenticated)
+                        pwd = getpwnam(user);
+                    if (authenticated && !pwd)
+                        send_auth_response(cfd, 0, "missing POSIX account", NULL, (uid_t)-1,
+                                           (gid_t)-1, 0);
+                    else if (authenticated &&
+                             frdp_auth_token_create(user, rhost, correlation_id,
+                                                    (uint64_t)pwd->pw_uid,
+                                                    (uint64_t)pwd->pw_gid, 1, authorization_id,
+                                                    sizeof(authorization_id)) != 0)
+                        send_auth_response(cfd, 0, "authorization id generation failed", NULL,
+                                           (uid_t)-1, (gid_t)-1, 0);
                     else
                         send_auth_response(cfd, authenticated, NULL,
-                                           authenticated ? authorization_id : NULL);
+                                           authenticated ? authorization_id : NULL,
+                                           authenticated ? pwd->pw_uid : (uid_t)-1,
+                                           authenticated ? pwd->pw_gid : (gid_t)-1,
+                                           authenticated ? 1 : 0);
                 }
                 clear_secret(password, sizeof(password));
                 clear_secret(req.password, sizeof(req.password));
             }
         } else {
-            send_auth_response(cfd, 0, "unsupported IPC request", NULL);
+            send_auth_response(cfd, 0, "unsupported IPC request", NULL, (uid_t)-1, (gid_t)-1, 0);
         }
         close(cfd);
     }

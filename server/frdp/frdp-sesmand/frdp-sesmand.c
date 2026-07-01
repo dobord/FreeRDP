@@ -967,13 +967,14 @@ static int consume_auth_token_nonce(const char *nonce, unsigned long long expire
 }
 
 static int validate_and_consume_authorization(const char *authorization_id, const char *user,
-                                              const char *rhost, const char *correlation_id)
+                                              const char *rhost, const char *correlation_id,
+                                              uint64_t uid, uint64_t gid, int has_posix_account)
 {
     char nonce[37] = {0};
     unsigned long long expires_at = 0;
 
-    if (frdp_auth_token_verify(authorization_id, user, rhost, correlation_id, nonce,
-                               sizeof(nonce), &expires_at) != 0)
+    if (frdp_auth_token_verify(authorization_id, user, rhost, correlation_id, uid, gid,
+                               has_posix_account, nonce, sizeof(nonce), &expires_at) != 0)
         return -1;
     return consume_auth_token_nonce(nonce, expires_at);
 }
@@ -1067,7 +1068,9 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
         if ((type == FRDP_IPC_SESSION_REQUEST_V3) && (authorization_id[0] == '\0'))
             return send_session_response(fd, 0, NULL, NULL, NULL, "missing authorization");
         if ((type == FRDP_IPC_SESSION_REQUEST_V3) &&
-            validate_and_consume_authorization(authorization_id, user, rhost, correlation_id) != 0)
+            validate_and_consume_authorization(authorization_id, user, rhost, correlation_id,
+                                               req_v3.uid, req_v3.gid,
+                                               req_v3.has_posix_account) != 0)
             return send_session_response(fd, 0, NULL, NULL, NULL, "invalid authorization");
         if (((type != FRDP_IPC_SESSION_REQUEST_V2) && (type != FRDP_IPC_SESSION_REQUEST_V3)) ||
             !has_posix_account ||
