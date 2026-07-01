@@ -25,7 +25,7 @@ making the current canonical helper topology repeatably green.
 | Virtual channels | 27% | Static-channel filtering, a DVC authorization hook, and disabled-by-default text clipboard policy fail closed; focused config and WTS deny-path coverage exists | No useful clipboard/audio handlers; `drdynvc` is deliberately guard-denied; no live-client channel tests |
 | Kerberos-first path | 10% | A build-only GSSAPI helper skeleton and architecture documentation exist | No CredSSP/SPNEGO token transport, configured keytab/SPN validation, SSSD principal mapping, account/session binding or security review |
 | Operations and packaging | 25% | Example systemd units, PAM file, configuration, install rules and draft MAC policy files exist | No completed DEB/RPM build, active SELinux/AppArmor validation, upgrade/rollback, socket activation, metrics or operational SLOs |
-| Automated verification | 47% | Unit tests, helper-process component tests, live helper-topology startup smoke coverage, agent resize control-IPC smoke coverage and Docker Compose profiles for local PAM, Samba AD and FreeIPA are present | Compose profiles must become green and stable; no Windows `mstsc`, reconnect, load, fuzzing, leak or crash-recovery gates yet |
+| Automated verification | 48% | Unit tests, helper-process component tests, live helper-topology startup smoke coverage, truncated auth/session helper client coverage, agent resize control-IPC smoke coverage and Docker Compose profiles for local PAM, Samba AD and FreeIPA are present | Compose profiles must become green and stable; no Windows `mstsc`, reconnect, load, fuzzing, leak or crash-recovery gates yet |
 | Overall production readiness | **25–30%** | A testable MVP skeleton with meaningful security boundaries | Several correctness, lifecycle, interoperability and operability gates remain open |
 
 ## Highest-value implementation order
@@ -136,12 +136,13 @@ instead of testing them by including daemon implementation files.
 
 Component tests start real binaries while replacing only external systems that
 are not the component under test. The focused CTest target now starts real
-`frdp-authd` and `frdp-sesmand` processes and sends malformed and valid control
-messages. Extend it with:
+`frdp-authd` and `frdp-sesmand` processes, sends malformed and valid control
+messages, and covers truncated header/body clients that close the connection.
+Extend it with:
 
 - a purpose-built PAM test module with deterministic success, account denial,
   session-open failure and audit recording;
-- concurrent clients, slowloris payloads and truncated messages;
+- concurrent clients, slowloris payloads and truncated-message boundary variants;
 - peer UID rejection and server peer-credential validation;
 - live-socket/stale-socket startup behavior;
 - broker crash during auth and manager crash during open/close;

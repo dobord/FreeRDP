@@ -152,7 +152,7 @@ Exit criteria: a domain-joined Windows client authenticates with Kerberos where 
 Deliverables:
 
 - [ ] ASAN/UBSAN builds;
-- [x] focused unit/CTest coverage for implemented static/dynamic channel config parsing, filter modes, capability validation, `max_connections` parsing, and `frdpctl` CLI/session-IPC behavior;
+- [x] focused unit/CTest coverage for implemented static/dynamic channel config parsing, filter modes, capability validation, `max_connections` parsing, `frdpctl` CLI/session-IPC behavior, and live auth/session helper survival after truncated IPC clients close the connection;
 - [ ] fuzzing harnesses for channel parsers and selected RDP inputs;
 - [ ] protocol regression suite;
 - [ ] load testing harness;
