@@ -720,19 +720,12 @@ static int send_reload_response(int fd, int success, const char *message, const 
 
 static int verify_peer(int fd)
 {
-#ifdef __linux__
-    struct ucred cred;
-    socklen_t len = sizeof(cred);
+    uint64_t peer_uid = 0;
 
-    memset(&cred, 0, sizeof(cred));
-    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0)
+    if (frdp_ipc_get_peer_uid(fd, &peer_uid) != 0)
         return -1;
-    if (cred.uid != geteuid())
+    if (peer_uid != (uint64_t)geteuid())
         return -1;
-#else
-    (void)fd;
-    return -1;
-#endif
     return 0;
 }
 
@@ -1210,6 +1203,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
 
     escape_log_field(socket_path, escaped_socket, sizeof(escaped_socket));
     printf("frdp-sesmand IPC server listening on %s\n", escaped_socket);
+    frdpIpcRateLimiter rate_limiter = {0};
     while (!g_stop_requested) {
         struct pollfd pfd;
         int poll_status = 0;
@@ -1241,6 +1235,13 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
         }
         if (verify_peer(cfd) != 0) {
             send_session_response(cfd, 0, NULL, NULL, NULL, "unauthorized IPC peer");
+            close(cfd);
+            continue;
+        }
+        uint64_t peer_uid = 0;
+        if ((frdp_ipc_get_peer_uid(cfd, &peer_uid) != 0) ||
+            !frdp_ipc_rate_limiter_allow(&rate_limiter, peer_uid)) {
+            send_session_response(cfd, 0, NULL, NULL, NULL, "IPC rate limit exceeded");
             close(cfd);
             continue;
         }

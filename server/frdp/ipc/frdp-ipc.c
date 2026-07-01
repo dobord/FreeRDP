@@ -11,6 +11,7 @@
 #include <string.h>
 #include <errno.h>
 #include <stdio.h>
+#include <time.h>
 
 static int frdp_ipc_validate_socket_path(const char *socket_path)
 {
@@ -212,6 +213,71 @@ int frdp_ipc_prepare_listener_socket_path(const char *socket_path)
 int frdp_ipc_request_payload_len_is_bounded(uint32_t payload_len)
 {
     return payload_len <= FRDP_IPC_MAX_REQUEST_PAYLOAD_LEN;
+}
+
+int frdp_ipc_get_peer_uid(int fd, uint64_t *uid)
+{
+    if (!uid) {
+        errno = EINVAL;
+        return -1;
+    }
+#if defined(__linux__) && defined(SO_PEERCRED)
+    struct ucred cred;
+    socklen_t length = sizeof(cred);
+
+    memset(&cred, 0, sizeof(cred));
+    if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &length) != 0)
+        return -1;
+    if (length != sizeof(cred)) {
+        errno = EIO;
+        return -1;
+    }
+    *uid = (uint64_t)cred.uid;
+#else
+    (void)fd;
+    *uid = (uint64_t)geteuid();
+#endif
+    return 0;
+}
+
+int frdp_ipc_rate_limiter_allow(frdpIpcRateLimiter *limiter, uint64_t peer_uid)
+{
+    frdpIpcRateLimitEntry *free_entry = NULL;
+    const unsigned long now = (unsigned long)time(NULL);
+
+    if (!limiter) {
+        errno = EINVAL;
+        return 0;
+    }
+
+    for (size_t x = 0; x < FRDP_IPC_RATE_LIMIT_MAX_PEERS; x++) {
+        frdpIpcRateLimitEntry *entry = &limiter->entries[x];
+
+        if (entry->in_use &&
+            ((now < entry->window_start) ||
+             (now - entry->window_start >= FRDP_IPC_RATE_LIMIT_WINDOW_SECONDS))) {
+            memset(entry, 0, sizeof(*entry));
+        }
+        if (!entry->in_use) {
+            if (!free_entry)
+                free_entry = entry;
+            continue;
+        }
+        if (entry->uid != peer_uid)
+            continue;
+        if (entry->requests >= FRDP_IPC_RATE_LIMIT_MAX_REQUESTS)
+            return 0;
+        entry->requests++;
+        return 1;
+    }
+
+    if (!free_entry)
+        return 0;
+    free_entry->in_use = 1;
+    free_entry->uid = peer_uid;
+    free_entry->requests = 1;
+    free_entry->window_start = now;
+    return 1;
 }
 
 /* Connect to a UNIX domain socket and return a file descriptor */

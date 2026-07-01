@@ -388,6 +388,34 @@ cleanup:
 	return rc;
 }
 
+static int test_authd_rate_limit(void)
+{
+	frdpTestHelper helper;
+	int rc = -1;
+
+	if (start_helper(FRDP_AUTHD_BINARY, "frdp-authd-rate-limit", &helper) != 0)
+		return -1;
+	for (uint32_t x = 0; x < FRDP_IPC_RATE_LIMIT_MAX_REQUESTS; x++)
+	{
+		if (test_authd_rejects_bad_length(helper.socket_path) != 0)
+			goto cleanup;
+	}
+	{
+		int fd = frdp_ipc_connect(helper.socket_path);
+
+		if (fd < 0)
+			goto cleanup;
+		if (send_header(fd, FRDP_IPC_AUTH_REQUEST_V2, sizeof(frdpAuthRequest) - 1U) == 0)
+			rc = receive_auth_failure(fd, "IPC rate limit exceeded");
+		frdp_ipc_close(fd);
+	}
+
+cleanup:
+	if (stop_helper(&helper) != 0)
+		rc = -1;
+	return rc;
+}
+
 static int test_sesmand_list_empty(const char* socket_path)
 {
 	frdpIpcHeader header = { 0 };
@@ -720,6 +748,34 @@ cleanup:
 	return rc;
 }
 
+static int test_sesmand_rate_limit(void)
+{
+	frdpTestHelper helper;
+	int rc = -1;
+
+	if (start_helper(FRDP_SESMAND_BINARY, "frdp-sesmand-rate-limit", &helper) != 0)
+		return -1;
+	for (uint32_t x = 0; x < FRDP_IPC_RATE_LIMIT_MAX_REQUESTS; x++)
+	{
+		if (test_sesmand_list_empty(helper.socket_path) != 0)
+			goto cleanup;
+	}
+	{
+		int fd = frdp_ipc_connect(helper.socket_path);
+
+		if (fd < 0)
+			goto cleanup;
+		if (send_header(fd, FRDP_IPC_SESSION_LIST_REQUEST, 0) == 0)
+			rc = receive_session_response(fd, 0, "IPC rate limit exceeded");
+		frdp_ipc_close(fd);
+	}
+
+cleanup:
+	if (stop_helper(&helper) != 0)
+		rc = -1;
+	return rc;
+}
+
 static int file_contains(const char* path, const char* needle)
 {
 	char buffer[4096] = { 0 };
@@ -872,6 +928,16 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_sesmand_component() != 0)
 	{
 		printf("frdp-sesmand IPC component test failed\n");
+		return -1;
+	}
+	if (test_authd_rate_limit() != 0)
+	{
+		printf("frdp-authd IPC rate-limit test failed\n");
+		return -1;
+	}
+	if (test_sesmand_rate_limit() != 0)
+	{
+		printf("frdp-sesmand IPC rate-limit test failed\n");
 		return -1;
 	}
 	if (test_sesmand_reload_config() != 0)

@@ -47,6 +47,20 @@ typedef struct {
 } frdpIpcHeader;
 
 #define FRDP_IPC_MAX_REQUEST_PAYLOAD_LEN 4096U
+#define FRDP_IPC_RATE_LIMIT_WINDOW_SECONDS 10U
+#define FRDP_IPC_RATE_LIMIT_MAX_REQUESTS 64U
+#define FRDP_IPC_RATE_LIMIT_MAX_PEERS 16U
+
+typedef struct {
+    uint64_t uid;
+    uint32_t requests;
+    unsigned long window_start;
+    int in_use;
+} frdpIpcRateLimitEntry;
+
+typedef struct {
+    frdpIpcRateLimitEntry entries[FRDP_IPC_RATE_LIMIT_MAX_PEERS];
+} frdpIpcRateLimiter;
 
 /* Authentication request structure */
 typedef struct {
@@ -207,5 +221,11 @@ int frdp_ipc_prepare_listener_socket_path(const char *socket_path);
 
 /* Return non-zero when an inbound request payload is within the supported bound. */
 int frdp_ipc_request_payload_len_is_bounded(uint32_t payload_len);
+
+/* Return the peer uid for rate-limit/accounting decisions when supported. */
+int frdp_ipc_get_peer_uid(int fd, uint64_t *uid);
+
+/* Return non-zero when peer_uid is still within the fixed-window request limit. */
+int frdp_ipc_rate_limiter_allow(frdpIpcRateLimiter *limiter, uint64_t peer_uid);
 
 #endif /* FRDP_IPC_H */
