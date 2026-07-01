@@ -45,6 +45,7 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - config-driven `frdp-authd --config <path>` helper startup for reading `[auth].pam_service`;
 - canonical `session_socket` configuration and `--session-socket=<path>` CLI override for opening and closing `frdp-sesmand` sessions over IPC;
 - shared IPC client operations use bounded socket send/receive timeouts and suppress `SIGPIPE` on disconnected peers;
+- helper listener startup rejects live Unix socket path collisions without unlinking the existing helper socket, while still removing same-node stale sockets;
 - per-peer correlation ids on integrated `frdpd` accept/auth/logon/activate/disconnect logs, propagated to `frdp-authd` auth/account IPC audit events;
 - session ids and correlation ids propagated through `frdp-sesmand` session IPC into `frdp-session-agent` startup/exit logs;
 - `frdp-session-agent` verifies Xvfb `exec()`, X display open, and XTest availability before reporting agent readiness to `frdp-sesmand`;
@@ -52,6 +53,7 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - `frdp-sesmand` session IPC performs POSIX account lookup, child `initgroups()`/uid/gid drop, PAM session ownership, and agent process-group cleanup for managed sessions;
 - `--pam-auth-test` smoke-test mode for the PAM helper path;
 - process-level core dump disabling before credential handling;
+- peer-owned FreeRDP auth identity is zero-freed immediately after `frdpd` copies the brokered authentication result into its own session context;
 - a minimal framebuffer pump from `frdp-session-agent` to `frdpd`, with XDamage-backed dirty/clean-tile responses, per-peer unchanged-tile suppression, bounded tile pump scheduling, opportunistic minimum-color-loss/no-subsampling NSCodec `SurfaceBits` for negotiated smaller tiles with raw bitmap fallback, cache invalidation for refresh/suppress-output requests, and XRandR-backed resize requests from RDP monitor layout changes.
 
 CMake-built helper binaries/prototypes in the canonical runtime topology:
@@ -92,7 +94,7 @@ Deliverables:
 - [x] audit events with correlation id integrated with the authenticated auth/session/agent path (channels and structured audit config are tracked separately);
 - [x] `frdpd` peer/channel/session logs escape client-supplied hostnames, authenticated usernames, static channel names, and IPC-supplied session ids, display names, agent socket paths, and session-manager error strings;
 - [x] fail-closed core dump/non-dumpable hardening in `server/frdp/frdpd`, `server/frdp/frdp-authd`, and `server/frdp/frdp-sesmand`;
-- [ ] locked secret buffers and brokerized credential handling across the integrated auth/session path (normal startup now uses the auth broker, but password material can still remain in FreeRDP identity structures).
+- [ ] locked secret buffers and brokerized credential handling across the integrated auth/session path (normal startup now uses the auth broker, temporary password copies are locked/wiped, and the peer-owned FreeRDP auth identity is cleared after authentication; CredSSP internals and the explicit development fallback remain tracked).
 
 Exit criteria: a domain user can authenticate through NLA/PAM; a denied user receives a clean failure; no desktop resources are allocated before authentication succeeds.
 

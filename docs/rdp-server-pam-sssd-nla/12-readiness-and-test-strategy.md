@@ -19,7 +19,7 @@ making the current canonical helper topology repeatably green.
 |---|---:|---|---|
 | Build integration | 65% | `WITH_FRDPD` builds the listener, helpers, agent, control CLI and focused tests | The branch is far behind and diverged from `master`; package builds and a supported dependency matrix are not green |
 | Password-backed NLA and PAM | 60% | Integrated FreeRDP server callbacks, CredSSP identity extraction, PAM auth/account handling, locked temporary secret buffers, auth broker IPC required for normal startup, in-process fallback hidden behind a development build option | Windows client and domain interoperability need repeatable evidence; development fallback builds can still process credentials in the peer worker |
-| Privilege-separated topology | 60% | `frdp-authd`, `frdp-sesmand`, per-user agent, Unix sockets, peer credential checks, process hardening, correlation IDs, normal startup requiring both helper sockets, live helper-topology startup smoke coverage, and no default in-process PAM fallback | Authenticated identity is passed as mutable strings without a cryptographically bound, single-use authorization object |
+| Privilege-separated topology | 61% | `frdp-authd`, `frdp-sesmand`, per-user agent, Unix sockets, peer credential checks, process hardening, correlation IDs, normal startup requiring both helper sockets, live helper-topology startup smoke coverage, live-helper socket collision protection, and no default in-process PAM fallback | Authenticated identity is passed as mutable strings without a cryptographically bound, single-use authorization object |
 | Session lifecycle | 45% | PAM session ownership, uid/gid drop, Xvfb agent startup, close requests and cleanup exist | No reconnect, durable registry, logind/cgroup ownership, crash reconciliation, atomic display reservation or resource quotas |
 | Desktop data path | 36% | Input injection, raw/XDamage tile capture, bounded output scheduling, basic resize, agent-side resize IPC smoke coverage, and opportunistic NSCodec exist | No production RFX/RDPGFX policy, limited text/IME behavior, no systematic performance or real-client resolution interoperability evidence |
 | Virtual channels | 27% | Static-channel filtering, a DVC authorization hook, and disabled-by-default text clipboard policy fail closed; focused config and WTS deny-path coverage exists | No useful clipboard/audio handlers; `drdynvc` is deliberately guard-denied; no live-client channel tests |
@@ -56,7 +56,9 @@ Do not add another large subsystem until all of the following are true:
 5. Version and serialize IPC explicitly instead of relying on native C struct
    layout and host endianness.
 6. Add stale-socket detection that cannot unlink the pathname of a live helper,
-   bounded request sizes and per-peer rate limits.
+   bounded request sizes and per-peer rate limits. The live-helper socket
+   collision guard exists for current helper listener startup, but bounded
+   request sizes and per-peer rate limits remain open.
 
 Exit criterion: the peer worker cannot authenticate or open a user session
 without both brokers, and replaying or modifying a session request fails.
