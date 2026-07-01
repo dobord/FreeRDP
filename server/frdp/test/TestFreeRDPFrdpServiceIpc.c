@@ -520,8 +520,7 @@ static int test_sesmand_rejects_unknown_session(const char* socket_path)
 	         "22222222-2222-4222-8222-222222222222");
 	snprintf(request.session_id, sizeof(request.session_id),
 	         "33333333-3333-4333-8333-333333333333");
-	if (send_header(fd, FRDP_IPC_SESSION_CLOSE_REQUEST, sizeof(request)) != 0 ||
-	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
+	if (frdp_ipc_send_session_close_request(fd, &request) != 0)
 		goto cleanup;
 	rc = receive_session_response(fd, 0, "unknown session");
 
@@ -541,8 +540,7 @@ static int test_sesmand_rejects_unterminated_request(const char* socket_path)
 	memset(request.session_id, 'S', sizeof(request.session_id));
 	snprintf(request.correlation_id, sizeof(request.correlation_id),
 	         "44444444-4444-4444-8444-444444444444");
-	if (send_header(fd, FRDP_IPC_SESSION_CLOSE_REQUEST, sizeof(request)) != 0 ||
-	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
+	if (frdp_ipc_send_session_close_request(fd, &request) != 0)
 		goto cleanup;
 	rc = receive_session_response(fd, 0, "invalid session request");
 

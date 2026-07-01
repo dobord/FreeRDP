@@ -1083,6 +1083,9 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
         uid = (uid_t)req_v2.uid;
         gid = (gid_t)req_v2.gid;
         has_posix_account = req_v2.has_posix_account;
+    } else if (type == FRDP_IPC_SESSION_CLOSE_REQUEST) {
+        if (frdp_ipc_recv_session_close_request_payload(fd, &req, payload_len) != 0)
+            return -1;
     } else if (frdp_ipc_recv(fd, &req, sizeof(req)) != (int)sizeof(req)) {
         return -1;
     }
@@ -1331,9 +1334,10 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                     (hdr.payload_len == FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE)) ||
                    ((hdr.type == FRDP_IPC_SESSION_REQUEST_V2) &&
                     (hdr.payload_len == sizeof(frdpSessionRequestV2))) ||
-                   (((hdr.type == FRDP_IPC_SESSION_REQUEST) ||
-                     (hdr.type == FRDP_IPC_SESSION_CLOSE_REQUEST)) &&
-                    (hdr.payload_len == sizeof(frdpSessionRequest)))) {
+                   ((hdr.type == FRDP_IPC_SESSION_REQUEST) &&
+                    (hdr.payload_len == sizeof(frdpSessionRequest))) ||
+                   ((hdr.type == FRDP_IPC_SESSION_CLOSE_REQUEST) &&
+                    (hdr.payload_len == FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE))) {
             (void)handle_session_request(cfd, hdr.type, hdr.payload_len);
         } else {
             send_session_response(cfd, 0, NULL, NULL, NULL, "unsupported IPC request");

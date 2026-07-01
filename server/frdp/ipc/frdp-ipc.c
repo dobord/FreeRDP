@@ -692,6 +692,73 @@ cleanup:
     return rc;
 }
 
+int frdp_ipc_send_session_close_request(int fd, const frdpSessionRequest *request)
+{
+    uint8_t wire[FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!request) {
+        errno = EINVAL;
+        return -1;
+    }
+    memcpy(&wire[offset], request->correlation_id, sizeof(request->correlation_id));
+    offset += sizeof(request->correlation_id);
+    memcpy(&wire[offset], request->session_id, sizeof(request->session_id));
+    offset += sizeof(request->session_id);
+    memcpy(&wire[offset], request->user, sizeof(request->user));
+    offset += sizeof(request->user);
+    memcpy(&wire[offset], request->rhost, sizeof(request->rhost));
+    offset += sizeof(request->rhost);
+    frdp_ipc_write_u32_le(&wire[offset], request->desktop_width);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], request->desktop_height);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], request->color_depth);
+
+    if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_CLOSE_REQUEST, sizeof(wire)) != 0)
+        goto cleanup;
+    rc = frdp_ipc_send(fd, wire, sizeof(wire));
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_session_close_request_payload(int fd, frdpSessionRequest *request,
+                                                uint32_t payload_len)
+{
+    uint8_t wire[FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!request || (payload_len != sizeof(wire))) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    memset(request, 0, sizeof(*request));
+    memcpy(request->correlation_id, &wire[offset], sizeof(request->correlation_id));
+    offset += sizeof(request->correlation_id);
+    memcpy(request->session_id, &wire[offset], sizeof(request->session_id));
+    offset += sizeof(request->session_id);
+    memcpy(request->user, &wire[offset], sizeof(request->user));
+    offset += sizeof(request->user);
+    memcpy(request->rhost, &wire[offset], sizeof(request->rhost));
+    offset += sizeof(request->rhost);
+    request->desktop_width = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    request->desktop_height = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    request->color_depth = frdp_ipc_read_u32_le(&wire[offset]);
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
 int frdp_ipc_send_session_response(int fd, const frdpSessionResponse *response)
 {
     uint8_t wire[FRDP_IPC_SESSION_RESPONSE_WIRE_SIZE] = {0};

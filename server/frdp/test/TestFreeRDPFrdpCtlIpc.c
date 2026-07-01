@@ -158,9 +158,9 @@ static int handle_close_request(int fd)
 		return -1;
 	if (header.type != FRDP_IPC_SESSION_CLOSE_REQUEST)
 		return -1;
-	if (header.payload_len != sizeof(request))
+	if (header.payload_len != FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE)
 		return -1;
-	if (read_exact(fd, &request, sizeof(request)) != 0)
+	if (frdp_ipc_recv_session_close_request_payload(fd, &request, header.payload_len) != 0)
 		return -1;
 	request.session_id[sizeof(request.session_id) - 1] = '\0';
 	request.correlation_id[sizeof(request.correlation_id) - 1] = '\0';
@@ -184,9 +184,9 @@ static int handle_close_control_success_request(int fd)
 		return -1;
 	if (header.type != FRDP_IPC_SESSION_CLOSE_REQUEST)
 		return -1;
-	if (header.payload_len != sizeof(request))
+	if (header.payload_len != FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE)
 		return -1;
-	if (read_exact(fd, &request, sizeof(request)) != 0)
+	if (frdp_ipc_recv_session_close_request_payload(fd, &request, header.payload_len) != 0)
 		return -1;
 
 	response.success = 1;
@@ -204,9 +204,9 @@ static int handle_close_failure_request(int fd)
 		return -1;
 	if (header.type != FRDP_IPC_SESSION_CLOSE_REQUEST)
 		return -1;
-	if (header.payload_len != sizeof(request))
+	if (header.payload_len != FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE)
 		return -1;
-	if (read_exact(fd, &request, sizeof(request)) != 0)
+	if (frdp_ipc_recv_session_close_request_payload(fd, &request, header.payload_len) != 0)
 		return -1;
 
 	response.success = 0;

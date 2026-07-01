@@ -228,6 +228,12 @@ static BOOL frdpd_session_ipc_request(const char* socket_path, frdpIpcMessageTyp
 		    (frdp_ipc_send_session_request_v3(fd, (const frdpSessionRequestV3*)request) != 0))
 			goto fail;
 	}
+	else if (type == FRDP_IPC_SESSION_CLOSE_REQUEST)
+	{
+		if ((request_size != sizeof(frdpSessionRequest)) ||
+		    (frdp_ipc_send_session_close_request(fd, (const frdpSessionRequest*)request) != 0))
+			goto fail;
+	}
 	else if ((frdp_ipc_send_header(fd, type, (UINT32)request_size) < 0) ||
 	         (frdp_ipc_send(fd, request, request_size) < 0))
 	{

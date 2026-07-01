@@ -233,8 +233,7 @@ static int send_session_close_request(const char *socket_path, const char *sessi
         return 3;
     }
 
-    if ((frdp_ipc_send_header(fd, FRDP_IPC_SESSION_CLOSE_REQUEST, sizeof(request)) != 0) ||
-        (frdp_ipc_send(fd, &request, sizeof(request)) != 0) ||
+    if ((frdp_ipc_send_session_close_request(fd, &request) != 0) ||
         (frdp_ipc_recv_session_response(fd, &response) != 0)) {
         fprintf(stderr, "session close IPC failed\n");
         frdp_ipc_close(fd);

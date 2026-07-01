@@ -56,6 +56,7 @@ typedef struct {
 #define FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE \
     (64U + 64U + 64U + 128U + 192U + 8U + 8U + 4U + \
      (FRDP_IPC_MAX_AUTH_GROUPS * 8U) + 4U + 4U + 4U + 4U)
+#define FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE (64U + 64U + 64U + 128U + 4U + 4U + 4U)
 #define FRDP_IPC_SESSION_RESPONSE_WIRE_SIZE (4U + 64U + 32U + 108U + 128U)
 #define FRDP_IPC_RATE_LIMIT_WINDOW_SECONDS 10U
 #define FRDP_IPC_RATE_LIMIT_MAX_REQUESTS 64U
@@ -234,6 +235,9 @@ int frdp_ipc_recv_auth_response(int fd, frdpAuthResponse *response);
 int frdp_ipc_send_session_request_v3(int fd, const frdpSessionRequestV3 *request);
 int frdp_ipc_recv_session_request_v3_payload(int fd, frdpSessionRequestV3 *request,
                                              uint32_t payload_len);
+int frdp_ipc_send_session_close_request(int fd, const frdpSessionRequest *request);
+int frdp_ipc_recv_session_close_request_payload(int fd, frdpSessionRequest *request,
+                                                uint32_t payload_len);
 int frdp_ipc_send_session_response(int fd, const frdpSessionResponse *response);
 int frdp_ipc_recv_session_response(int fd, frdpSessionResponse *response);
 
