@@ -395,6 +395,29 @@ static uint32_t frdp_ipc_read_u32_le(const uint8_t *src)
            ((uint32_t)src[3] << 24U);
 }
 
+static void frdp_ipc_write_u64_le(uint8_t *dst, uint64_t value)
+{
+    for (size_t x = 0; x < 8U; x++)
+        dst[x] = (uint8_t)((value >> (x * 8U)) & 0xffU);
+}
+
+static uint64_t frdp_ipc_read_u64_le(const uint8_t *src)
+{
+    uint64_t value = 0;
+
+    for (size_t x = 0; x < 8U; x++)
+        value |= ((uint64_t)src[x]) << (x * 8U);
+    return value;
+}
+
+static void frdp_ipc_clear_secret(void *ptr, size_t len)
+{
+    volatile uint8_t *p = (volatile uint8_t *)ptr;
+
+    while (len-- > 0U)
+        *p++ = 0;
+}
+
 int frdp_ipc_send_header(int fd, frdpIpcMessageType type, uint32_t payload_len)
 {
     uint8_t wire[8] = {0};
@@ -417,6 +440,151 @@ int frdp_ipc_recv_header(int fd, frdpIpcHeader *header)
     header->type = (frdpIpcMessageType)frdp_ipc_read_u32_le(&wire[0]);
     header->payload_len = frdp_ipc_read_u32_le(&wire[4]);
     return (int)sizeof(wire);
+}
+
+int frdp_ipc_send_auth_request_v2(int fd, const frdpAuthRequest *request)
+{
+    uint8_t wire[FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!request) {
+        errno = EINVAL;
+        return -1;
+    }
+    memcpy(&wire[offset], request->correlation_id, sizeof(request->correlation_id));
+    offset += sizeof(request->correlation_id);
+    memcpy(&wire[offset], request->user, sizeof(request->user));
+    offset += sizeof(request->user);
+    memcpy(&wire[offset], request->rhost, sizeof(request->rhost));
+    offset += sizeof(request->rhost);
+    memcpy(&wire[offset], request->password, sizeof(request->password));
+
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AUTH_REQUEST_V2, sizeof(wire)) != 0)
+        goto cleanup;
+    rc = frdp_ipc_send(fd, wire, sizeof(wire));
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_auth_request_v2_payload(int fd, frdpAuthRequest *request, uint32_t payload_len)
+{
+    uint8_t wire[FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!request || (payload_len != sizeof(wire))) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    memset(request, 0, sizeof(*request));
+    memcpy(request->correlation_id, &wire[offset], sizeof(request->correlation_id));
+    offset += sizeof(request->correlation_id);
+    memcpy(request->user, &wire[offset], sizeof(request->user));
+    offset += sizeof(request->user);
+    memcpy(request->rhost, &wire[offset], sizeof(request->rhost));
+    offset += sizeof(request->rhost);
+    memcpy(request->password, &wire[offset], sizeof(request->password));
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_send_auth_response(int fd, const frdpAuthResponse *response)
+{
+    uint8_t wire[FRDP_IPC_AUTH_RESPONSE_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response || (response->group_count > FRDP_IPC_MAX_AUTH_GROUPS)) {
+        errno = EINVAL;
+        return -1;
+    }
+    frdp_ipc_write_u32_le(&wire[offset], response->success ? 1U : 0U);
+    offset += 4U;
+    memcpy(&wire[offset], response->error, sizeof(response->error));
+    offset += sizeof(response->error);
+    memcpy(&wire[offset], response->authorization_id, sizeof(response->authorization_id));
+    offset += sizeof(response->authorization_id);
+    frdp_ipc_write_u64_le(&wire[offset], response->uid);
+    offset += 8U;
+    frdp_ipc_write_u64_le(&wire[offset], response->gid);
+    offset += 8U;
+    frdp_ipc_write_u32_le(&wire[offset], response->group_count);
+    offset += 4U;
+    for (uint32_t x = 0; x < FRDP_IPC_MAX_AUTH_GROUPS; x++) {
+        const uint64_t group = (x < response->group_count) ? response->groups[x] : 0U;
+
+        frdp_ipc_write_u64_le(&wire[offset], group);
+        offset += 8U;
+    }
+    frdp_ipc_write_u32_le(&wire[offset], response->has_posix_account ? 1U : 0U);
+
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AUTH_RESPONSE, sizeof(wire)) != 0)
+        goto cleanup;
+    rc = frdp_ipc_send(fd, wire, sizeof(wire));
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_auth_response(int fd, frdpAuthResponse *response)
+{
+    frdpIpcHeader header = {0};
+    uint8_t wire[FRDP_IPC_AUTH_RESPONSE_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
+        return -1;
+    if ((header.type != FRDP_IPC_AUTH_RESPONSE) || (header.payload_len != sizeof(wire))) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    memset(response, 0, sizeof(*response));
+    response->success = frdp_ipc_read_u32_le(&wire[offset]) ? 1 : 0;
+    offset += 4U;
+    memcpy(response->error, &wire[offset], sizeof(response->error));
+    offset += sizeof(response->error);
+    memcpy(response->authorization_id, &wire[offset], sizeof(response->authorization_id));
+    offset += sizeof(response->authorization_id);
+    response->uid = frdp_ipc_read_u64_le(&wire[offset]);
+    offset += 8U;
+    response->gid = frdp_ipc_read_u64_le(&wire[offset]);
+    offset += 8U;
+    response->group_count = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    if (response->group_count > FRDP_IPC_MAX_AUTH_GROUPS) {
+        errno = EINVAL;
+        memset(response, 0, sizeof(*response));
+        goto cleanup;
+    }
+    for (uint32_t x = 0; x < FRDP_IPC_MAX_AUTH_GROUPS; x++) {
+        const uint64_t group = frdp_ipc_read_u64_le(&wire[offset]);
+
+        if (x < response->group_count)
+            response->groups[x] = group;
+        offset += 8U;
+    }
+    response->has_posix_account = frdp_ipc_read_u32_le(&wire[offset]) ? 1 : 0;
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
 }
 
 /* Close a socket */

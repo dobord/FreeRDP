@@ -162,7 +162,6 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	frdpdLockedSecret request_password_secret = { 0 };
 	frdpAuthRequest request = { 0 };
 	frdpAuthResponse response = { 0 };
-	frdpIpcHeader response_header = { 0 };
 
 	if (!config || !identity || frdpd_auth_string_is_empty(config->auth_socket) ||
 	    frdpd_auth_string_is_empty(config->pam_service))
@@ -201,17 +200,11 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	if (fd < 0)
 		goto fail;
 
-	if ((frdp_ipc_send_header(fd, FRDP_IPC_AUTH_REQUEST_V2, sizeof(request)) < 0) ||
-	    (frdp_ipc_send(fd, &request, sizeof(request)) < 0))
+	if (frdp_ipc_send_auth_request_v2(fd, &request) != 0)
 		goto fail;
 	frdpd_auth_clear_locked_secret(&request_password_secret);
 
-	if (frdp_ipc_recv_header(fd, &response_header) != (int)sizeof(response_header))
-		goto fail;
-	if ((response_header.type != FRDP_IPC_AUTH_RESPONSE) ||
-	    (response_header.payload_len != sizeof(response)))
-		goto fail;
-	if (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))
+	if (frdp_ipc_recv_auth_response(fd, &response) != 0)
 		goto fail;
 
 	frdpd_auth_result_set(result,

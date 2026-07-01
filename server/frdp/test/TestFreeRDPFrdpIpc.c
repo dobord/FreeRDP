@@ -244,6 +244,128 @@ cleanup:
 	return rc;
 }
 
+static int test_auth_response_uses_explicit_wire_format(void)
+{
+	int fds[2] = { -1, -1 };
+	frdpAuthResponse response = { 0 };
+	frdpAuthResponse decoded = { 0 };
+	frdpIpcHeader header = { 0 };
+	uint8_t raw[FRDP_IPC_AUTH_RESPONSE_WIRE_SIZE] = { 0 };
+	const size_t uid_offset = 4U + sizeof(response.error) + sizeof(response.authorization_id);
+	const size_t gid_offset = uid_offset + 8U;
+	const size_t group_count_offset = gid_offset + 8U;
+	const size_t groups_offset = group_count_offset + 4U;
+	const size_t unused_group_offset = groups_offset + 16U;
+	int rc = -1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	response.success = 1;
+	snprintf(response.error, sizeof(response.error), "ignored");
+	snprintf(response.authorization_id, sizeof(response.authorization_id), "authz");
+	response.uid = UINT64_C(0x0102030405060708);
+	response.gid = UINT64_C(0x1112131415161718);
+	response.group_count = 2;
+	response.groups[0] = UINT64_C(0x2122232425262728);
+	response.groups[1] = UINT64_C(0x3132333435363738);
+	response.groups[2] = UINT64_C(0xf1f2f3f4f5f6f7f8);
+	response.has_posix_account = 1;
+
+	if (frdp_ipc_send_auth_response(fds[0], &response) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_AUTH_RESPONSE) ||
+	    (header.payload_len != FRDP_IPC_AUTH_RESPONSE_WIRE_SIZE))
+		goto cleanup;
+	if (frdp_ipc_recv(fds[1], raw, sizeof(raw)) != (int)sizeof(raw))
+		goto cleanup;
+	if ((raw[0] != 1U) || (raw[1] != 0U) || (raw[2] != 0U) || (raw[3] != 0U))
+		goto cleanup;
+	if ((raw[uid_offset] != 0x08U) || (raw[uid_offset + 7U] != 0x01U))
+		goto cleanup;
+	if ((raw[gid_offset] != 0x18U) || (raw[gid_offset + 7U] != 0x11U))
+		goto cleanup;
+	if ((raw[group_count_offset] != 2U) || (raw[group_count_offset + 1U] != 0U))
+		goto cleanup;
+	if ((raw[groups_offset] != 0x28U) || (raw[groups_offset + 7U] != 0x21U) ||
+	    (raw[groups_offset + 8U] != 0x38U) || (raw[groups_offset + 15U] != 0x31U))
+		goto cleanup;
+	for (size_t x = 0; x < 8U; x++) {
+		if (raw[unused_group_offset + x] != 0U)
+			goto cleanup;
+		raw[unused_group_offset + x] = (uint8_t)(0xa0U + x);
+	}
+	if (frdp_ipc_send_header(fds[1], FRDP_IPC_AUTH_RESPONSE, sizeof(raw)) != 0 ||
+	    frdp_ipc_send(fds[1], raw, sizeof(raw)) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_auth_response(fds[0], &decoded) != 0)
+		goto cleanup;
+	if ((decoded.success != response.success) || (decoded.uid != response.uid) ||
+	    (decoded.gid != response.gid) || (decoded.group_count != response.group_count) ||
+	    (decoded.groups[0] != response.groups[0]) || (decoded.groups[1] != response.groups[1]) ||
+	    (decoded.groups[2] != 0) ||
+	    (decoded.has_posix_account != response.has_posix_account))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
+static int test_auth_request_uses_explicit_wire_format(void)
+{
+	int fds[2] = { -1, -1 };
+	frdpAuthRequest request = { 0 };
+	frdpAuthRequest decoded = { 0 };
+	frdpIpcHeader header = { 0 };
+	uint8_t raw[FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE] = { 0 };
+	const size_t user_offset = sizeof(request.correlation_id);
+	const size_t rhost_offset = user_offset + sizeof(request.user);
+	const size_t password_offset = rhost_offset + sizeof(request.rhost);
+	int rc = -1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	snprintf(request.correlation_id, sizeof(request.correlation_id), "corr");
+	snprintf(request.user, sizeof(request.user), "alice");
+	snprintf(request.rhost, sizeof(request.rhost), "203.0.113.8");
+	snprintf(request.password, sizeof(request.password), "secret");
+	if (frdp_ipc_send_auth_request_v2(fds[0], &request) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_AUTH_REQUEST_V2) ||
+	    (header.payload_len != FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE))
+		goto cleanup;
+	if (frdp_ipc_recv(fds[1], raw, sizeof(raw)) != (int)sizeof(raw))
+		goto cleanup;
+	if ((memcmp(&raw[0], "corr", 4) != 0) || (memcmp(&raw[user_offset], "alice", 5) != 0) ||
+	    (memcmp(&raw[rhost_offset], "203.0.113.8", 11) != 0) ||
+	    (memcmp(&raw[password_offset], "secret", 6) != 0))
+		goto cleanup;
+	if (frdp_ipc_send(fds[1], raw, sizeof(raw)) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_auth_request_v2_payload(fds[0], &decoded, sizeof(raw)) != 0)
+		goto cleanup;
+	if ((strcmp(decoded.correlation_id, request.correlation_id) != 0) ||
+	    (strcmp(decoded.user, request.user) != 0) || (strcmp(decoded.rhost, request.rhost) != 0) ||
+	    (strcmp(decoded.password, request.password) != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
 static int test_auth_token_binds_posix_account(void)
 {
 	char dir[1024] = { 0 };
@@ -329,6 +451,10 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_send_recv_reject_null_buffers() != 0)
 		return -1;
 	if (test_header_uses_little_endian_wire_format() != 0)
+		return -1;
+	if (test_auth_request_uses_explicit_wire_format() != 0)
+		return -1;
+	if (test_auth_response_uses_explicit_wire_format() != 0)
 		return -1;
 	if (test_auth_token_binds_posix_account() != 0)
 		return -1;

@@ -210,15 +210,9 @@ static int send_partial_body_then_close(const char* socket_path, frdpIpcMessageT
 
 static int receive_auth_failure(int fd, const char* expected_error)
 {
-	frdpIpcHeader header = { 0 };
 	frdpAuthResponse response = { 0 };
 
-	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
-		return -1;
-	if ((header.type != FRDP_IPC_AUTH_RESPONSE) ||
-	    (header.payload_len != sizeof(response)))
-		return -1;
-	if (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))
+	if (frdp_ipc_recv_auth_response(fd, &response) != 0)
 		return -1;
 	if (response.success != 0)
 		return -1;

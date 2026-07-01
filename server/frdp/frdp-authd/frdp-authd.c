@@ -273,9 +273,7 @@ static int send_auth_response(int fd, int success, const char *error,
     }
     resp.has_posix_account = has_posix_account ? 1 : 0;
 
-    if (frdp_ipc_send_header(fd, FRDP_IPC_AUTH_RESPONSE, sizeof(resp)) < 0)
-        return -1;
-    return frdp_ipc_send(fd, &resp, sizeof(resp));
+    return frdp_ipc_send_auth_response(fd, &resp);
 }
 
 static int verify_peer(int fd)
@@ -586,9 +584,10 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             close(cfd);
             continue;
         }
-        if (hdr.type == FRDP_IPC_AUTH_REQUEST_V2 && hdr.payload_len == sizeof(frdpAuthRequest)) {
+        if ((hdr.type == FRDP_IPC_AUTH_REQUEST_V2) &&
+            (hdr.payload_len == FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE)) {
             frdpAuthRequest req;
-            if (frdp_ipc_recv(cfd, &req, sizeof(req)) == (int)sizeof(req)) {
+            if (frdp_ipc_recv_auth_request_v2_payload(cfd, &req, hdr.payload_len) == 0) {
                 char user[sizeof(req.user)] = {0};
                 char correlation_id[sizeof(req.correlation_id)] = {0};
                 char rhost[sizeof(req.rhost)] = {0};

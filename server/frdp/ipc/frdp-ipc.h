@@ -50,6 +50,9 @@ typedef struct {
 
 #define FRDP_IPC_MAX_REQUEST_PAYLOAD_LEN 4096U
 #define FRDP_IPC_MAX_AUTH_GROUPS FRDP_AUTH_TOKEN_MAX_GROUPS
+#define FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE (64U + 64U + 128U + 256U)
+#define FRDP_IPC_AUTH_RESPONSE_WIRE_SIZE \
+    (4U + 128U + 192U + 8U + 8U + 4U + (FRDP_IPC_MAX_AUTH_GROUPS * 8U) + 4U)
 #define FRDP_IPC_RATE_LIMIT_WINDOW_SECONDS 10U
 #define FRDP_IPC_RATE_LIMIT_MAX_REQUESTS 64U
 #define FRDP_IPC_RATE_LIMIT_MAX_PEERS 16U
@@ -219,6 +222,11 @@ int frdp_ipc_recv(int fd, void *buf, size_t len);
 /* Send/receive an IPC header using the fixed little-endian wire format */
 int frdp_ipc_send_header(int fd, frdpIpcMessageType type, uint32_t payload_len);
 int frdp_ipc_recv_header(int fd, frdpIpcHeader *header);
+
+int frdp_ipc_send_auth_request_v2(int fd, const frdpAuthRequest *request);
+int frdp_ipc_recv_auth_request_v2_payload(int fd, frdpAuthRequest *request, uint32_t payload_len);
+int frdp_ipc_send_auth_response(int fd, const frdpAuthResponse *response);
+int frdp_ipc_recv_auth_response(int fd, frdpAuthResponse *response);
 
 /* Close a previously opened fd */
 int frdp_ipc_close(int fd);

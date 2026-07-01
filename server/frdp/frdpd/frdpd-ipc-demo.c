@@ -40,26 +40,14 @@ int main(int argc, char **argv)
             sizeof(req.correlation_id) - 1);
     strncpy(req.user, user, sizeof(req.user) - 1);
     strncpy(req.password, pass, sizeof(req.password) - 1);
-    if (frdp_ipc_send_header(fd, FRDP_IPC_AUTH_REQUEST_V2, sizeof(req)) < 0 ||
-        frdp_ipc_send(fd, &req, sizeof(req)) < 0) {
+    if (frdp_ipc_send_auth_request_v2(fd, &req) != 0) {
         perror("frdp_ipc_send");
         frdp_ipc_close(fd);
         return 1;
     }
-    frdpIpcHeader resp_hdr;
-    if (frdp_ipc_recv_header(fd, &resp_hdr) != (int)sizeof(resp_hdr)) {
-        fprintf(stderr, "Failed to read response header\n");
-        frdp_ipc_close(fd);
-        return 1;
-    }
-    if (resp_hdr.type != FRDP_IPC_AUTH_RESPONSE || resp_hdr.payload_len != sizeof(frdpAuthResponse)) {
-        fprintf(stderr, "Unexpected response type %u length %u\n", resp_hdr.type, resp_hdr.payload_len);
-        frdp_ipc_close(fd);
-        return 1;
-    }
     frdpAuthResponse resp;
-    if (frdp_ipc_recv(fd, &resp, sizeof(resp)) != (int)sizeof(resp)) {
-        fprintf(stderr, "Failed to read response body\n");
+    if (frdp_ipc_recv_auth_response(fd, &resp) != 0) {
+        fprintf(stderr, "Failed to read response\n");
         frdp_ipc_close(fd);
         return 1;
     }
