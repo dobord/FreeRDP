@@ -57,8 +57,9 @@ Do not add another large subsystem until all of the following are true:
    layout and host endianness.
 6. Add stale-socket detection that cannot unlink the pathname of a live helper,
    bounded request sizes and per-peer rate limits. The live-helper socket
-   collision guard exists for current helper listener startup, but bounded
-   request sizes and per-peer rate limits remain open.
+   collision guard exists for current helper listener startup, and auth/session
+   helper IPC now rejects oversized request payloads, but per-peer rate limits
+   remain open.
 
 Exit criterion: the peer worker cannot authenticate or open a user session
 without both brokers, and replaying or modifying a session request fails.
