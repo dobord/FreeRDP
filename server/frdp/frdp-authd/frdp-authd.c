@@ -256,7 +256,6 @@ static int send_auth_response(int fd, int success, const char *error,
                               int has_posix_account)
 {
     frdpAuthResponse resp;
-    frdpIpcHeader rhdr;
 
     memset(&resp, 0, sizeof(resp));
     resp.success = success;
@@ -274,9 +273,7 @@ static int send_auth_response(int fd, int success, const char *error,
     }
     resp.has_posix_account = has_posix_account ? 1 : 0;
 
-    rhdr.type = FRDP_IPC_AUTH_RESPONSE;
-    rhdr.payload_len = sizeof(resp);
-    if (frdp_ipc_send(fd, &rhdr, sizeof(rhdr)) < 0)
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AUTH_RESPONSE, sizeof(resp)) < 0)
         return -1;
     return frdp_ipc_send(fd, &resp, sizeof(resp));
 }
@@ -579,7 +576,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             continue;
         }
         frdpIpcHeader hdr;
-        if (frdp_ipc_recv(cfd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+        if (frdp_ipc_recv_header(cfd, &hdr) != (int)sizeof(hdr)) {
             close(cfd);
             continue;
         }

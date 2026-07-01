@@ -216,6 +216,10 @@ int frdp_ipc_send(int fd, const void *buf, size_t len);
 /* Receive exactly len bytes of data on fd. Returns number of bytes read or -1 on error */
 int frdp_ipc_recv(int fd, void *buf, size_t len);
 
+/* Send/receive an IPC header using the fixed little-endian wire format */
+int frdp_ipc_send_header(int fd, frdpIpcMessageType type, uint32_t payload_len);
+int frdp_ipc_recv_header(int fd, frdpIpcHeader *header);
+
 /* Close a previously opened fd */
 int frdp_ipc_close(int fd);
 

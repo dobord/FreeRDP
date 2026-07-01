@@ -381,6 +381,44 @@ int frdp_ipc_recv(int fd, void *buf, size_t len)
     return (int)total;
 }
 
+static void frdp_ipc_write_u32_le(uint8_t *dst, uint32_t value)
+{
+    dst[0] = (uint8_t)(value & 0xffU);
+    dst[1] = (uint8_t)((value >> 8U) & 0xffU);
+    dst[2] = (uint8_t)((value >> 16U) & 0xffU);
+    dst[3] = (uint8_t)((value >> 24U) & 0xffU);
+}
+
+static uint32_t frdp_ipc_read_u32_le(const uint8_t *src)
+{
+    return ((uint32_t)src[0]) | ((uint32_t)src[1] << 8U) | ((uint32_t)src[2] << 16U) |
+           ((uint32_t)src[3] << 24U);
+}
+
+int frdp_ipc_send_header(int fd, frdpIpcMessageType type, uint32_t payload_len)
+{
+    uint8_t wire[8] = {0};
+
+    frdp_ipc_write_u32_le(&wire[0], (uint32_t)type);
+    frdp_ipc_write_u32_le(&wire[4], payload_len);
+    return frdp_ipc_send(fd, wire, sizeof(wire));
+}
+
+int frdp_ipc_recv_header(int fd, frdpIpcHeader *header)
+{
+    uint8_t wire[8] = {0};
+
+    if (!header) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        return -1;
+    header->type = (frdpIpcMessageType)frdp_ipc_read_u32_le(&wire[0]);
+    header->payload_len = frdp_ipc_read_u32_le(&wire[4]);
+    return (int)sizeof(wire);
+}
+
 /* Close a socket */
 int frdp_ipc_close(int fd)
 {

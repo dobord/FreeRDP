@@ -142,11 +142,9 @@ static void terminate_session_list_response_strings(frdpSessionListResponse *res
 static int send_session_list_request(const char *socket_path, int status_only)
 {
     int fd = -1;
-    frdpIpcHeader header;
     frdpIpcHeader response_header;
     frdpSessionListResponse response;
 
-    memset(&header, 0, sizeof(header));
     memset(&response_header, 0, sizeof(response_header));
     memset(&response, 0, sizeof(response));
 
@@ -160,11 +158,8 @@ static int send_session_list_request(const char *socket_path, int status_only)
         return 3;
     }
 
-    header.type = FRDP_IPC_SESSION_LIST_REQUEST;
-    header.payload_len = 0;
-    if ((frdp_ipc_send(fd, &header, sizeof(header)) != 0) ||
-        (frdp_ipc_recv(fd, &response_header, sizeof(response_header)) !=
-         (int)sizeof(response_header)) ||
+    if ((frdp_ipc_send_header(fd, FRDP_IPC_SESSION_LIST_REQUEST, 0) != 0) ||
+        (frdp_ipc_recv_header(fd, &response_header) != (int)sizeof(response_header)) ||
         (response_header.type != FRDP_IPC_SESSION_LIST_RESPONSE) ||
         (response_header.payload_len != sizeof(response)) ||
         (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))) {
@@ -216,12 +211,10 @@ static int send_session_list_request(const char *socket_path, int status_only)
 static int send_session_close_request(const char *socket_path, const char *session_id)
 {
     int fd = -1;
-    frdpIpcHeader header;
     frdpIpcHeader response_header;
     frdpSessionRequest request;
     frdpSessionResponse response;
 
-    memset(&header, 0, sizeof(header));
     memset(&response_header, 0, sizeof(response_header));
     memset(&request, 0, sizeof(request));
     memset(&response, 0, sizeof(response));
@@ -242,12 +235,9 @@ static int send_session_close_request(const char *socket_path, const char *sessi
         return 3;
     }
 
-    header.type = FRDP_IPC_SESSION_CLOSE_REQUEST;
-    header.payload_len = sizeof(request);
-    if ((frdp_ipc_send(fd, &header, sizeof(header)) != 0) ||
+    if ((frdp_ipc_send_header(fd, FRDP_IPC_SESSION_CLOSE_REQUEST, sizeof(request)) != 0) ||
         (frdp_ipc_send(fd, &request, sizeof(request)) != 0) ||
-        (frdp_ipc_recv(fd, &response_header, sizeof(response_header)) !=
-         (int)sizeof(response_header)) ||
+        (frdp_ipc_recv_header(fd, &response_header) != (int)sizeof(response_header)) ||
         (response_header.type != FRDP_IPC_SESSION_RESPONSE) ||
         (response_header.payload_len != sizeof(response)) ||
         (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))) {
@@ -281,11 +271,9 @@ static int send_session_close_request(const char *socket_path, const char *sessi
 static int send_reload_request(const char *socket_path)
 {
     int fd = -1;
-    frdpIpcHeader header;
     frdpIpcHeader response_header;
     frdpControlResponse response;
 
-    memset(&header, 0, sizeof(header));
     memset(&response_header, 0, sizeof(response_header));
     memset(&response, 0, sizeof(response));
 
@@ -299,11 +287,8 @@ static int send_reload_request(const char *socket_path)
         return 3;
     }
 
-    header.type = FRDP_IPC_SESSION_RELOAD_REQUEST;
-    header.payload_len = 0;
-    if ((frdp_ipc_send(fd, &header, sizeof(header)) != 0) ||
-        (frdp_ipc_recv(fd, &response_header, sizeof(response_header)) !=
-         (int)sizeof(response_header)) ||
+    if ((frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RELOAD_REQUEST, 0) != 0) ||
+        (frdp_ipc_recv_header(fd, &response_header) != (int)sizeof(response_header)) ||
         (response_header.type != FRDP_IPC_SESSION_RELOAD_RESPONSE) ||
         (response_header.payload_len != sizeof(response)) ||
         (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))) {

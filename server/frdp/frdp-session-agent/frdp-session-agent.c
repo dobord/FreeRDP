@@ -1131,12 +1131,7 @@ static int handle_input_message(int fd, Display *display, uint32_t payload_len,
 static int send_frame_response(int fd, const frdpAgentFrameResponse *response,
                                const unsigned char *pixels)
 {
-    frdpIpcHeader header;
-
-    memset(&header, 0, sizeof(header));
-    header.type = FRDP_IPC_AGENT_FRAME_RESPONSE;
-    header.payload_len = sizeof(*response);
-    if (send_exact(fd, &header, sizeof(header)) != 0)
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AGENT_FRAME_RESPONSE, sizeof(*response)) != 0)
         return -1;
     if (send_exact(fd, response, sizeof(*response)) != 0)
         return -1;
@@ -1151,12 +1146,7 @@ static int send_frame_response(int fd, const frdpAgentFrameResponse *response,
 
 static int send_resize_response(int fd, const frdpAgentResizeResponse *response)
 {
-    frdpIpcHeader header;
-
-    memset(&header, 0, sizeof(header));
-    header.type = FRDP_IPC_AGENT_RESIZE_RESPONSE;
-    header.payload_len = sizeof(*response);
-    if (send_exact(fd, &header, sizeof(header)) != 0)
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AGENT_RESIZE_RESPONSE, sizeof(*response)) != 0)
         return -1;
     return send_exact(fd, response, sizeof(*response));
 }
@@ -1257,7 +1247,7 @@ static int handle_control_client(int fd, frdpAgentFrameState *frame_state, const
 
     if (set_control_timeouts(fd) != 0 || verify_control_peer(fd) != 0)
         return -1;
-    if (recv_exact(fd, &header, sizeof(header)) != 0)
+    if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
         return -1;
 
     switch (header.type) {

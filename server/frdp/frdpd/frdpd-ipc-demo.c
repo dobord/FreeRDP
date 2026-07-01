@@ -34,23 +34,20 @@ int main(int argc, char **argv)
         perror("frdp_ipc_connect");
         return 1;
     }
-    frdpIpcHeader hdr;
-    hdr.type = FRDP_IPC_AUTH_REQUEST_V2;
-    hdr.payload_len = sizeof(frdpAuthRequest);
     frdpAuthRequest req;
     memset(&req, 0, sizeof(req));
     strncpy(req.correlation_id, "11111111-1111-4111-8111-111111111111",
             sizeof(req.correlation_id) - 1);
     strncpy(req.user, user, sizeof(req.user) - 1);
     strncpy(req.password, pass, sizeof(req.password) - 1);
-    if (frdp_ipc_send(fd, &hdr, sizeof(hdr)) < 0 ||
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AUTH_REQUEST_V2, sizeof(req)) < 0 ||
         frdp_ipc_send(fd, &req, sizeof(req)) < 0) {
         perror("frdp_ipc_send");
         frdp_ipc_close(fd);
         return 1;
     }
     frdpIpcHeader resp_hdr;
-    if (frdp_ipc_recv(fd, &resp_hdr, sizeof(resp_hdr)) != (int)sizeof(resp_hdr)) {
+    if (frdp_ipc_recv_header(fd, &resp_hdr) != (int)sizeof(resp_hdr)) {
         fprintf(stderr, "Failed to read response header\n");
         frdp_ipc_close(fd);
         return 1;

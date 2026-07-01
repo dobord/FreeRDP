@@ -88,7 +88,6 @@ static int read_file_to_string(const char* path, char* dst, size_t size)
 
 static int send_list_response(int fd)
 {
-	frdpIpcHeader response_header = { 0 };
 	frdpSessionListResponse response = { 0 };
 
 	response.success = 1;
@@ -102,16 +101,13 @@ static int send_list_response(int fd)
 	snprintf(response.entries[1].display, sizeof(response.entries[1].display), ":21");
 	response.entries[1].agent_pid = 1002;
 
-	response_header.type = FRDP_IPC_SESSION_LIST_RESPONSE;
-	response_header.payload_len = sizeof(response);
-	if (write_all(fd, &response_header, sizeof(response_header)) != 0)
+	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_LIST_RESPONSE, sizeof(response)) != 0)
 		return -1;
 	return write_all(fd, &response, sizeof(response));
 }
 
 static int send_control_list_response(int fd)
 {
-	frdpIpcHeader response_header = { 0 };
 	frdpSessionListResponse response = { 0 };
 
 	response.success = 1;
@@ -121,9 +117,7 @@ static int send_control_list_response(int fd)
 	snprintf(response.entries[0].display, sizeof(response.entries[0].display), ":\\20");
 	response.entries[0].agent_pid = 1003;
 
-	response_header.type = FRDP_IPC_SESSION_LIST_RESPONSE;
-	response_header.payload_len = sizeof(response);
-	if (write_all(fd, &response_header, sizeof(response_header)) != 0)
+	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_LIST_RESPONSE, sizeof(response)) != 0)
 		return -1;
 	return write_all(fd, &response, sizeof(response));
 }
@@ -132,7 +126,7 @@ static int handle_list_request(int fd)
 {
 	frdpIpcHeader header = { 0 };
 
-	if (read_exact(fd, &header, sizeof(header)) != 0)
+	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
 		return -1;
 	if (header.type != FRDP_IPC_SESSION_LIST_REQUEST)
 		return -1;
@@ -145,7 +139,7 @@ static int handle_control_list_request(int fd)
 {
 	frdpIpcHeader header = { 0 };
 
-	if (read_exact(fd, &header, sizeof(header)) != 0)
+	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
 		return -1;
 	if (header.type != FRDP_IPC_SESSION_LIST_REQUEST)
 		return -1;
@@ -157,11 +151,10 @@ static int handle_control_list_request(int fd)
 static int handle_close_request(int fd)
 {
 	frdpIpcHeader header = { 0 };
-	frdpIpcHeader response_header = { 0 };
 	frdpSessionRequest request = { 0 };
 	frdpSessionResponse response = { 0 };
 
-	if (read_exact(fd, &header, sizeof(header)) != 0)
+	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
 		return -1;
 	if (header.type != FRDP_IPC_SESSION_CLOSE_REQUEST)
 		return -1;
@@ -178,9 +171,7 @@ static int handle_close_request(int fd)
 
 	response.success = 1;
 	snprintf(response.session_id, sizeof(response.session_id), "%s", request.session_id);
-	response_header.type = FRDP_IPC_SESSION_RESPONSE;
-	response_header.payload_len = sizeof(response);
-	if (write_all(fd, &response_header, sizeof(response_header)) != 0)
+	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RESPONSE, sizeof(response)) != 0)
 		return -1;
 	return write_all(fd, &response, sizeof(response));
 }
@@ -188,11 +179,10 @@ static int handle_close_request(int fd)
 static int handle_close_control_success_request(int fd)
 {
 	frdpIpcHeader header = { 0 };
-	frdpIpcHeader response_header = { 0 };
 	frdpSessionRequest request = { 0 };
 	frdpSessionResponse response = { 0 };
 
-	if (read_exact(fd, &header, sizeof(header)) != 0)
+	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
 		return -1;
 	if (header.type != FRDP_IPC_SESSION_CLOSE_REQUEST)
 		return -1;
@@ -203,9 +193,7 @@ static int handle_close_control_success_request(int fd)
 
 	response.success = 1;
 	snprintf(response.session_id, sizeof(response.session_id), "session\n1");
-	response_header.type = FRDP_IPC_SESSION_RESPONSE;
-	response_header.payload_len = sizeof(response);
-	if (write_all(fd, &response_header, sizeof(response_header)) != 0)
+	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RESPONSE, sizeof(response)) != 0)
 		return -1;
 	return write_all(fd, &response, sizeof(response));
 }
@@ -213,11 +201,10 @@ static int handle_close_control_success_request(int fd)
 static int handle_close_failure_request(int fd)
 {
 	frdpIpcHeader header = { 0 };
-	frdpIpcHeader response_header = { 0 };
 	frdpSessionRequest request = { 0 };
 	frdpSessionResponse response = { 0 };
 
-	if (read_exact(fd, &header, sizeof(header)) != 0)
+	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
 		return -1;
 	if (header.type != FRDP_IPC_SESSION_CLOSE_REQUEST)
 		return -1;
@@ -228,9 +215,7 @@ static int handle_close_failure_request(int fd)
 
 	response.success = 0;
 	snprintf(response.error, sizeof(response.error), "denied\nbad\\path");
-	response_header.type = FRDP_IPC_SESSION_RESPONSE;
-	response_header.payload_len = sizeof(response);
-	if (write_all(fd, &response_header, sizeof(response_header)) != 0)
+	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RESPONSE, sizeof(response)) != 0)
 		return -1;
 	return write_all(fd, &response, sizeof(response));
 }
@@ -238,10 +223,9 @@ static int handle_close_failure_request(int fd)
 static int handle_reload_request(int fd)
 {
 	frdpIpcHeader header = { 0 };
-	frdpIpcHeader response_header = { 0 };
 	frdpControlResponse response = { 0 };
 
-	if (read_exact(fd, &header, sizeof(header)) != 0)
+	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
 		return -1;
 	if (header.type != FRDP_IPC_SESSION_RELOAD_REQUEST)
 		return -1;
@@ -250,9 +234,7 @@ static int handle_reload_request(int fd)
 
 	response.success = 1;
 	snprintf(response.message, sizeof(response.message), "accepted");
-	response_header.type = FRDP_IPC_SESSION_RELOAD_RESPONSE;
-	response_header.payload_len = sizeof(response);
-	if (write_all(fd, &response_header, sizeof(response_header)) != 0)
+	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RELOAD_RESPONSE, sizeof(response)) != 0)
 		return -1;
 	return write_all(fd, &response, sizeof(response));
 }
@@ -260,10 +242,9 @@ static int handle_reload_request(int fd)
 static int handle_reload_failure_request(int fd)
 {
 	frdpIpcHeader header = { 0 };
-	frdpIpcHeader response_header = { 0 };
 	frdpControlResponse response = { 0 };
 
-	if (read_exact(fd, &header, sizeof(header)) != 0)
+	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
 		return -1;
 	if (header.type != FRDP_IPC_SESSION_RELOAD_REQUEST)
 		return -1;
@@ -272,9 +253,7 @@ static int handle_reload_failure_request(int fd)
 
 	response.success = 0;
 	snprintf(response.error, sizeof(response.error), "busy\ntry later");
-	response_header.type = FRDP_IPC_SESSION_RELOAD_RESPONSE;
-	response_header.payload_len = sizeof(response);
-	if (write_all(fd, &response_header, sizeof(response_header)) != 0)
+	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RELOAD_RESPONSE, sizeof(response)) != 0)
 		return -1;
 	return write_all(fd, &response, sizeof(response));
 }

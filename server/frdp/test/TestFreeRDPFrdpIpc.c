@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -207,6 +208,42 @@ cleanup:
 	return rc;
 }
 
+static int test_header_uses_little_endian_wire_format(void)
+{
+	int fds[2] = { -1, -1 };
+	const uint8_t expected[] = { 0x17, 0x00, 0x00, 0x00, 0x78, 0x56, 0x34, 0x12 };
+	const uint8_t incoming[] = { 0x05, 0x00, 0x00, 0x00, 0xef, 0xcd, 0xab, 0x90 };
+	uint8_t raw[8] = { 0 };
+	frdpIpcHeader header = { 0 };
+	int rc = -1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	if (frdp_ipc_send_header(fds[0], (frdpIpcMessageType)0x17, 0x12345678U) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv(fds[1], raw, sizeof(raw)) != (int)sizeof(raw))
+		goto cleanup;
+	if (memcmp(raw, expected, sizeof(expected)) != 0)
+		goto cleanup;
+	if (frdp_ipc_send(fds[1], incoming, sizeof(incoming)) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[0], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_AUTH_REQUEST_V2) || (header.payload_len != 0x90abcdefU))
+		goto cleanup;
+	errno = 0;
+	if ((frdp_ipc_recv_header(fds[0], NULL) != -1) || (errno != EINVAL))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
 static int test_auth_token_binds_posix_account(void)
 {
 	char dir[1024] = { 0 };
@@ -290,6 +327,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_recv_rejects_short_read() != 0)
 		return -1;
 	if (test_send_recv_reject_null_buffers() != 0)
+		return -1;
+	if (test_header_uses_little_endian_wire_format() != 0)
 		return -1;
 	if (test_auth_token_binds_posix_account() != 0)
 		return -1;

@@ -158,15 +158,13 @@ static int send_agent_resize(const char* socket_path, uint32_t width, uint32_t h
 	if (fd < 0)
 		return -1;
 
-	header.type = FRDP_IPC_AGENT_RESIZE_REQUEST;
-	header.payload_len = sizeof(request);
 	snprintf(request.correlation_id, sizeof(request.correlation_id), "%s", TEST_CORRELATION_ID);
 	snprintf(request.session_id, sizeof(request.session_id), "%s", TEST_SESSION_ID);
 	request.width = width;
 	request.height = height;
 	request.color_depth = 24;
 
-	if (frdp_ipc_send(fd, &header, sizeof(header)) != 0)
+	if (frdp_ipc_send_header(fd, FRDP_IPC_AGENT_RESIZE_REQUEST, sizeof(request)) != 0)
 	{
 		frdp_ipc_close(fd);
 		return expect_response ? -1 : 0;
@@ -177,7 +175,7 @@ static int send_agent_resize(const char* socket_path, uint32_t width, uint32_t h
 		return expect_response ? -1 : 0;
 	}
 
-	if (frdp_ipc_recv(fd, &header, sizeof(header)) < 0)
+	if (frdp_ipc_recv_header(fd, &header) < 0)
 	{
 		frdp_ipc_close(fd);
 		return expect_response ? -1 : 0;

@@ -175,11 +175,7 @@ cleanup:
 
 static int send_header(int fd, frdpIpcMessageType type, uint32_t payload_len)
 {
-	frdpIpcHeader header = { 0 };
-
-	header.type = type;
-	header.payload_len = payload_len;
-	return frdp_ipc_send(fd, &header, sizeof(header));
+	return frdp_ipc_send_header(fd, type, payload_len);
 }
 
 static int send_partial_header_then_close(const char* socket_path, frdpIpcMessageType type,
@@ -217,7 +213,7 @@ static int receive_auth_failure(int fd, const char* expected_error)
 	frdpIpcHeader header = { 0 };
 	frdpAuthResponse response = { 0 };
 
-	if (frdp_ipc_recv(fd, &header, sizeof(header)) != (int)sizeof(header))
+	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
 		return -1;
 	if ((header.type != FRDP_IPC_AUTH_RESPONSE) ||
 	    (header.payload_len != sizeof(response)))
@@ -238,7 +234,7 @@ static int receive_session_response(int fd, int expected_success, const char* ex
 	frdpIpcHeader header = { 0 };
 	frdpSessionResponse response = { 0 };
 
-	if (frdp_ipc_recv(fd, &header, sizeof(header)) != (int)sizeof(header))
+	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
 		return -1;
 	if ((header.type != FRDP_IPC_SESSION_RESPONSE) ||
 	    (header.payload_len != sizeof(response)))
@@ -268,7 +264,7 @@ static int receive_reload_response(int fd, int expected_success, const char* exp
 	frdpIpcHeader header = { 0 };
 	frdpControlResponse response = { 0 };
 
-	if (frdp_ipc_recv(fd, &header, sizeof(header)) != (int)sizeof(header))
+	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
 		return -1;
 	if ((header.type != FRDP_IPC_SESSION_RELOAD_RESPONSE) ||
 	    (header.payload_len != sizeof(response)))
@@ -508,7 +504,7 @@ static int test_sesmand_list_empty(const char* socket_path)
 		return -1;
 	if (send_header(fd, FRDP_IPC_SESSION_LIST_REQUEST, 0) != 0)
 		goto cleanup;
-	if (frdp_ipc_recv(fd, &header, sizeof(header)) != (int)sizeof(header))
+	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
 		goto cleanup;
 	if ((header.type != FRDP_IPC_SESSION_LIST_RESPONSE) ||
 	    (header.payload_len != sizeof(response)))

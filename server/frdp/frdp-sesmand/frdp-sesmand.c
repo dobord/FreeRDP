@@ -670,7 +670,6 @@ static int send_session_response(int fd, int success, const char *session_id,
                                  const char *error)
 {
     frdpSessionResponse resp;
-    frdpIpcHeader rhdr;
 
     memset(&resp, 0, sizeof(resp));
     resp.success = success;
@@ -683,19 +682,15 @@ static int send_session_response(int fd, int success, const char *session_id,
     if (error)
         snprintf(resp.error, sizeof(resp.error), "%s", error);
 
-    rhdr.type = FRDP_IPC_SESSION_RESPONSE;
-    rhdr.payload_len = sizeof(resp);
-    if (frdp_ipc_send(fd, &rhdr, sizeof(rhdr)) < 0)
+    if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RESPONSE, sizeof(resp)) < 0)
         return -1;
     return frdp_ipc_send(fd, &resp, sizeof(resp));
 }
 
 static int send_session_list_response(int fd)
 {
-    frdpIpcHeader hdr;
     frdpSessionListResponse resp;
 
-    memset(&hdr, 0, sizeof(hdr));
     memset(&resp, 0, sizeof(resp));
 
     resp.success = 1;
@@ -711,19 +706,15 @@ static int send_session_list_response(int fd)
         resp.entries[i].agent_pid = sessions[i].agent_pid;
     }
 
-    hdr.type = FRDP_IPC_SESSION_LIST_RESPONSE;
-    hdr.payload_len = sizeof(resp);
-    if (frdp_ipc_send(fd, &hdr, sizeof(hdr)) != 0)
+    if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_LIST_RESPONSE, sizeof(resp)) != 0)
         return -1;
     return frdp_ipc_send(fd, &resp, sizeof(resp));
 }
 
 static int send_reload_response(int fd, int success, const char *message, const char *error)
 {
-    frdpIpcHeader hdr;
     frdpControlResponse resp;
 
-    memset(&hdr, 0, sizeof(hdr));
     memset(&resp, 0, sizeof(resp));
     resp.success = success;
     if (message)
@@ -731,9 +722,7 @@ static int send_reload_response(int fd, int success, const char *message, const 
     if (error)
         snprintf(resp.error, sizeof(resp.error), "%s", error);
 
-    hdr.type = FRDP_IPC_SESSION_RELOAD_RESPONSE;
-    hdr.payload_len = sizeof(resp);
-    if (frdp_ipc_send(fd, &hdr, sizeof(hdr)) != 0)
+    if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RELOAD_RESPONSE, sizeof(resp)) != 0)
         return -1;
     return frdp_ipc_send(fd, &resp, sizeof(resp));
 }
@@ -1318,7 +1307,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
         }
 
         frdpIpcHeader hdr;
-        if (frdp_ipc_recv(cfd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+        if (frdp_ipc_recv_header(cfd, &hdr) != (int)sizeof(hdr)) {
             close(cfd);
             continue;
         }
