@@ -35,6 +35,7 @@ typedef struct
 	uid_t uid;
 	gid_t gid;
 	BOOL has_posix_account;
+	char authorization_id[192];
 } frdpdAuthResult;
 
 BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,

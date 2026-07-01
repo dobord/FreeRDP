@@ -24,6 +24,8 @@ option(WITH_FRDPD_IN_PROCESS_PAM "Enable insecure legacy in-process frdpd PAM fa
 add_subdirectory(frdpd)
 
 add_library(frdp-ipc OBJECT
+    ipc/frdp-auth-token.c
+    ipc/frdp-auth-token.h
     ipc/frdp-ipc.c
     ipc/frdp-ipc.h)
 set_property(TARGET frdp-ipc PROPERTY FOLDER "Server/frdp")
@@ -34,7 +36,7 @@ add_executable(frdp-authd
     config/frdp-config.h
     $<TARGET_OBJECTS:frdp-ipc>)
 target_include_directories(frdp-authd SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
-target_link_libraries(frdp-authd PRIVATE ${PAM_LIBRARIES} ${UUID_LIBRARY})
+target_link_libraries(frdp-authd PRIVATE winpr ${PAM_LIBRARIES} ${UUID_LIBRARY})
 installwithrpath(TARGETS frdp-authd DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)
 set_property(TARGET frdp-authd PROPERTY FOLDER "Server/frdp")
 
@@ -44,7 +46,7 @@ add_executable(frdp-sesmand
     config/frdp-config.h
     $<TARGET_OBJECTS:frdp-ipc>)
 target_include_directories(frdp-sesmand SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
-target_link_libraries(frdp-sesmand PRIVATE ${PAM_LIBRARIES} ${UUID_LIBRARY})
+target_link_libraries(frdp-sesmand PRIVATE winpr ${PAM_LIBRARIES} ${UUID_LIBRARY})
 installwithrpath(TARGETS frdp-sesmand DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)
 set_property(TARGET frdp-sesmand PROPERTY FOLDER "Server/frdp")
 
@@ -59,12 +61,14 @@ add_executable(frdpd-ipc-demo
     config/frdp-config.c
     config/frdp-config.h
     $<TARGET_OBJECTS:frdp-ipc>)
+target_link_libraries(frdpd-ipc-demo PRIVATE winpr ${UUID_LIBRARY})
 set_property(TARGET frdpd-ipc-demo PROPERTY FOLDER "Server/frdp")
 
 add_executable(frdpctl
     ${CMAKE_SOURCE_DIR}/tools/frdpctl/frdpctl.c
     $<TARGET_OBJECTS:frdp-ipc>)
 target_include_directories(frdpctl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(frdpctl PRIVATE winpr ${UUID_LIBRARY})
 installwithrpath(TARGETS frdpctl DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)
 set_property(TARGET frdpctl PROPERTY FOLDER "Server/frdp")
 
@@ -78,6 +82,7 @@ else()
 endif()
 
 set(FRDP_SYSTEMD_SYSTEM_UNIT_DIR "lib/systemd/system" CACHE PATH "systemd system unit install directory")
+set(FRDP_TMPFILES_DIR "lib/tmpfiles.d" CACHE PATH "systemd tmpfiles install directory")
 set(FRDP_SECURITY_POLICY_DIR "${CMAKE_INSTALL_DATADIR}/frdpd/security" CACHE PATH "FRDP security policy example install directory")
 set(FRDP_SYSTEMD_UNITS
     frdpd.service
@@ -96,6 +101,9 @@ install(FILES config/frdpd.env DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/frdpd COM
 install(FILES pam/frdpd DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/pam.d COMPONENT server)
 install(FILES ${FRDP_SYSTEMD_UNIT_FILES}
         DESTINATION ${FRDP_SYSTEMD_SYSTEM_UNIT_DIR}
+        COMPONENT server)
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/tmpfiles/frdpd.conf
+        DESTINATION ${FRDP_TMPFILES_DIR}
         COMPONENT server)
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/selinux/frdpd.te
         DESTINATION ${FRDP_SECURITY_POLICY_DIR}/selinux

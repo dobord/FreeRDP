@@ -1003,7 +1003,7 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
                                         frdpdPeerContext* context)
 {
 	rdpSettings* settings = NULL;
-	frdpSessionRequestV2 request = { 0 };
+	frdpSessionRequestV3 request = { 0 };
 	frdpSessionResponse response = { 0 };
 	char log_error[FRDPD_LOG_STRING_SIZE] = { 0 };
 	char log_session_id[FRDPD_LOG_STRING_SIZE] = { 0 };
@@ -1019,10 +1019,14 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 		return FALSE;
 	if (!context->has_posix_account)
 		return FALSE;
+	if (context->authorization_id[0] == '\0')
+		return FALSE;
 
 	if (!frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
 	                          context->correlation_id) ||
 	    !frdpd_copy_ipc_string(request.user, sizeof(request.user), context->pam_user) ||
+	    !frdpd_copy_ipc_string(request.authorization_id, sizeof(request.authorization_id),
+	                          context->authorization_id) ||
 	    !frdpd_copy_ipc_string(request.rhost, sizeof(request.rhost),
 	                          (client->hostname[0] != '\0') ? client->hostname : NULL))
 		return FALSE;
@@ -1039,7 +1043,7 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 		request.color_depth = freerdp_settings_get_uint32(settings, FreeRDP_ColorDepth);
 	}
 
-	if (!frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_REQUEST_V2,
+	if (!frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_REQUEST_V3,
 	                              &request, sizeof(request), &response))
 	{
 		WLog_WARN(TAG, "correlation_id=%s session manager rejected login for %s: %s",
@@ -1091,6 +1095,7 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 	}
 
 	context->managed_session_open = TRUE;
+	memset(context->authorization_id, 0, sizeof(context->authorization_id));
 	context->agent_input_warned = FALSE;
 	context->agent_frame_warned = FALSE;
 	frdpd_reset_framebuffer_state(context);
@@ -1118,6 +1123,7 @@ static void frdpd_auth_result_cleanup(frdpdAuthResult* result)
 	result->uid = (uid_t)-1;
 	result->gid = (gid_t)-1;
 	result->has_posix_account = FALSE;
+	memset(result->authorization_id, 0, sizeof(result->authorization_id));
 	result->pam_credentials_established = FALSE;
 	result->pam_session_open = FALSE;
 }
@@ -1213,6 +1219,7 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 	context->uid = (uid_t)-1;
 	context->gid = (gid_t)-1;
 	context->has_posix_account = FALSE;
+	memset(context->authorization_id, 0, sizeof(context->authorization_id));
 	context->pam_credentials_established = FALSE;
 	context->pam_session_open = FALSE;
 	free(context->pam_user);
@@ -1382,6 +1389,7 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	context->uid = result.uid;
 	context->gid = result.gid;
 	context->has_posix_account = result.has_posix_account;
+	memcpy(context->authorization_id, result.authorization_id, sizeof(context->authorization_id));
 	context->pam_credentials_established = result.pam_credentials_established;
 	context->pam_session_open = result.pam_session_open;
 	result.pam_user = NULL;

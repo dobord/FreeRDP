@@ -35,6 +35,7 @@
 
 /* IPC definitions */
 #include "../config/frdp-config.h"
+#include "../ipc/frdp-auth-token.h"
 #include "../ipc/frdp-ipc.h"
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -221,7 +222,8 @@ static int copy_ipc_string(char *dst, size_t dst_size, const char *src, size_t s
     return 0;
 }
 
-static int send_auth_response(int fd, int success, const char *error)
+static int send_auth_response(int fd, int success, const char *error,
+                              const char *authorization_id)
 {
     frdpAuthResponse resp;
     frdpIpcHeader rhdr;
@@ -230,6 +232,8 @@ static int send_auth_response(int fd, int success, const char *error)
     resp.success = success;
     if (error)
         snprintf(resp.error, sizeof(resp.error), "%s", error);
+    if (authorization_id)
+        snprintf(resp.authorization_id, sizeof(resp.authorization_id), "%s", authorization_id);
 
     rhdr.type = FRDP_IPC_AUTH_RESPONSE;
     rhdr.payload_len = sizeof(resp);
@@ -527,7 +531,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             continue;
         }
         if (verify_peer(cfd) != 0) {
-            send_auth_response(cfd, 0, "unauthorized IPC peer");
+            send_auth_response(cfd, 0, "unauthorized IPC peer", NULL);
             close(cfd);
             continue;
         }
@@ -537,7 +541,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             continue;
         }
         if (!frdp_ipc_request_payload_len_is_bounded(hdr.payload_len)) {
-            send_auth_response(cfd, 0, "IPC payload too large");
+            send_auth_response(cfd, 0, "IPC payload too large", NULL);
             close(cfd);
             continue;
         }
@@ -553,18 +557,24 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                                     sizeof(req.correlation_id)) != 0 ||
                     copy_ipc_string(rhost, sizeof(rhost), req.rhost, sizeof(req.rhost)) != 0 ||
                     copy_ipc_string(password, sizeof(password), req.password, sizeof(req.password)) != 0) {
-                    send_auth_response(cfd, 0, "invalid auth request");
+                    send_auth_response(cfd, 0, "invalid auth request", NULL);
                 } else {
-                    send_auth_response(cfd,
-                                       authenticate_user(pam_service, rhost, correlation_id, user,
-                                                         password) == 0,
-                                       NULL);
+                    char authorization_id[sizeof(((frdpAuthResponse *)0)->authorization_id)] = {0};
+                    const int authenticated =
+                        authenticate_user(pam_service, rhost, correlation_id, user, password) == 0;
+                    if (authenticated &&
+                        frdp_auth_token_create(user, rhost, correlation_id, authorization_id,
+                                               sizeof(authorization_id)) != 0)
+                        send_auth_response(cfd, 0, "authorization id generation failed", NULL);
+                    else
+                        send_auth_response(cfd, authenticated, NULL,
+                                           authenticated ? authorization_id : NULL);
                 }
                 clear_secret(password, sizeof(password));
                 clear_secret(req.password, sizeof(req.password));
             }
         } else {
-            send_auth_response(cfd, 0, "unsupported IPC request");
+            send_auth_response(cfd, 0, "unsupported IPC request", NULL);
         }
         close(cfd);
     }

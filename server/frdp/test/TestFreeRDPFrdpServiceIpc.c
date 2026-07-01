@@ -468,11 +468,13 @@ static int test_sesmand_rejects_missing_posix_account(const char* socket_path)
 		return -1;
 	snprintf(request.correlation_id, sizeof(request.correlation_id),
 	         "55555555-5555-4555-8555-555555555555");
+	snprintf(request.session_id, sizeof(request.session_id),
+	         "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
 	snprintf(request.user, sizeof(request.user), "nobody");
 	if (send_header(fd, FRDP_IPC_SESSION_REQUEST_V2, sizeof(request)) != 0 ||
 	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
 		goto cleanup;
-	rc = receive_session_response(fd, 0, "missing POSIX account");
+	rc = receive_session_response(fd, 0, "missing authorization");
 
 cleanup:
 	frdp_ipc_close(fd);
@@ -489,6 +491,8 @@ static int test_sesmand_rejects_posix_account_mismatch(const char* socket_path)
 		return -1;
 	snprintf(request.correlation_id, sizeof(request.correlation_id),
 	         "66666666-6666-4666-8666-666666666666");
+	snprintf(request.session_id, sizeof(request.session_id),
+	         "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
 	snprintf(request.user, sizeof(request.user), "nobody");
 	request.has_posix_account = 1;
 	request.uid = 0;
@@ -496,7 +500,57 @@ static int test_sesmand_rejects_posix_account_mismatch(const char* socket_path)
 	if (send_header(fd, FRDP_IPC_SESSION_REQUEST_V2, sizeof(request)) != 0 ||
 	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
 		goto cleanup;
-	rc = receive_session_response(fd, 0, "POSIX account mismatch");
+	rc = receive_session_response(fd, 0, "missing authorization");
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
+static int test_sesmand_rejects_missing_authorization(const char* socket_path)
+{
+	frdpSessionRequestV3 request = { 0 };
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	snprintf(request.correlation_id, sizeof(request.correlation_id),
+	         "88888888-8888-4888-8888-888888888888");
+	snprintf(request.user, sizeof(request.user), "nobody");
+	request.has_posix_account = 1;
+	request.uid = 0;
+	request.gid = 0;
+	if (send_header(fd, FRDP_IPC_SESSION_REQUEST_V3, sizeof(request)) != 0 ||
+	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
+		goto cleanup;
+	rc = receive_session_response(fd, 0, "missing authorization");
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
+static int test_sesmand_rejects_invalid_authorization(const char* socket_path)
+{
+	frdpSessionRequestV3 request = { 0 };
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	snprintf(request.correlation_id, sizeof(request.correlation_id),
+	         "99999999-9999-4999-8999-999999999999");
+	snprintf(request.user, sizeof(request.user), "nobody");
+	snprintf(request.authorization_id, sizeof(request.authorization_id),
+	         "11111111-1111-4111-8111-111111111111:9999999999:%064u", 0U);
+	request.has_posix_account = 1;
+	request.uid = 0;
+	request.gid = 0;
+	if (send_header(fd, FRDP_IPC_SESSION_REQUEST_V3, sizeof(request)) != 0 ||
+	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
+		goto cleanup;
+	rc = receive_session_response(fd, 0, "invalid authorization");
 
 cleanup:
 	frdp_ipc_close(fd);
@@ -642,6 +696,10 @@ static int test_sesmand_component(void)
 	if (test_sesmand_rejects_missing_posix_account(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_posix_account_mismatch(helper.socket_path) != 0)
+		goto cleanup;
+	if (test_sesmand_rejects_missing_authorization(helper.socket_path) != 0)
+		goto cleanup;
+	if (test_sesmand_rejects_invalid_authorization(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_bad_length(helper.socket_path) != 0)
 		goto cleanup;

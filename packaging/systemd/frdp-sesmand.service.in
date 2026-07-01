@@ -4,13 +4,14 @@ After=network.target
 
 [Service]
 ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/frdp-sesmand --pam-service frdpd --socket /run/frdp-sesmand/sesmand.sock
+Environment=FRDP_AUTH_TOKEN_KEY=/run/frdp-auth-token/key
 User=root
 Group=root
 RuntimeDirectory=frdp-sesmand
 RuntimeDirectoryMode=0755
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=/run/frdp-sesmand
+ReadWritePaths=/run/frdp-sesmand /run/frdp-auth-token
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 LockPersonality=true
 LimitNOFILE=1024

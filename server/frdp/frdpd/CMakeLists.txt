@@ -17,6 +17,8 @@ set(SRCS
     channel_policy.h
     frdpd_pam.c
     frdpd_pam.h
+    ../ipc/frdp-auth-token.c
+    ../ipc/frdp-auth-token.h
     ../ipc/frdp-ipc.c
     ../ipc/frdp-ipc.h
     ../config/frdp-config.c
@@ -31,7 +33,7 @@ endif()
 if(WITH_FRDPD_IN_PROCESS_PAM)
   target_compile_definitions(${MODULE_NAME} PRIVATE WITH_FRDPD_IN_PROCESS_PAM)
 endif()
-target_link_libraries(${MODULE_NAME} PRIVATE freerdp-server freerdp winpr ${PAM_LIBRARIES})
+target_link_libraries(${MODULE_NAME} PRIVATE freerdp-server freerdp winpr ${PAM_LIBRARIES} ${UUID_LIBRARY})
 
 installwithrpath(TARGETS ${MODULE_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)
 

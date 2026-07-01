@@ -34,6 +34,7 @@ static void frdpd_auth_result_set(frdpdAuthResult* result, frdpdPamAuthStatus st
 	result->uid = (uid_t)-1;
 	result->gid = (gid_t)-1;
 	result->has_posix_account = FALSE;
+	memset(result->authorization_id, 0, sizeof(result->authorization_id));
 }
 
 static BOOL frdpd_auth_string_is_empty(const char* value)
@@ -226,6 +227,16 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 		uid_t uid = (uid_t)-1;
 		gid_t gid = (gid_t)-1;
 
+		if (!result || (response.authorization_id[0] == '\0') ||
+		    !frdpd_auth_copy_ipc_string(result->authorization_id,
+		                                sizeof(result->authorization_id),
+		                                response.authorization_id))
+		{
+			if (result)
+				result->status = FRDPD_PAM_AUTH_ERROR;
+			ok = FALSE;
+			goto fail;
+		}
 		ok = frdpd_auth_lookup_posix_account(pam_user, &uid, &gid);
 		if (result && ok)
 		{

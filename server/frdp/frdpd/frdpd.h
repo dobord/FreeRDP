@@ -65,6 +65,7 @@ extern "C"
 		HANDLE vcm;
 		void* pam_handle;
 		char* pam_user;
+		char authorization_id[192];
 		uid_t uid;
 		gid_t gid;
 		BOOL has_posix_account;

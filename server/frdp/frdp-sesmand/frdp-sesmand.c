@@ -35,6 +35,7 @@
 #include <poll.h>
 
 #include "../config/frdp-config.h"
+#include "../ipc/frdp-auth-token.h"
 #include "../ipc/frdp-ipc.h"
 
 /* Session registry entry.  Each session retains its PAM handle and the
@@ -64,6 +65,15 @@ static char g_pam_service[64] = "frdpd";
 static char g_config_path[1024] = {0};
 static char g_agent_socket_dir[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
 static volatile sig_atomic_t g_stop_requested = 0;
+
+#define MAX_CONSUMED_AUTH_TOKENS 128
+
+typedef struct {
+    char nonce[37];
+    unsigned long long expires_at;
+} consumedAuthToken;
+
+static consumedAuthToken consumed_auth_tokens[MAX_CONSUMED_AUTH_TOKENS];
 
 static int create_agent_socket(const char *socket_path);
 static void destroy_agent_socket(int *fd, const char *socket_path);
@@ -922,6 +932,52 @@ static int find_session_by_id(const char *session_id)
     return -1;
 }
 
+static void prune_consumed_auth_tokens(unsigned long long now)
+{
+    for (size_t x = 0; x < MAX_CONSUMED_AUTH_TOKENS; x++) {
+        if (consumed_auth_tokens[x].nonce[0] != '\0' &&
+            consumed_auth_tokens[x].expires_at < now) {
+            memset(&consumed_auth_tokens[x], 0, sizeof(consumed_auth_tokens[x]));
+        }
+    }
+}
+
+static int consume_auth_token_nonce(const char *nonce, unsigned long long expires_at)
+{
+    size_t free_slot = MAX_CONSUMED_AUTH_TOKENS;
+    const unsigned long long now = (unsigned long long)time(NULL);
+
+    if (!nonce || nonce[0] == '\0')
+        return -1;
+    prune_consumed_auth_tokens(now);
+    for (size_t x = 0; x < MAX_CONSUMED_AUTH_TOKENS; x++) {
+        if ((consumed_auth_tokens[x].nonce[0] != '\0') &&
+            (strcmp(consumed_auth_tokens[x].nonce, nonce) == 0))
+            return -1;
+        if ((free_slot == MAX_CONSUMED_AUTH_TOKENS) &&
+            (consumed_auth_tokens[x].nonce[0] == '\0'))
+            free_slot = x;
+    }
+    if (free_slot == MAX_CONSUMED_AUTH_TOKENS)
+        return -1;
+    snprintf(consumed_auth_tokens[free_slot].nonce, sizeof(consumed_auth_tokens[free_slot].nonce),
+             "%s", nonce);
+    consumed_auth_tokens[free_slot].expires_at = expires_at;
+    return 0;
+}
+
+static int validate_and_consume_authorization(const char *authorization_id, const char *user,
+                                              const char *rhost, const char *correlation_id)
+{
+    char nonce[37] = {0};
+    unsigned long long expires_at = 0;
+
+    if (frdp_auth_token_verify(authorization_id, user, rhost, correlation_id, nonce,
+                               sizeof(nonce), &expires_at) != 0)
+        return -1;
+    return consume_auth_token_nonce(nonce, expires_at);
+}
+
 static void reap_exited_sessions(void)
 {
     int status = 0;
@@ -941,10 +997,12 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
 {
     frdpSessionRequest req;
     frdpSessionRequestV2 req_v2;
+    frdpSessionRequestV3 req_v3;
     char correlation_id[sizeof(req.correlation_id)] = {0};
     char session_id[sizeof(req.session_id)] = {0};
     char user[sizeof(req.user)] = {0};
     char rhost[sizeof(req.rhost)] = {0};
+    char authorization_id[sizeof(req_v3.authorization_id)] = {0};
     char response_session_id[64] = {0};
     char display[32] = {0};
     char agent_socket[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
@@ -954,7 +1012,21 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
 
     memset(&req, 0, sizeof(req));
     memset(&req_v2, 0, sizeof(req_v2));
-    if (type == FRDP_IPC_SESSION_REQUEST_V2) {
+    memset(&req_v3, 0, sizeof(req_v3));
+    if (type == FRDP_IPC_SESSION_REQUEST_V3) {
+        if (frdp_ipc_recv(fd, &req_v3, sizeof(req_v3)) != (int)sizeof(req_v3))
+            return -1;
+        memcpy(req.correlation_id, req_v3.correlation_id, sizeof(req.correlation_id));
+        memcpy(req.session_id, req_v3.session_id, sizeof(req.session_id));
+        memcpy(req.user, req_v3.user, sizeof(req.user));
+        memcpy(req.rhost, req_v3.rhost, sizeof(req.rhost));
+        req.desktop_width = req_v3.desktop_width;
+        req.desktop_height = req_v3.desktop_height;
+        req.color_depth = req_v3.color_depth;
+        uid = (uid_t)req_v3.uid;
+        gid = (gid_t)req_v3.gid;
+        has_posix_account = req_v3.has_posix_account;
+    } else if (type == FRDP_IPC_SESSION_REQUEST_V2) {
         if (frdp_ipc_recv(fd, &req_v2, sizeof(req_v2)) != (int)sizeof(req_v2))
             return -1;
         memcpy(req.correlation_id, req_v2.correlation_id, sizeof(req.correlation_id));
@@ -978,14 +1050,31 @@ static int handle_session_request(int fd, frdpIpcMessageType type)
         copy_ipc_string(rhost, sizeof(rhost), req.rhost, sizeof(req.rhost)) != 0) {
         return send_session_response(fd, 0, NULL, NULL, NULL, "invalid session request");
     }
+    if ((type == FRDP_IPC_SESSION_REQUEST_V3) &&
+        (copy_ipc_string(authorization_id, sizeof(authorization_id), req_v3.authorization_id,
+                         sizeof(req_v3.authorization_id)) != 0)) {
+        return send_session_response(fd, 0, NULL, NULL, NULL, "invalid authorization");
+    }
 
-    if ((type == FRDP_IPC_SESSION_REQUEST) || (type == FRDP_IPC_SESSION_REQUEST_V2)) {
+    if ((type == FRDP_IPC_SESSION_REQUEST) || (type == FRDP_IPC_SESSION_REQUEST_V2) ||
+        (type == FRDP_IPC_SESSION_REQUEST_V3)) {
         struct passwd *pwd = NULL;
 
         if (user[0] == '\0')
             return send_session_response(fd, 0, NULL, NULL, NULL, "missing user");
-        if ((type != FRDP_IPC_SESSION_REQUEST_V2) || !has_posix_account ||
-            ((uint64_t)uid != req_v2.uid) || ((uint64_t)gid != req_v2.gid))
+        if (type == FRDP_IPC_SESSION_REQUEST_V2)
+            return send_session_response(fd, 0, NULL, NULL, NULL, "missing authorization");
+        if ((type == FRDP_IPC_SESSION_REQUEST_V3) && (authorization_id[0] == '\0'))
+            return send_session_response(fd, 0, NULL, NULL, NULL, "missing authorization");
+        if ((type == FRDP_IPC_SESSION_REQUEST_V3) &&
+            validate_and_consume_authorization(authorization_id, user, rhost, correlation_id) != 0)
+            return send_session_response(fd, 0, NULL, NULL, NULL, "invalid authorization");
+        if (((type != FRDP_IPC_SESSION_REQUEST_V2) && (type != FRDP_IPC_SESSION_REQUEST_V3)) ||
+            !has_posix_account ||
+            ((type == FRDP_IPC_SESSION_REQUEST_V2) &&
+             (((uint64_t)uid != req_v2.uid) || ((uint64_t)gid != req_v2.gid))) ||
+            ((type == FRDP_IPC_SESSION_REQUEST_V3) &&
+             (((uint64_t)uid != req_v3.uid) || ((uint64_t)gid != req_v3.gid))))
             return send_session_response(fd, 0, NULL, NULL, NULL, "missing POSIX account");
         pwd = getpwnam(user);
         if (!pwd || (pwd->pw_uid != uid) || (pwd->pw_gid != gid))
@@ -1176,7 +1265,9 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             } else {
                 (void)send_reload_response(cfd, 1, "accepted", NULL);
             }
-        } else if (((hdr.type == FRDP_IPC_SESSION_REQUEST_V2) &&
+        } else if (((hdr.type == FRDP_IPC_SESSION_REQUEST_V3) &&
+                    (hdr.payload_len == sizeof(frdpSessionRequestV3))) ||
+                   ((hdr.type == FRDP_IPC_SESSION_REQUEST_V2) &&
                     (hdr.payload_len == sizeof(frdpSessionRequestV2))) ||
                    (((hdr.type == FRDP_IPC_SESSION_REQUEST) ||
                      (hdr.type == FRDP_IPC_SESSION_CLOSE_REQUEST)) &&
