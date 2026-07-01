@@ -179,6 +179,36 @@ static int send_header(int fd, frdpIpcMessageType type, uint32_t payload_len)
 	return frdp_ipc_send(fd, &header, sizeof(header));
 }
 
+static int send_partial_header_then_close(const char* socket_path, frdpIpcMessageType type,
+                                          uint32_t payload_len)
+{
+	frdpIpcHeader header = { 0 };
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	header.type = type;
+	header.payload_len = payload_len;
+	rc = frdp_ipc_send(fd, &header, sizeof(header) / 2U);
+	frdp_ipc_close(fd);
+	return rc;
+}
+
+static int send_partial_body_then_close(const char* socket_path, frdpIpcMessageType type,
+                                        const void* payload, size_t payload_len)
+{
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	if (send_header(fd, type, payload_len) == 0)
+		rc = frdp_ipc_send(fd, payload, payload_len / 2U);
+	frdp_ipc_close(fd);
+	return rc;
+}
+
 static int receive_auth_failure(int fd, const char* expected_error)
 {
 	frdpIpcHeader header = { 0 };
@@ -315,6 +345,21 @@ cleanup:
 	return rc;
 }
 
+static int test_authd_survives_truncated_clients(const char* socket_path)
+{
+	frdpAuthRequest request = { 0 };
+
+	snprintf(request.correlation_id, sizeof(request.correlation_id),
+	         "12121212-1212-4212-8212-121212121212");
+	if (send_partial_header_then_close(socket_path, FRDP_IPC_AUTH_REQUEST_V2,
+	                                   sizeof(request)) != 0)
+		return -1;
+	if (send_partial_body_then_close(socket_path, FRDP_IPC_AUTH_REQUEST_V2, &request,
+	                                 sizeof(request)) != 0)
+		return -1;
+	return test_authd_rejects_bad_length(socket_path);
+}
+
 static int test_authd_component(void)
 {
 	frdpTestHelper helper;
@@ -329,6 +374,8 @@ static int test_authd_component(void)
 	if (test_authd_rejects_oversized_payload(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_authd_rejects_unterminated_request(helper.socket_path) != 0)
+		goto cleanup;
+	if (test_authd_survives_truncated_clients(helper.socket_path) != 0)
 		goto cleanup;
 	/* A final request proves that malformed clients did not stop the service loop. */
 	if (test_authd_rejects_bad_length(helper.socket_path) != 0)
@@ -488,6 +535,21 @@ cleanup:
 	return rc;
 }
 
+static int test_sesmand_survives_truncated_clients(const char* socket_path)
+{
+	frdpSessionRequest request = { 0 };
+
+	snprintf(request.correlation_id, sizeof(request.correlation_id),
+	         "77777777-7777-4777-8777-777777777777");
+	if (send_partial_header_then_close(socket_path, FRDP_IPC_SESSION_REQUEST,
+	                                   sizeof(request)) != 0)
+		return -1;
+	if (send_partial_body_then_close(socket_path, FRDP_IPC_SESSION_REQUEST, &request,
+	                                 sizeof(request)) != 0)
+		return -1;
+	return test_sesmand_list_empty(socket_path);
+}
+
 static int test_sesmand_reload(const char* socket_path, int expected_success,
                                const char* expected_message, const char* expected_error)
 {
@@ -584,6 +646,8 @@ static int test_sesmand_component(void)
 	if (test_sesmand_rejects_bad_length(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_oversized_payload(helper.socket_path) != 0)
+		goto cleanup;
+	if (test_sesmand_survives_truncated_clients(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_reload(helper.socket_path, 1, "accepted", NULL) != 0)
 		goto cleanup;
