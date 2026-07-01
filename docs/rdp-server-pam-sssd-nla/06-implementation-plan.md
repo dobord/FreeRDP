@@ -45,7 +45,7 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - config-driven `frdp-authd --config <path>` helper startup for reading `[auth].pam_service`;
 - canonical `session_socket` configuration and `--session-socket=<path>` CLI override for opening and closing `frdp-sesmand` sessions over IPC;
 - shared IPC client operations use bounded socket send/receive timeouts and suppress `SIGPIPE` on disconnected peers;
-- signed, expiring auth-token handoff for managed session opens; `frdp-authd` issues a token after successful auth, integrated `frdpd` forwards it through `FRDP_IPC_SESSION_REQUEST_V3`, and `frdp-sesmand` verifies the token and consumes its nonce once before opening a session;
+- signed, expiring auth-token handoff for managed session opens; `frdp-authd` issues an HMAC token over a length-prefixed payload after successful auth/account lookup, integrated `frdpd` forwards the broker-provided POSIX uid/gid/account state through `FRDP_IPC_SESSION_REQUEST_V3`, and `frdp-sesmand` verifies the token and consumes its nonce once before opening a session;
 - helper listener startup rejects live Unix socket path collisions without unlinking the existing helper socket, while still removing same-node stale sockets;
 - per-peer correlation ids on integrated `frdpd` accept/auth/logon/activate/disconnect logs, propagated to `frdp-authd` auth/account IPC audit events;
 - session ids and correlation ids propagated through `frdp-sesmand` session IPC into `frdp-session-agent` startup/exit logs;
@@ -92,7 +92,7 @@ Deliverables:
 - [x] PAM auth/account smoke-test CLI in `server/frdp/frdpd` (`--pam-auth-test`);
 - [x] PAM credential establish/delete lifecycle in the integrated `server/frdp/frdpd` path;
 - [x] NSS/SSSD uid/gid/groups lookup integrated with the authenticated session path (`frdp-sesmand` session IPC performs `getpwnam()`, `initgroups()`, and uid/gid drop before launching the agent);
-- [x] short-lived signed authorization token binds the normal auth success path to managed session open; `frdp-sesmand` rejects legacy V2 session-open requests and consumes accepted V3 token nonces once;
+- [x] short-lived signed authorization token binds the normal auth success path to managed session open, including authenticated user, remote host, correlation id, POSIX uid/gid, account-present state, nonce, and expiry; `frdp-sesmand` rejects legacy V2 session-open requests and consumes accepted V3 token nonces once;
 - [x] audit events with correlation id integrated with the authenticated auth/session/agent path (channels and structured audit config are tracked separately);
 - [x] `frdpd` peer/channel/session logs escape client-supplied hostnames, authenticated usernames, static channel names, and IPC-supplied session ids, display names, agent socket paths, and session-manager error strings;
 - [x] fail-closed core dump/non-dumpable hardening in `server/frdp/frdpd`, `server/frdp/frdp-authd`, and `server/frdp/frdp-sesmand`;
@@ -154,7 +154,7 @@ Exit criteria: a domain-joined Windows client authenticates with Kerberos where 
 Deliverables:
 
 - [ ] ASAN/UBSAN builds;
-- [x] focused unit/CTest coverage for implemented static/dynamic channel config parsing, filter modes, capability validation, `max_connections` parsing, `frdpctl` CLI/session-IPC behavior, legacy V2 session-open rejection, invalid V3 auth-token rejection, and live auth/session helper survival after truncated IPC clients close the connection;
+- [x] focused unit/CTest coverage for implemented static/dynamic channel config parsing, filter modes, capability validation, `max_connections` parsing, `frdpctl` CLI/session-IPC behavior, legacy V2 session-open rejection, invalid V3 auth-token rejection, auth-token uid/gid/account-state tamper rejection, delimiter-collision-resistant token serialization, and live auth/session helper survival after truncated IPC clients close the connection;
 - [ ] fuzzing harnesses for channel parsers and selected RDP inputs;
 - [ ] protocol regression suite;
 - [ ] load testing harness;
