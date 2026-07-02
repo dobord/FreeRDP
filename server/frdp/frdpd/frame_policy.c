@@ -58,3 +58,16 @@ int frdpd_frame_response_metadata_is_valid(const frdpAgentFrameResponse* respons
 		return 0;
 	return 1;
 }
+
+int frdpd_frame_pump_budget_is_exhausted(uint64_t now_ms, uint64_t pump_started_ms,
+                                         uint32_t completed_tiles, uint32_t max_tiles,
+                                         uint64_t budget_ms)
+{
+	if (max_tiles == 0)
+		return 1;
+	if (completed_tiles >= max_tiles)
+		return 1;
+	if (now_ms < pump_started_ms)
+		return 1;
+	return (now_ms - pump_started_ms) >= budget_ms;
+}

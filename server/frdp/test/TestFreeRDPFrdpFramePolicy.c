@@ -132,6 +132,23 @@ static int test_rejects_stride_and_payload_bounds(void)
 	return 0;
 }
 
+static int test_frame_pump_budget(void)
+{
+	if (frdpd_frame_pump_budget_is_exhausted(1000, 1000, 0, 2, 30))
+		return -1;
+	if (frdpd_frame_pump_budget_is_exhausted(1029, 1000, 1, 2, 30))
+		return -1;
+	if (!frdpd_frame_pump_budget_is_exhausted(1030, 1000, 1, 2, 30))
+		return -1;
+	if (!frdpd_frame_pump_budget_is_exhausted(1001, 1000, 2, 2, 30))
+		return -1;
+	if (!frdpd_frame_pump_budget_is_exhausted(999, 1000, 0, 2, 30))
+		return -1;
+	if (!frdpd_frame_pump_budget_is_exhausted(1000, 1000, 0, 0, 30))
+		return -1;
+	return 0;
+}
+
 int TestFreeRDPFrdpFramePolicy(int argc, char* argv[])
 {
 	(void)argc;
@@ -165,6 +182,11 @@ int TestFreeRDPFrdpFramePolicy(int argc, char* argv[])
 	if (test_rejects_stride_and_payload_bounds() != 0)
 	{
 		fprintf(stderr, "stride/payload bounds metadata accepted\n");
+		return -1;
+	}
+	if (test_frame_pump_budget() != 0)
+	{
+		fprintf(stderr, "frame pump budget policy failed\n");
 		return -1;
 	}
 	return 0;

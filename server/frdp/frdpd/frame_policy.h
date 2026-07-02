@@ -19,4 +19,8 @@ int frdpd_frame_response_metadata_is_valid(const frdpAgentFrameResponse* respons
                                            uint32_t request_flags, uint32_t max_tile_size,
                                            uint32_t max_payload_len);
 
+int frdpd_frame_pump_budget_is_exhausted(uint64_t now_ms, uint64_t pump_started_ms,
+                                         uint32_t completed_tiles, uint32_t max_tiles,
+                                         uint64_t budget_ms);
+
 #endif /* FREERDP_SERVER_FRDPD_FRAME_POLICY_H */

@@ -397,9 +397,11 @@ static UINT64* frdpd_frame_tile_hash_slot(frdpdPeerContext* context, UINT32 x, U
 
 static BOOL frdpd_frame_pump_budget_exhausted(UINT64 pump_started, UINT32 completed_tiles)
 {
-	if (completed_tiles >= FRDPD_FRAME_TILES_PER_PUMP)
-		return TRUE;
-	return (GetTickCount64() - pump_started) >= FRDPD_FRAME_PUMP_BUDGET_MS;
+	return frdpd_frame_pump_budget_is_exhausted(GetTickCount64(), pump_started, completed_tiles,
+	                                            FRDPD_FRAME_TILES_PER_PUMP,
+	                                            FRDPD_FRAME_PUMP_BUDGET_MS)
+	           ? TRUE
+	           : FALSE;
 }
 
 static DWORD frdpd_peer_wait_timeout_ms(const frdpdPeerContext* context)
