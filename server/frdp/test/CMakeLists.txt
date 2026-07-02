@@ -71,6 +71,16 @@ add_test(NAME TestFreeRDPFrdpd
                  -DFRDPD_IN_PROCESS_PAM=$<BOOL:${WITH_FRDPD_IN_PROCESS_PAM}>
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpd.cmake)
 
+find_program(SYSTEMD_ANALYZE_EXECUTABLE systemd-analyze)
+if(SYSTEMD_ANALYZE_EXECUTABLE)
+  add_test(NAME TestFreeRDPFrdpSystemd
+           COMMAND ${CMAKE_COMMAND}
+                   -DSYSTEMD_ANALYZE_EXECUTABLE=${SYSTEMD_ANALYZE_EXECUTABLE}
+                   -DFRDP_SYSTEMD_UNIT_DIR=${CMAKE_CURRENT_BINARY_DIR}/..
+                   -DFRDP_INSTALL_FULL_BINDIR=${CMAKE_INSTALL_FULL_BINDIR}
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpSystemd.cmake)
+endif()
+
 set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "FreeRDP/Test")
 
 if(BUILD_FUZZERS)
