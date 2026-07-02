@@ -351,9 +351,23 @@ static void wait_for_agent_exit(pid_t pid, pid_t pgid)
 static int pam_conv_fn(int num_msg, const struct pam_message **msg,
                        struct pam_response **resp, void *appdata_ptr)
 {
-    (void)msg;
     (void)appdata_ptr;
-    struct pam_response *aresp = calloc(num_msg, sizeof(struct pam_response));
+
+    if (num_msg <= 0 || !msg || !resp)
+        return PAM_CONV_ERR;
+    for (int x = 0; x < num_msg; x++) {
+        if (!msg[x])
+            return PAM_CONV_ERR;
+        switch (msg[x]->msg_style) {
+            case PAM_TEXT_INFO:
+            case PAM_ERROR_MSG:
+                break;
+            default:
+                return PAM_CONV_ERR;
+        }
+    }
+
+    struct pam_response *aresp = calloc((size_t)num_msg, sizeof(struct pam_response));
     if (!aresp)
         return PAM_BUF_ERR;
     *resp = aresp;
