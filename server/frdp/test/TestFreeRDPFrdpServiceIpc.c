@@ -27,6 +27,7 @@
 #endif
 
 #define FRDP_IPC_SLOW_SEND_DELAY_US 1000U
+#define FRDP_IPC_CONCURRENT_CLIENTS 8U
 
 typedef struct
 {
@@ -34,6 +35,8 @@ typedef struct
 	char dir[1024];
 	char socket_path[sizeof(((struct sockaddr_un*)0)->sun_path)];
 } frdpTestHelper;
+
+typedef int (*frdpTestRequestFn)(const char* socket_path);
 
 static int make_runtime_dir(char* dir, size_t dir_size, const char* name)
 {
@@ -172,6 +175,51 @@ cleanup:
 	}
 	unlink(helper->socket_path);
 	rmdir(helper->dir);
+	return rc;
+}
+
+static int run_concurrent_requests(const char* socket_path, frdpTestRequestFn request_fn,
+                                   uint32_t client_count)
+{
+	pid_t pids[FRDP_IPC_CONCURRENT_CLIENTS] = { 0 };
+	int rc = -1;
+
+	if (!socket_path || !request_fn || (client_count == 0) ||
+	    (client_count > FRDP_IPC_CONCURRENT_CLIENTS))
+		return -1;
+
+	for (uint32_t x = 0; x < client_count; x++)
+	{
+		pids[x] = fork();
+		if (pids[x] < 0)
+			goto cleanup;
+		if (pids[x] == 0)
+			_exit(request_fn(socket_path) == 0 ? 0 : 1);
+	}
+
+	for (uint32_t x = 0; x < client_count; x++)
+	{
+		int status = 0;
+
+		if (pids[x] <= 0)
+			continue;
+		if (waitpid(pids[x], &status, 0) != pids[x])
+			goto cleanup;
+		pids[x] = 0;
+		if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0))
+			goto cleanup;
+	}
+	rc = 0;
+
+cleanup:
+	for (uint32_t x = 0; x < client_count; x++)
+	{
+		if (pids[x] > 0)
+		{
+			kill(pids[x], SIGKILL);
+			(void)waitpid(pids[x], NULL, 0);
+		}
+	}
 	return rc;
 }
 
@@ -483,6 +531,9 @@ static int test_authd_component(void)
 	if (test_authd_survives_truncated_clients(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_authd_handles_slow_complete_client(helper.socket_path) != 0)
+		goto cleanup;
+	if (run_concurrent_requests(helper.socket_path, test_authd_rejects_bad_length,
+	                            FRDP_IPC_CONCURRENT_CLIENTS) != 0)
 		goto cleanup;
 	/* A final request proves that malformed clients did not stop the service loop. */
 	if (test_authd_rejects_bad_length(helper.socket_path) != 0)
@@ -973,6 +1024,9 @@ static int test_sesmand_component(void)
 	if (test_sesmand_survives_truncated_clients(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_handles_slow_complete_client(helper.socket_path) != 0)
+		goto cleanup;
+	if (run_concurrent_requests(helper.socket_path, test_sesmand_list_empty,
+	                            FRDP_IPC_CONCURRENT_CLIENTS) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_reload_payload(helper.socket_path) != 0)
 		goto cleanup;
