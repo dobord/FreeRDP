@@ -18,7 +18,7 @@ making the current canonical helper topology repeatably green.
 | Area | Readiness | Current evidence | Production blocker |
 |---|---:|---|---|
 | Build integration | 65% | `WITH_FRDPD` builds the listener, helpers, agent, control CLI and focused tests | The branch is far behind and diverged from `master`; package builds and a supported dependency matrix are not green |
-| Password-backed NLA and PAM | 60% | Integrated FreeRDP server callbacks, CredSSP identity extraction, PAM auth/account handling, focused user/domain normalization and non-interactive PAM conversation tests, locked temporary secret buffers, auth broker IPC required for normal startup, in-process fallback hidden behind a development build option | Windows client and domain interoperability need repeatable evidence; development fallback builds can still process credentials in the peer worker |
+| Password-backed NLA and PAM | 60% | Integrated FreeRDP server callbacks, CredSSP identity extraction, PAM auth/account handling, focused user/domain normalization, non-interactive PAM conversation tests, deterministic PAM auth/account/session lifecycle harness coverage, locked temporary secret buffers, auth broker IPC required for normal startup, in-process fallback hidden behind a development build option | Windows client and domain interoperability need repeatable evidence; development fallback builds can still process credentials in the peer worker |
 | Privilege-separated topology | 70% | `frdp-authd`, `frdp-sesmand`, per-user agent, Unix sockets, peer credential checks, process hardening, correlation IDs, normal startup requiring both helper sockets, signed single-use session-open auth tokens bound to POSIX uid/gid/bounded supplementary groups/account state, fixed-window per-peer helper IPC rate limits, live helper-topology startup smoke coverage, live-helper socket collision protection, explicit auth broker, session open/close, session list/reload response, and agent metadata IPC payload encoding, and no default in-process PAM fallback | Legacy V1/V2 session-open message IDs remain compatibility residue but are rejected before body decode, frame pixel bytes remain a raw tail after explicit agent frame metadata, and the token does not yet carry a richer account-policy profile |
 | Session lifecycle | 50% | PAM session ownership, uid/gid drop, Xvfb agent startup, FRDP-owned atomic display reservation files, close requests, in-memory state, cleanup-decision and reconnect-selection coverage, and cleanup exist | No runtime reconnect attach/reuse, durable registry, logind/cgroup ownership, restart reconciliation or resource quotas |
 | Desktop data path | 36% | Input injection, raw/XDamage tile capture, bounded output scheduling, basic resize, agent-side resize IPC smoke coverage, root-run forced framebuffer tile capture smoke coverage, and opportunistic NSCodec exist | No production RFX/RDPGFX policy, limited text/IME behavior, no systematic performance or real-client resolution interoperability evidence |
@@ -134,9 +134,10 @@ They should cover:
 
 - configuration parsing, duplicate keys, length boundaries and fail-closed
   unsupported policy;
-- user/domain normalization, PAM status mapping and PAM conversation behavior
-  now have focused CTest coverage through a testable PAM adapter boundary;
-  deterministic provider-module coverage remains open;
+- user/domain normalization, PAM status mapping, PAM conversation behavior, and
+  deterministic PAM auth/account/session lifecycle branches now have focused
+  CTest coverage through a testable PAM adapter boundary; real provider-module
+  coverage remains open;
 - channel policy exact matching and malformed `CHANNEL_DEF` input;
 - IPC encode/decode, versioning, length arithmetic, partial reads/writes,
   endianness and zeroization;

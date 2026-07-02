@@ -4,6 +4,33 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct
+{
+	int authenticate_status;
+	int account_status;
+	int setcred_establish_status;
+	int setcred_delete_status;
+	int open_session_status;
+	int end_status;
+	int start_calls;
+	int set_item_calls;
+	int authenticate_calls;
+	int account_calls;
+	int setcred_establish_calls;
+	int setcred_delete_calls;
+	int open_session_calls;
+	int end_calls;
+	char service[64];
+	char user[128];
+	char rhost[128];
+	char tty[32];
+	char ruser[128];
+	char authtok[128];
+	int authtok_clears;
+} fakePamState;
+
+static fakePamState g_fake_pam;
+
 static void free_pam_responses(struct pam_response* responses, int count)
 {
 	if (!responses)
@@ -15,6 +42,126 @@ static void free_pam_responses(struct pam_response* responses, int count)
 	}
 	free(responses);
 }
+
+static void fake_pam_reset(void)
+{
+	memset(&g_fake_pam, 0, sizeof(g_fake_pam));
+	g_fake_pam.authenticate_status = PAM_SUCCESS;
+	g_fake_pam.account_status = PAM_SUCCESS;
+	g_fake_pam.setcred_establish_status = PAM_SUCCESS;
+	g_fake_pam.setcred_delete_status = PAM_SUCCESS;
+	g_fake_pam.open_session_status = PAM_SUCCESS;
+	g_fake_pam.end_status = PAM_SUCCESS;
+}
+
+static void fake_copy(char* dst, size_t dst_size, const char* src)
+{
+	if (!dst || (dst_size == 0))
+		return;
+	(void)snprintf(dst, dst_size, "%s", src ? src : "");
+}
+
+static int fake_pam_start(const char* service, const char* user, const struct pam_conv* conv,
+                          pam_handle_t** pamh)
+{
+	(void)conv;
+	if (!pamh)
+		return PAM_SYSTEM_ERR;
+	g_fake_pam.start_calls++;
+	fake_copy(g_fake_pam.service, sizeof(g_fake_pam.service), service);
+	fake_copy(g_fake_pam.user, sizeof(g_fake_pam.user), user);
+	*pamh = (pam_handle_t*)&g_fake_pam;
+	return PAM_SUCCESS;
+}
+
+static int fake_pam_set_item(pam_handle_t* pamh, int item_type, const void* item)
+{
+	if (pamh != (pam_handle_t*)&g_fake_pam)
+		return PAM_SYSTEM_ERR;
+
+	g_fake_pam.set_item_calls++;
+	switch (item_type)
+	{
+		case PAM_RHOST:
+			fake_copy(g_fake_pam.rhost, sizeof(g_fake_pam.rhost), (const char*)item);
+			break;
+		case PAM_TTY:
+			fake_copy(g_fake_pam.tty, sizeof(g_fake_pam.tty), (const char*)item);
+			break;
+		case PAM_RUSER:
+			fake_copy(g_fake_pam.ruser, sizeof(g_fake_pam.ruser), (const char*)item);
+			break;
+		case PAM_AUTHTOK:
+			fake_copy(g_fake_pam.authtok, sizeof(g_fake_pam.authtok), (const char*)item);
+			if (!item || (((const char*)item)[0] == '\0'))
+				g_fake_pam.authtok_clears++;
+			break;
+		default:
+			break;
+	}
+	return PAM_SUCCESS;
+}
+
+static int fake_pam_authenticate(pam_handle_t* pamh, int flags)
+{
+	(void)flags;
+	if (pamh != (pam_handle_t*)&g_fake_pam)
+		return PAM_SYSTEM_ERR;
+	g_fake_pam.authenticate_calls++;
+	return g_fake_pam.authenticate_status;
+}
+
+static int fake_pam_acct_mgmt(pam_handle_t* pamh, int flags)
+{
+	(void)flags;
+	if (pamh != (pam_handle_t*)&g_fake_pam)
+		return PAM_SYSTEM_ERR;
+	g_fake_pam.account_calls++;
+	return g_fake_pam.account_status;
+}
+
+static int fake_pam_setcred(pam_handle_t* pamh, int flags)
+{
+	if (pamh != (pam_handle_t*)&g_fake_pam)
+		return PAM_SYSTEM_ERR;
+	if (flags == PAM_ESTABLISH_CRED)
+	{
+		g_fake_pam.setcred_establish_calls++;
+		return g_fake_pam.setcred_establish_status;
+	}
+	if (flags == PAM_DELETE_CRED)
+	{
+		g_fake_pam.setcred_delete_calls++;
+		return g_fake_pam.setcred_delete_status;
+	}
+	return PAM_SYSTEM_ERR;
+}
+
+static int fake_pam_open_session(pam_handle_t* pamh, int flags)
+{
+	(void)flags;
+	if (pamh != (pam_handle_t*)&g_fake_pam)
+		return PAM_SYSTEM_ERR;
+	g_fake_pam.open_session_calls++;
+	return g_fake_pam.open_session_status;
+}
+
+static int fake_pam_end(pam_handle_t* pamh, int pam_status)
+{
+	(void)pam_status;
+	if (pamh != (pam_handle_t*)&g_fake_pam)
+		return PAM_SYSTEM_ERR;
+	g_fake_pam.end_calls++;
+	return g_fake_pam.end_status;
+}
+
+static const frdpdPamOps g_fake_ops = { .start = fake_pam_start,
+	                                    .set_item = fake_pam_set_item,
+	                                    .authenticate = fake_pam_authenticate,
+	                                    .acct_mgmt = fake_pam_acct_mgmt,
+	                                    .setcred = fake_pam_setcred,
+	                                    .open_session = fake_pam_open_session,
+	                                    .end = fake_pam_end };
 
 static int expect_user(const char* user, const char* domain, frdpdDomainMode mode,
                        const char* expected)
@@ -135,20 +282,141 @@ static int test_pam_status_mapping(void)
 		return -1;
 	if (frdpd_pam_authenticate_status_from_pam(PAM_PERM_DENIED) != FRDPD_PAM_AUTH_DENIED)
 		return -1;
-	if (frdpd_pam_authenticate_status_from_pam(PAM_CRED_INSUFFICIENT) !=
-	    FRDPD_PAM_AUTH_DENIED)
+	if (frdpd_pam_authenticate_status_from_pam(PAM_CRED_INSUFFICIENT) != FRDPD_PAM_AUTH_DENIED)
 		return -1;
 	if (frdpd_pam_authenticate_status_from_pam(PAM_SYSTEM_ERR) != FRDPD_PAM_AUTH_ERROR)
 		return -1;
 	if (frdpd_pam_account_status_from_pam(PAM_SUCCESS) != FRDPD_PAM_AUTH_OK)
 		return -1;
-	if (frdpd_pam_account_status_from_pam(PAM_ACCT_EXPIRED) !=
-	    FRDPD_PAM_AUTH_ACCOUNT_DENIED)
+	if (frdpd_pam_account_status_from_pam(PAM_ACCT_EXPIRED) != FRDPD_PAM_AUTH_ACCOUNT_DENIED)
 		return -1;
-	if (frdpd_pam_account_status_from_pam(PAM_PERM_DENIED) !=
-	    FRDPD_PAM_AUTH_ACCOUNT_DENIED)
+	if (frdpd_pam_account_status_from_pam(PAM_PERM_DENIED) != FRDPD_PAM_AUTH_ACCOUNT_DENIED)
 		return -1;
 	return 0;
+}
+
+static frdpdPamAuthRequest fake_pam_request(BOOL open_session)
+{
+	frdpdPamAuthRequest request = { .service = "frdpd-test",
+		                            .user = "alice",
+		                            .domain = "EXAMPLE",
+		                            .password = "secret",
+		                            .rhost = "client.example.test",
+		                            .domain_mode = FRDPD_DOMAIN_DOWNLEVEL,
+		                            .open_session = open_session };
+	return request;
+}
+
+static int test_pam_fake_success_without_session(void)
+{
+	fake_pam_reset();
+	frdpdPamAuthRequest request = fake_pam_request(FALSE);
+
+	const frdpdPamAuthStatus status = frdpd_pam_authenticate_with_ops(&request, &g_fake_ops);
+	if (status != FRDPD_PAM_AUTH_OK)
+		goto fail;
+	if (!request.normalized_user || (strcmp(request.normalized_user, "EXAMPLE\\alice") != 0))
+		goto fail;
+	if (request.pam_status != PAM_SUCCESS)
+		goto fail;
+	if (request.pam_handle || request.pam_credentials_established || request.pam_session_open)
+		goto fail;
+	if ((g_fake_pam.start_calls != 1) || (g_fake_pam.authenticate_calls != 1) ||
+	    (g_fake_pam.account_calls != 1) || (g_fake_pam.setcred_establish_calls != 1) ||
+	    (g_fake_pam.setcred_delete_calls != 1) || (g_fake_pam.open_session_calls != 0) ||
+	    (g_fake_pam.end_calls != 1))
+		goto fail;
+	if ((strcmp(g_fake_pam.service, "frdpd-test") != 0) ||
+	    (strcmp(g_fake_pam.user, "EXAMPLE\\alice") != 0) ||
+	    (strcmp(g_fake_pam.rhost, "client.example.test") != 0) ||
+	    (strcmp(g_fake_pam.tty, "rdp") != 0) || (strcmp(g_fake_pam.ruser, "EXAMPLE\\alice") != 0) ||
+	    (g_fake_pam.authtok_clears != 1))
+		goto fail;
+
+	free(request.normalized_user);
+	return 0;
+
+fail:
+	free(request.normalized_user);
+	return -1;
+}
+
+static int test_pam_fake_account_denial(void)
+{
+	fake_pam_reset();
+	g_fake_pam.account_status = PAM_ACCT_EXPIRED;
+	frdpdPamAuthRequest request = fake_pam_request(FALSE);
+
+	const frdpdPamAuthStatus status = frdpd_pam_authenticate_with_ops(&request, &g_fake_ops);
+	if (status != FRDPD_PAM_AUTH_ACCOUNT_DENIED)
+		goto fail;
+	if (request.normalized_user || request.pam_handle || request.pam_credentials_established ||
+	    request.pam_session_open)
+		goto fail;
+	if (request.pam_status != PAM_ACCT_EXPIRED)
+		goto fail;
+	if ((g_fake_pam.authenticate_calls != 1) || (g_fake_pam.account_calls != 1) ||
+	    (g_fake_pam.setcred_establish_calls != 0) || (g_fake_pam.setcred_delete_calls != 0) ||
+	    (g_fake_pam.open_session_calls != 0) || (g_fake_pam.end_calls != 1) ||
+	    (g_fake_pam.authtok_clears != 1))
+		goto fail;
+	return 0;
+
+fail:
+	free(request.normalized_user);
+	return -1;
+}
+
+static int test_pam_fake_session_failure_cleans_credentials(void)
+{
+	fake_pam_reset();
+	g_fake_pam.open_session_status = PAM_SESSION_ERR;
+	frdpdPamAuthRequest request = fake_pam_request(TRUE);
+
+	const frdpdPamAuthStatus status = frdpd_pam_authenticate_with_ops(&request, &g_fake_ops);
+	if (status != FRDPD_PAM_AUTH_ERROR)
+		goto fail;
+	if (request.normalized_user || request.pam_handle || request.pam_credentials_established ||
+	    request.pam_session_open)
+		goto fail;
+	if (request.pam_status != PAM_SESSION_ERR)
+		goto fail;
+	if ((g_fake_pam.setcred_establish_calls != 1) || (g_fake_pam.open_session_calls != 1) ||
+	    (g_fake_pam.setcred_delete_calls != 1) || (g_fake_pam.end_calls != 1) ||
+	    (g_fake_pam.authtok_clears != 1))
+		goto fail;
+	return 0;
+
+fail:
+	free(request.normalized_user);
+	return -1;
+}
+
+static int test_pam_fake_session_success_retains_handle(void)
+{
+	fake_pam_reset();
+	frdpdPamAuthRequest request = fake_pam_request(TRUE);
+
+	const frdpdPamAuthStatus status = frdpd_pam_authenticate_with_ops(&request, &g_fake_ops);
+	if (status != FRDPD_PAM_AUTH_OK)
+		goto fail;
+	if (!request.normalized_user || (strcmp(request.normalized_user, "EXAMPLE\\alice") != 0))
+		goto fail;
+	if (request.pam_handle != (void*)&g_fake_pam)
+		goto fail;
+	if (!request.pam_credentials_established || !request.pam_session_open)
+		goto fail;
+	if ((g_fake_pam.setcred_establish_calls != 1) || (g_fake_pam.open_session_calls != 1) ||
+	    (g_fake_pam.setcred_delete_calls != 0) || (g_fake_pam.end_calls != 0) ||
+	    (g_fake_pam.authtok_clears != 1))
+		goto fail;
+
+	free(request.normalized_user);
+	return 0;
+
+fail:
+	free(request.normalized_user);
+	return -1;
 }
 
 int TestFreeRDPFrdpPam(int argc, char* argv[])
@@ -179,6 +447,26 @@ int TestFreeRDPFrdpPam(int argc, char* argv[])
 	if (test_pam_status_mapping() != 0)
 	{
 		printf("PAM status mapping test failed\n");
+		return -1;
+	}
+	if (test_pam_fake_success_without_session() != 0)
+	{
+		printf("PAM fake success lifecycle test failed\n");
+		return -1;
+	}
+	if (test_pam_fake_account_denial() != 0)
+	{
+		printf("PAM fake account denial test failed\n");
+		return -1;
+	}
+	if (test_pam_fake_session_failure_cleans_credentials() != 0)
+	{
+		printf("PAM fake session failure cleanup test failed\n");
+		return -1;
+	}
+	if (test_pam_fake_session_success_retains_handle() != 0)
+	{
+		printf("PAM fake session success test failed\n");
 		return -1;
 	}
 	return 0;

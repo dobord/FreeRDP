@@ -51,6 +51,7 @@ if(HAVE_PAM_PAM_APPL_H)
 endif()
 frdp_apply_strict_warnings(${MODULE_NAME})
 target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+                                                   FRDPD_PAM_TESTING
                                                    FRDPD_BINARY="$<TARGET_FILE:frdpd>"
                                                    FRDPCTL_BINARY="$<TARGET_FILE:frdpctl>"
                                                    FRDP_AUTHD_BINARY="$<TARGET_FILE:frdp-authd>"

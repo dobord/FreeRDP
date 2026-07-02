@@ -23,6 +23,20 @@ typedef struct
 	const char* password;
 } frdpdPamConvData;
 
+#ifndef FRDPD_PAM_TESTING
+typedef struct
+{
+	int (*start)(const char* service, const char* user, const struct pam_conv* conv,
+	             pam_handle_t** pamh);
+	int (*set_item)(pam_handle_t* pamh, int item_type, const void* item);
+	int (*authenticate)(pam_handle_t* pamh, int flags);
+	int (*acct_mgmt)(pam_handle_t* pamh, int flags);
+	int (*setcred)(pam_handle_t* pamh, int flags);
+	int (*open_session)(pam_handle_t* pamh, int flags);
+	int (*end)(pam_handle_t* pamh, int pam_status);
+} frdpdPamOps;
+#endif
+
 static char* frdpd_pam_strdup_len(const char* data, size_t length)
 {
 	char* out = NULL;
@@ -65,8 +79,8 @@ int frdpd_pam_answer_conversation(int num_msg, const struct pam_message** msg,
 		switch (msg[x]->msg_style)
 		{
 			case PAM_PROMPT_ECHO_OFF:
-				reply[x].resp = frdpd_pam_strdup_len(password ? password : "",
-				                                     password ? strlen(password) : 0);
+				reply[x].resp =
+				    frdpd_pam_strdup_len(password ? password : "", password ? strlen(password) : 0);
 				if (!reply[x].resp)
 					goto fail;
 				break;
@@ -156,7 +170,58 @@ BOOL frdpd_pam_build_user(const char* user, const char* domain, frdpdDomainMode 
 	return rc >= 0;
 }
 
-frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
+static int frdpd_pam_default_start(const char* service, const char* user,
+                                   const struct pam_conv* conv, pam_handle_t** pamh)
+{
+	return pam_start(service, user, conv, pamh);
+}
+
+static int frdpd_pam_default_set_item(pam_handle_t* pamh, int item_type, const void* item)
+{
+	return pam_set_item(pamh, item_type, item);
+}
+
+static int frdpd_pam_default_authenticate(pam_handle_t* pamh, int flags)
+{
+	return pam_authenticate(pamh, flags);
+}
+
+static int frdpd_pam_default_acct_mgmt(pam_handle_t* pamh, int flags)
+{
+	return pam_acct_mgmt(pamh, flags);
+}
+
+static int frdpd_pam_default_setcred(pam_handle_t* pamh, int flags)
+{
+	return pam_setcred(pamh, flags);
+}
+
+static int frdpd_pam_default_open_session(pam_handle_t* pamh, int flags)
+{
+	return pam_open_session(pamh, flags);
+}
+
+static int frdpd_pam_default_end(pam_handle_t* pamh, int pam_status)
+{
+	return pam_end(pamh, pam_status);
+}
+
+static const frdpdPamOps g_frdpd_pam_default_ops = { .start = frdpd_pam_default_start,
+	                                                 .set_item = frdpd_pam_default_set_item,
+	                                                 .authenticate = frdpd_pam_default_authenticate,
+	                                                 .acct_mgmt = frdpd_pam_default_acct_mgmt,
+	                                                 .setcred = frdpd_pam_default_setcred,
+	                                                 .open_session = frdpd_pam_default_open_session,
+	                                                 .end = frdpd_pam_default_end };
+
+static BOOL frdpd_pam_ops_valid(const frdpdPamOps* ops)
+{
+	return ops && ops->start && ops->set_item && ops->authenticate && ops->acct_mgmt &&
+	       ops->setcred && ops->open_session && ops->end;
+}
+
+static frdpdPamAuthStatus frdpd_pam_authenticate_internal(frdpdPamAuthRequest* request,
+                                                          const frdpdPamOps* ops)
 {
 	pam_handle_t* pamh = NULL;
 	char* normalized_user = NULL;
@@ -171,7 +236,7 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 		request->normalized_user = NULL;
 	}
 
-	if (!request || frdpd_string_is_empty(request->service) ||
+	if (!request || !frdpd_pam_ops_valid(ops) || frdpd_string_is_empty(request->service) ||
 	    frdpd_string_is_empty(request->user) || !request->password)
 		return FRDPD_PAM_AUTH_ERROR;
 
@@ -182,31 +247,31 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 	frdpdPamConvData conv_data = { request->password };
 	const struct pam_conv conv = { .conv = frdpd_pam_conv, .appdata_ptr = &conv_data };
 
-	int pam_status = pam_start(request->service, normalized_user, &conv, &pamh);
+	int pam_status = ops->start(request->service, normalized_user, &conv, &pamh);
 	if (pam_status == PAM_SUCCESS)
 	{
 		if (!frdpd_string_is_empty(request->rhost))
-			pam_status = pam_set_item(pamh, PAM_RHOST, request->rhost);
+			pam_status = ops->set_item(pamh, PAM_RHOST, request->rhost);
 	}
 	if (pam_status == PAM_SUCCESS)
-		pam_status = pam_set_item(pamh, PAM_TTY, "rdp");
+		pam_status = ops->set_item(pamh, PAM_TTY, "rdp");
 	if (pam_status == PAM_SUCCESS)
-		pam_status = pam_set_item(pamh, PAM_RUSER, normalized_user);
+		pam_status = ops->set_item(pamh, PAM_RUSER, normalized_user);
 
 	if (pam_status == PAM_SUCCESS)
-		pam_status = pam_set_item(pamh, PAM_AUTHTOK, request->password);
+		pam_status = ops->set_item(pamh, PAM_AUTHTOK, request->password);
 
 	if (pam_status == PAM_SUCCESS)
-		pam_status = pam_authenticate(pamh, 0);
+		pam_status = ops->authenticate(pamh, 0);
 
 	frdpdPamAuthStatus status = frdpd_pam_authenticate_status_from_pam(pam_status);
 	if (status == FRDPD_PAM_AUTH_OK)
 	{
-		pam_status = pam_acct_mgmt(pamh, 0);
+		pam_status = ops->acct_mgmt(pamh, 0);
 		status = frdpd_pam_account_status_from_pam(pam_status);
 		if (status == FRDPD_PAM_AUTH_OK)
 		{
-			pam_status = pam_setcred(pamh, PAM_ESTABLISH_CRED);
+			pam_status = ops->setcred(pamh, PAM_ESTABLISH_CRED);
 			if (pam_status == PAM_SUCCESS)
 			{
 				credentials_established = TRUE;
@@ -219,10 +284,10 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 
 	if ((status == FRDPD_PAM_AUTH_OK) && request->open_session)
 	{
-		pam_status = pam_open_session(pamh, 0);
+		pam_status = ops->open_session(pamh, 0);
 		if (pam_status == PAM_SUCCESS)
 		{
-			(void)pam_set_item(pamh, PAM_AUTHTOK, "");
+			(void)ops->set_item(pamh, PAM_AUTHTOK, "");
 			request->pam_handle = pamh;
 			request->pam_credentials_established = credentials_established;
 			request->pam_session_open = TRUE;
@@ -235,17 +300,17 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 
 	if (pamh)
 	{
-		(void)pam_set_item(pamh, PAM_AUTHTOK, "");
+		(void)ops->set_item(pamh, PAM_AUTHTOK, "");
 		if (credentials_established)
 		{
-			const int cred_status = pam_setcred(pamh, PAM_DELETE_CRED);
+			const int cred_status = ops->setcred(pamh, PAM_DELETE_CRED);
 			if ((status == FRDPD_PAM_AUTH_OK) && (cred_status != PAM_SUCCESS))
 			{
 				pam_status = cred_status;
 				status = FRDPD_PAM_AUTH_ERROR;
 			}
 		}
-		const int end_status = pam_end(pamh, pam_status);
+		const int end_status = ops->end(pamh, pam_status);
 		if ((pam_status == PAM_SUCCESS) && (end_status != PAM_SUCCESS))
 		{
 			pam_status = end_status;
@@ -262,6 +327,19 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 	free(normalized_user);
 	return status;
 }
+
+frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
+{
+	return frdpd_pam_authenticate_internal(request, &g_frdpd_pam_default_ops);
+}
+
+#ifdef FRDPD_PAM_TESTING
+frdpdPamAuthStatus frdpd_pam_authenticate_with_ops(frdpdPamAuthRequest* request,
+                                                   const frdpdPamOps* ops)
+{
+	return frdpd_pam_authenticate_internal(request, ops);
+}
+#endif
 
 int frdpd_pam_close_session(void* pam_handle, const char* pam_user,
                             BOOL pam_credentials_established, BOOL pam_session_open)
