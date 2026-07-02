@@ -51,6 +51,8 @@ typedef struct {
     pam_handle_t *pamh;
     int credentials_established;
     int display_number;
+    int display_reservation_fd;
+    char display_reservation[sizeof(((struct sockaddr_un *)0)->sun_path)];
     char agent_socket[sizeof(((struct sockaddr_un *)0)->sun_path)];
 } session;
 
@@ -167,6 +169,17 @@ static int build_agent_socket_path(char *dst, size_t dst_size, const char *sessi
         return 0;
 
     rc = snprintf(dst, dst_size, "%s/agent-%s.sock", g_agent_socket_dir, session_id);
+    return (rc >= 0 && (size_t)rc < dst_size) ? 0 : -1;
+}
+
+static int build_display_reservation_path(char *dst, size_t dst_size, int display)
+{
+    int rc = 0;
+    const char *dir = (g_agent_socket_dir[0] != '\0') ? g_agent_socket_dir : "/tmp";
+
+    if (!dst || dst_size == 0 || display < FRDP_DISPLAY_MIN || display > FRDP_DISPLAY_MAX)
+        return -1;
+    rc = snprintf(dst, dst_size, "%s/frdp-display-%d.lock", dir, display);
     return (rc >= 0 && (size_t)rc < dst_size) ? 0 : -1;
 }
 
@@ -384,10 +397,15 @@ static int display_number_in_use(int display)
     return path_exists_or_unknown(lock_path) || path_exists_or_unknown(socket_path);
 }
 
-static int allocate_display_number(int *display)
+static int allocate_display_number(int *display, int *reservation_fd, char *reservation_path,
+                                   size_t reservation_path_size)
 {
-    if (!display)
+    char candidate_reservation[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
+
+    if (!display || !reservation_fd || !reservation_path || reservation_path_size == 0)
         return -1;
+    *reservation_fd = -1;
+    reservation_path[0] = '\0';
 
     for (int attempts = 0; attempts <= (FRDP_DISPLAY_MAX - FRDP_DISPLAY_MIN); attempts++) {
         const int candidate = next_display;
@@ -395,12 +413,62 @@ static int allocate_display_number(int *display)
         next_display++;
         if (next_display > FRDP_DISPLAY_MAX)
             next_display = FRDP_DISPLAY_MIN;
-        if (!display_number_in_use(candidate)) {
-            *display = candidate;
-            return 0;
+        if (display_number_in_use(candidate))
+            continue;
+        if (build_display_reservation_path(candidate_reservation, sizeof(candidate_reservation),
+                                           candidate) != 0)
+            return -1;
+        int open_flags = O_WRONLY | O_CREAT | O_EXCL;
+#ifdef O_CLOEXEC
+        open_flags |= O_CLOEXEC;
+#endif
+        const int fd = open(candidate_reservation, open_flags, 0600);
+        if (fd < 0) {
+            if (errno == EEXIST)
+                continue;
+            return -1;
         }
+        if (set_fd_cloexec(fd, 1) != 0) {
+            const int saved_errno = errno;
+
+            close(fd);
+            unlink(candidate_reservation);
+            errno = saved_errno;
+            return -1;
+        }
+        if (dprintf(fd, "%ld\n", (long)getpid()) < 0) {
+            close(fd);
+            unlink(candidate_reservation);
+            return -1;
+        }
+        if (snprintf(reservation_path, reservation_path_size, "%s", candidate_reservation) >=
+            (int)reservation_path_size) {
+            unlink(candidate_reservation);
+            close(fd);
+            return -1;
+        }
+        *display = candidate;
+        *reservation_fd = fd;
+        return 0;
     }
     return -1;
+}
+
+static void release_display_reservation(int *reservation_fd, const char *reservation_path)
+{
+    if (!reservation_fd || *reservation_fd < 0)
+        return;
+    if (reservation_path && reservation_path[0] != '\0') {
+        struct stat fd_stat;
+        struct stat path_stat;
+
+        if ((fstat(*reservation_fd, &fd_stat) == 0) &&
+            (lstat(reservation_path, &path_stat) == 0) &&
+            (fd_stat.st_dev == path_stat.st_dev) && (fd_stat.st_ino == path_stat.st_ino))
+            unlink(reservation_path);
+    }
+    close(*reservation_fd);
+    *reservation_fd = -1;
 }
 
 static int copy_groups_to_native(const uint64_t *groups, uint32_t group_count,
@@ -432,10 +500,12 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     uuid_t new_id;
     char new_session_id[64] = {0};
     char agent_socket_path[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
+    char display_reservation_path[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
     char agent_fd_str[16] = {0};
     char ready_fd_str[16] = {0};
     int exec_pipe[2] = {-1, -1};
     int agent_fd = -1;
+    int display_reservation_fd = -1;
     gid_t native_groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
 
     if (session_count >= MAX_SESSIONS)
@@ -479,7 +549,8 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 
     /* Allocate display number and build display string */
     int display = 0;
-    if (allocate_display_number(&display) != 0) {
+    if (allocate_display_number(&display, &display_reservation_fd, display_reservation_path,
+                                sizeof(display_reservation_path)) != 0) {
         pam_close_session(pamh, 0);
         pam_setcred(pamh, PAM_DELETE_CRED);
         pam_end(pamh, PAM_SUCCESS);
@@ -490,6 +561,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     uuid_generate(new_id);
     uuid_unparse_lower(new_id, new_session_id);
     if (build_agent_socket_path(agent_socket_path, sizeof(agent_socket_path), new_session_id) != 0) {
+        release_display_reservation(&display_reservation_fd, display_reservation_path);
         pam_close_session(pamh, 0);
         pam_setcred(pamh, PAM_DELETE_CRED);
         pam_end(pamh, PAM_SUCCESS);
@@ -498,6 +570,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     if (agent_socket_path[0] != '\0') {
         agent_fd = create_agent_socket(agent_socket_path);
         if (agent_fd < 0) {
+            release_display_reservation(&display_reservation_fd, display_reservation_path);
             pam_close_session(pamh, 0);
             pam_setcred(pamh, PAM_DELETE_CRED);
             pam_end(pamh, PAM_SUCCESS);
@@ -510,6 +583,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 
     if (create_cloexec_pipe(exec_pipe) != 0) {
         destroy_agent_socket(&agent_fd, agent_socket_path);
+        release_display_reservation(&display_reservation_fd, display_reservation_path);
         pam_close_session(pamh, 0);
         pam_setcred(pamh, PAM_DELETE_CRED);
         pam_end(pamh, PAM_SUCCESS);
@@ -520,6 +594,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
         close(exec_pipe[0]);
         close(exec_pipe[1]);
         destroy_agent_socket(&agent_fd, agent_socket_path);
+        release_display_reservation(&display_reservation_fd, display_reservation_path);
         pam_close_session(pamh, 0);
         pam_setcred(pamh, PAM_DELETE_CRED);
         pam_end(pamh, PAM_SUCCESS);
@@ -570,6 +645,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     if (wait_for_agent_ready(exec_pipe[0], pid, pid) != 0) {
         close(exec_pipe[0]);
         destroy_agent_socket(&agent_fd, agent_socket_path);
+        release_display_reservation(&display_reservation_fd, display_reservation_path);
         pam_close_session(pamh, 0);
         pam_setcred(pamh, PAM_DELETE_CRED);
         pam_end(pamh, PAM_SUCCESS);
@@ -588,6 +664,10 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     s->pamh = pamh;
     s->credentials_established = credentials_established;
     s->display_number = display;
+    s->display_reservation_fd = display_reservation_fd;
+    display_reservation_fd = -1;
+    snprintf(s->display_reservation, sizeof(s->display_reservation), "%s",
+             display_reservation_path);
     snprintf(s->agent_socket, sizeof(s->agent_socket), "%s", agent_socket_path);
     snprintf(session_id, session_id_size, "%s", new_session_id);
     snprintf(display_out, display_out_size, "%s", display_str);
@@ -636,6 +716,7 @@ static void cleanup_session(int idx)
     }
     if (s->agent_socket[0] != '\0')
         unlink(s->agent_socket);
+    release_display_reservation(&s->display_reservation_fd, s->display_reservation);
     if (idx < session_count - 1) {
         sessions[idx] = sessions[session_count - 1];
     }
