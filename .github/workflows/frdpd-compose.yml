@@ -111,16 +111,19 @@ jobs:
             -DCHANNEL_URBDRC=OFF
 
       - name: Build focused FRDP fuzzers
-        run: cmake --build build-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig TestFuzzFreeRDPFrdpAuthToken
+        run: cmake --build build-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig TestFuzzFreeRDPFrdpAuthToken TestFuzzFreeRDPFrdpFramePolicy
 
       - name: Run focused FRDP fuzzer smoke
         run: |
           printf '[channels]\nstatic_mode = "allowlist"\nstatic_allow = "cliprdr,rdpsnd"\ndynamic_mode = "allowlist"\ndynamic_allow = "rdpgfx"\n[clipboard]\nmode = "text"\ndirection = "client-to-server"\nmax_text_bytes = 4096\n' > frdp-fuzz-seed.toml
           printf 'FRDPalice' > frdp-auth-token-fuzz-seed.bin
+          printf 'FRDPframe-policy' > frdp-frame-policy-fuzz-seed.bin
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpConfig frdp-fuzz-seed.toml -runs=1 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpConfig -runs=32 -max_len=1024 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpAuthToken frdp-auth-token-fuzz-seed.bin -runs=1 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpAuthToken -runs=32 -max_len=512 -artifact_prefix=build-frdp-fuzz/
+          build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpFramePolicy frdp-frame-policy-fuzz-seed.bin -runs=1 -artifact_prefix=build-frdp-fuzz/
+          build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpFramePolicy -runs=32 -max_len=256 -artifact_prefix=build-frdp-fuzz/
 
       - name: Upload fuzzer build logs
         if: always()
@@ -136,6 +139,7 @@ jobs:
             build-frdp-fuzz/timeout-*
             frdp-fuzz-seed.toml
             frdp-auth-token-fuzz-seed.bin
+            frdp-frame-policy-fuzz-seed.bin
           if-no-files-found: ignore
 
   warnings:
