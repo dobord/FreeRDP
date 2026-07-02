@@ -17,6 +17,8 @@
 extern void crypto_base64_decode(const char *enc_data, size_t length, unsigned char **dec_data,
                                  size_t *res_length);
 
+#define FRDP_KRB_DEFAULT_KEYTAB "/etc/frdpd/frdpd.keytab"
+
 static void display_status(const char *msg, OM_uint32 code, int type)
 {
     OM_uint32 maj_stat, min_stat;
@@ -160,6 +162,44 @@ static int run_decode_token_test(const char *token_b64)
     return 0;
 }
 
+static int configure_keytab_env(void)
+{
+    const char *existing = NULL;
+    const char *keytab = NULL;
+
+    existing = getenv("KRB5_KTNAME");
+    if (existing && (existing[0] != '\0'))
+        return 0;
+
+    keytab = getenv("FRDP_KRB_KEYTAB");
+    if (!keytab || (keytab[0] == '\0'))
+        keytab = FRDP_KRB_DEFAULT_KEYTAB;
+
+    if (setenv("KRB5_KTNAME", keytab, 1) != 0)
+    {
+        perror("setenv(KRB5_KTNAME)");
+        return -1;
+    }
+    return 0;
+}
+
+static int run_keytab_env_test(void)
+{
+    const char *keytab = NULL;
+
+    if (configure_keytab_env() != 0)
+        return 1;
+
+    keytab = getenv("KRB5_KTNAME");
+    if (!keytab)
+    {
+        fprintf(stderr, "KRB5_KTNAME is not set\n");
+        return 2;
+    }
+    printf("%s\n", keytab);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     int rc = 0;
@@ -167,7 +207,8 @@ int main(int argc, char **argv)
 
     if (argc < 2) {
         fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
-                        "--decode-token-test <base64-token>] <base64-token>\n",
+                        "--decode-token-test <base64-token> | --keytab-env-test] "
+                        "<base64-token>\n",
                 argv[0]);
         return 1;
     }
@@ -176,7 +217,8 @@ int main(int argc, char **argv)
         if (argc != 3)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
-                            "--decode-token-test <base64-token>] <base64-token>\n",
+                            "--decode-token-test <base64-token> | --keytab-env-test] "
+                            "<base64-token>\n",
                     argv[0]);
             return 1;
         }
@@ -187,26 +229,30 @@ int main(int argc, char **argv)
         if (argc != 3)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
-                            "--decode-token-test <base64-token>] <base64-token>\n",
+                            "--decode-token-test <base64-token> | --keytab-env-test] "
+                            "<base64-token>\n",
                     argv[0]);
             return 1;
         }
         return run_decode_token_test(argv[2]);
     }
+    if (strcmp(argv[1], "--keytab-env-test") == 0)
+    {
+        if (argc != 2)
+        {
+            fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--decode-token-test <base64-token> | --keytab-env-test] "
+                            "<base64-token>\n",
+                    argv[0]);
+            return 1;
+        }
+        return run_keytab_env_test();
+    }
     token_b64 = argv[1];
 
     /* Set keytab via environment. Adjust the path as needed. */
-    if (!getenv("KRB5_KTNAME"))
-    {
-        const char *keytab = getenv("FRDP_KRB_KEYTAB");
-        if (!keytab)
-            keytab = "/etc/frdpd/frdpd.keytab";
-        if (setenv("KRB5_KTNAME", keytab, 1) != 0)
-        {
-            perror("setenv(KRB5_KTNAME)");
-            return 1;
-        }
-    }
+    if (configure_keytab_env() != 0)
+        return 1;
 
     gss_buffer_desc input_token = GSS_C_EMPTY_BUFFER;
     gss_buffer_desc output_token = GSS_C_EMPTY_BUFFER;

@@ -74,6 +74,24 @@ function(expect_decode_rejected token)
   endif()
 endfunction()
 
+function(expect_keytab_env label expected)
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env ${ARGN} "${FRDP_KRB_AUTHD_BINARY}" --keytab-env-test
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE stdout
+    ERROR_VARIABLE stderr)
+
+  if(NOT result EQUAL 0)
+    message(FATAL_ERROR "${label} returned ${result}, expected 0: ${stderr}")
+  endif()
+  if(NOT stdout STREQUAL "${expected}\n")
+    message(FATAL_ERROR "${label} stdout mismatch: ${stdout}")
+  endif()
+  if(NOT stderr STREQUAL "")
+    message(FATAL_ERROR "${label} wrote unexpected stderr: ${stderr}")
+  endif()
+endfunction()
+
 expect_normalized("alice@EXAMPLE.COM" "alice")
 expect_normalized("alice.smith@EXAMPLE.COM" "alice.smith")
 expect_normalized("alice_smith-1@EXAMPLE.COM" "alice_smith-1")
@@ -93,3 +111,13 @@ expect_decoded("YQ==" "1 61")
 expect_decode_rejected("")
 expect_decode_rejected("000")
 expect_decode_rejected("0=00")
+
+expect_keytab_env("default keytab" "/etc/frdpd/frdpd.keytab"
+                  --unset=KRB5_KTNAME --unset=FRDP_KRB_KEYTAB)
+expect_keytab_env("FRDP_KRB_KEYTAB keytab" "FILE:/tmp/frdp-custom.keytab"
+                  --unset=KRB5_KTNAME FRDP_KRB_KEYTAB=FILE:/tmp/frdp-custom.keytab)
+expect_keytab_env("empty keytab env" "/etc/frdpd/frdpd.keytab"
+                  KRB5_KTNAME= FRDP_KRB_KEYTAB=)
+expect_keytab_env("existing KRB5_KTNAME keytab" "FILE:/tmp/existing.keytab"
+                  KRB5_KTNAME=FILE:/tmp/existing.keytab
+                  FRDP_KRB_KEYTAB=FILE:/tmp/frdp-custom.keytab)
