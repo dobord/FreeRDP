@@ -47,6 +47,7 @@
 #include "../config/frdp-config.h"
 #include "../ipc/frdp-ipc.h"
 #include "channel_policy.h"
+#include "frame_policy.h"
 #include "frdpd.h"
 #include "frdpd_auth.h"
 
@@ -572,38 +573,15 @@ static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT3
 	response->correlation_id[sizeof(response->correlation_id) - 1] = '\0';
 	response->session_id[sizeof(response->session_id) - 1] = '\0';
 	response->error[sizeof(response->error) - 1] = '\0';
-	if (!response->success)
-		goto fail;
-	if ((strcmp(response->session_id, context->session_id) != 0) ||
-	    (strcmp(response->correlation_id, context->correlation_id) != 0))
-		goto fail;
-	if (response->flags & ~((uint32_t)FRDP_AGENT_FRAME_RESPONSE_UNCHANGED))
-		goto fail;
-	if ((flags & FRDP_AGENT_FRAME_REQUEST_FORCE) &&
-	    (response->flags & FRDP_AGENT_FRAME_RESPONSE_UNCHANGED))
-		goto fail;
-	if (!(flags & FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY) &&
-	    ((response->x != x) || (response->y != y) || (response->width > width) ||
-	     (response->height > height)))
-		goto fail;
-	if ((response->width == 0) || (response->height == 0) ||
-	    (response->width > FRDPD_FRAME_TILE_SIZE) ||
-	    (response->height > FRDPD_FRAME_TILE_SIZE) || (response->bpp != 32))
+	if (!frdpd_frame_response_metadata_is_valid(response, context->correlation_id,
+	                                            context->session_id, x, y, width, height,
+	                                            flags, FRDPD_FRAME_TILE_SIZE, UINT16_MAX))
 		goto fail;
 	if (response->flags & FRDP_AGENT_FRAME_RESPONSE_UNCHANGED)
 	{
-		if ((response->x != x) || (response->y != y) || (response->width > width) ||
-		    (response->height > height))
-			goto fail;
-		if ((response->stride != 0) || (response->data_length != 0))
-			goto fail;
 		ok = TRUE;
 		goto done;
 	}
-	if ((response->stride != response->width * 4U) ||
-	    (response->data_length != response->stride * response->height) ||
-	    (response->data_length == 0) || (response->data_length > UINT16_MAX))
-		goto fail;
 
 	*data = (BYTE*)malloc(response->data_length);
 	if (!*data)
