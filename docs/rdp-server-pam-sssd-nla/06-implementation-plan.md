@@ -28,6 +28,9 @@ cc -fsyntax-only -Wall -Wextra server/frdp/config/frdp-config.c server/frdp/frdp
 # frdp-sesmand IPC startup smoke: --socket creates a 0600 Unix socket in a 0700 runtime directory.
 DEB_BUILD_OPTIONS='nocheck parallel=1' dpkg-buildpackage -uc -us -b -j1
 # Debian package smoke: frdpd_0.1.0-1_amd64.deb contains FRDP binaries, required FreeRDP/WinPR libraries, /etc/frdpd, PAM, systemd units, and inactive MAC policy examples.
+cmake -S . -B /tmp/opencode/freerdp-frdp-asan-ubsan -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SAMPLE=OFF -DBUILD_TESTING=ON -DWITH_SANITIZE_ADDRESS=ON -DWITH_SANITIZE_UNDEFINED=ON
+cmake --build /tmp/opencode/freerdp-frdp-asan-ubsan --target TestFreeRDPFrdp -j2
+ctest --test-dir /tmp/opencode/freerdp-frdp-asan-ubsan -R '^TestFreeRDPFrdp' --output-on-failure
 ```
 
 Implemented in the integrated `server/frdp/frdpd` path:
@@ -153,7 +156,7 @@ Exit criteria: a domain-joined Windows client authenticates with Kerberos where 
 
 Deliverables:
 
-- [ ] ASAN/UBSAN builds;
+- [x] ASAN/UBSAN build and focused `server/frdp` CTest suite (`WITH_SANITIZE_ADDRESS=ON` plus `WITH_SANITIZE_UNDEFINED=ON`);
 - [x] focused unit/CTest coverage for implemented static/dynamic channel config parsing, filter modes, capability validation, `max_connections` parsing, `frdpctl` CLI/session-IPC behavior, legacy V1/V2 session-open rejection before body decode, invalid V3 auth-token rejection, auth-token uid/gid/group/account-state tamper rejection, POSIX group mismatch rejection with a valid V3 token, delimiter-collision-resistant token serialization, explicit little-endian IPC header encoding, explicit auth broker request/response payload encoding, explicit canonical session V3 request/session close/session response payload encoding, explicit session list/reload response payload encoding, explicit agent input/frame/resize metadata payload encoding, and live auth/session helper survival after truncated IPC clients close the connection;
 - [ ] fuzzing harnesses for channel parsers and selected RDP inputs;
 - [ ] protocol regression suite;

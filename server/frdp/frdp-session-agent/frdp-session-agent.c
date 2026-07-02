@@ -599,6 +599,16 @@ static void frame_state_mark_all_dirty(frdpAgentFrameState *state)
     memset(state->dirty_tiles, 1, count);
 }
 
+static void frame_state_free_dirty_tiles(frdpAgentFrameState *state)
+{
+    if (!state)
+        return;
+    free(state->dirty_tiles);
+    state->dirty_tiles = NULL;
+    state->dirty_cols = 0;
+    state->dirty_rows = 0;
+}
+
 static int frame_state_rect_dirty(const frdpAgentFrameState *state, int x, int y, uint32_t width,
                                   uint32_t height)
 {
@@ -766,7 +776,7 @@ static void frame_state_uninit(frdpAgentFrameState *state)
         XDamageDestroy(state->display, state->damage);
         XUnlockDisplay(state->display);
     }
-    free(state->dirty_tiles);
+    frame_state_free_dirty_tiles(state);
     memset(state, 0, sizeof(*state));
 }
 
@@ -1555,6 +1565,7 @@ int main(int argc, char **argv)
     int status = wait_for_backend_exit(pid, control_fd, &frame_state, correlation_id, session_id,
                                        &stop_requested);
     if (stop_requested) {
+        frame_state_free_dirty_tiles(&frame_state);
         status = terminate_backend(pid);
     } else {
         frame_state_uninit(&frame_state);

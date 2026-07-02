@@ -4,14 +4,24 @@ This document outlines the hardening measures and test automation required for p
 
 ## ASAN/UBSAN builds
 
-To detect memory corruption and undefined behaviour, build the project with Clang and enable sanitizers:
+To detect memory corruption and undefined behaviour, build the project with Clang or GCC and enable the
+address and undefined-behaviour sanitizers:
 
 ```bash
-cmake -DWITH_ADDRESS_SANITIZER=ON -DWITH_UNDEFINED_BEHAVIOR_SANITIZER=ON -DWITH_FREERDP_CLIENT=OFF -DWITH_SERVER=ON -DWITH_SAMPLE=OFF .
-make -j$(nproc)
+cmake -S . -B /tmp/freerdp-frdp-asan-ubsan \
+  -DWITH_FRDPD=ON \
+  -DWITH_SERVER=ON \
+  -DWITH_SAMPLE=OFF \
+  -DBUILD_TESTING=ON \
+  -DWITH_SANITIZE_ADDRESS=ON \
+  -DWITH_SANITIZE_UNDEFINED=ON
+cmake --build /tmp/freerdp-frdp-asan-ubsan --target TestFreeRDPFrdp -j"$(nproc)"
+ctest --test-dir /tmp/freerdp-frdp-asan-ubsan -R '^TestFreeRDPFrdp' --output-on-failure
 ```
 
-These flags add `-fsanitize=address,undefined` and link against the sanitizer runtimes. Run the sanitised binaries in a dedicated environment; the sanitiser will abort on memory errors and print a report. Use CMake options or environment variables to disable sanitisation in production.
+These flags add `-fsanitize=address` and `-fsanitize=undefined` and link against the sanitizer
+runtimes. Run the sanitised binaries in a dedicated environment; the sanitiser will abort on memory
+errors and print a report. Leave sanitizer options disabled in production builds.
 
 ## Fuzzing harnesses
 

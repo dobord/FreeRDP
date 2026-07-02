@@ -3,19 +3,23 @@ include(CheckIncludeFiles)
 
 cmake_dependent_option(
   WITH_VALGRIND_MEMCHECK "Compile with valgrind helpers." OFF
-  "NOT WITH_SANITIZE_ADDRESS; NOT WITH_SANITIZE_MEMORY; NOT WITH_SANITIZE_THREAD" OFF
+  "NOT WITH_SANITIZE_ADDRESS; NOT WITH_SANITIZE_UNDEFINED; NOT WITH_SANITIZE_MEMORY; NOT WITH_SANITIZE_THREAD" OFF
 )
 cmake_dependent_option(
   WITH_SANITIZE_ADDRESS "Compile with gcc/clang address sanitizer." OFF
   "NOT WITH_VALGRIND_MEMCHECK; NOT WITH_SANITIZE_MEMORY; NOT WITH_SANITIZE_THREAD" OFF
 )
 cmake_dependent_option(
+  WITH_SANITIZE_UNDEFINED "Compile with gcc/clang undefined behavior sanitizer." OFF
+  "NOT WITH_VALGRIND_MEMCHECK; NOT WITH_SANITIZE_MEMORY; NOT WITH_SANITIZE_THREAD" OFF
+)
+cmake_dependent_option(
   WITH_SANITIZE_MEMORY "Compile with gcc/clang memory sanitizer." OFF
-  "NOT WITH_VALGRIND_MEMCHECK; NOT WITH_SANITIZE_ADDRESS; NOT WITH_SANITIZE_THREAD" OFF
+  "NOT WITH_VALGRIND_MEMCHECK; NOT WITH_SANITIZE_ADDRESS; NOT WITH_SANITIZE_UNDEFINED; NOT WITH_SANITIZE_THREAD" OFF
 )
 cmake_dependent_option(
   WITH_SANITIZE_THREAD "Compile with gcc/clang thread sanitizer." OFF
-  "NOT WITH_VALGRIND_MEMCHECK; NOT WITH_SANITIZE_ADDRESS; NOT WITH_SANITIZE_MEMORY" OFF
+  "NOT WITH_VALGRIND_MEMCHECK; NOT WITH_SANITIZE_ADDRESS; NOT WITH_SANITIZE_UNDEFINED; NOT WITH_SANITIZE_MEMORY" OFF
 )
 
 if(WITH_VALGRIND_MEMCHECK)
@@ -24,7 +28,7 @@ else()
   unset(FREERDP_HAVE_VALGRIND_MEMCHECK_H CACHE)
 endif()
 
-# Enable address sanitizer, where supported and when required
+# Enable compiler sanitizers, where supported and when required
 if(CMAKE_COMPILER_IS_CLANG OR CMAKE_COMPILER_IS_GNUCC)
   set(CMAKE_REQUIRED_LINK_OPTIONS_SAVED ${CMAKE_REQUIRED_LINK_OPTIONS})
   file(WRITE ${PROJECT_BINARY_DIR}/foo.txt "")
@@ -32,7 +36,12 @@ if(CMAKE_COMPILER_IS_CLANG OR CMAKE_COMPILER_IS_GNUCC)
     add_compile_options(-fsanitize=address)
     add_compile_options(-fsanitize-address-use-after-scope)
     add_link_options(-fsanitize=address)
-  elseif(WITH_SANITIZE_MEMORY)
+  endif()
+  if(WITH_SANITIZE_UNDEFINED)
+    add_compile_options(-fsanitize=undefined)
+    add_link_options(-fsanitize=undefined)
+  endif()
+  if(WITH_SANITIZE_MEMORY)
     add_compile_options(-fsanitize=memory)
     add_compile_options(-fsanitize-memory-use-after-dtor)
     add_compile_options(-fsanitize-memory-track-origins)
