@@ -123,6 +123,16 @@ if(SYSTEMD_TMPFILES_EXECUTABLE)
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpTmpfiles.cmake)
 endif()
 
+find_program(BASH_EXECUTABLE bash)
+if(BASH_EXECUTABLE)
+  add_test(NAME TestFreeRDPFrdpMonitoring
+           COMMAND ${CMAKE_COMMAND}
+                   -DBASH_EXECUTABLE=${BASH_EXECUTABLE}
+                   -DFRDP_MONITORING_SCRIPT=${CMAKE_SOURCE_DIR}/packaging/monitoring/frdpd-node-exporter-textfile.sh
+                   -DFRDP_PROMETHEUS_ALERTS=${CMAKE_SOURCE_DIR}/packaging/monitoring/frdpd-prometheus-alerts.yml
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpMonitoring.cmake)
+endif()
+
 set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "FreeRDP/Test")
 
 if(BUILD_FUZZERS)
