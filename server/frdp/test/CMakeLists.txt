@@ -120,6 +120,18 @@ if(BUILD_FUZZERS)
                  FOLDER "FreeRDP/Test/Fuzzers")
   add_dependencies(fuzzers ${FRDP_AUTH_TOKEN_FUZZER})
 
+  set(FRDP_IPC_CODEC_FUZZER TestFuzzFreeRDPFrdpIpcCodec)
+  add_executable(${FRDP_IPC_CODEC_FUZZER}
+      TestFuzzFreeRDPFrdpIpcCodec.c
+      ../ipc/frdp-ipc.c
+      ../ipc/frdp-ipc.h)
+  target_include_directories(${FRDP_IPC_CODEC_FUZZER} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+  target_link_libraries(${FRDP_IPC_CODEC_FUZZER} PUBLIC fuzzer_config winpr)
+  set_target_properties(${FRDP_IPC_CODEC_FUZZER}
+      PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${TESTING_OUTPUT_DIRECTORY}"
+                 FOLDER "FreeRDP/Test/Fuzzers")
+  add_dependencies(fuzzers ${FRDP_IPC_CODEC_FUZZER})
+
   set(FRDP_FRAME_POLICY_FUZZER TestFuzzFreeRDPFrdpFramePolicy)
   add_executable(${FRDP_FRAME_POLICY_FUZZER}
       TestFuzzFreeRDPFrdpFramePolicy.c
