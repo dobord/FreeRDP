@@ -156,7 +156,7 @@ Exit criteria: a domain-joined Windows client authenticates with Kerberos where 
 
 Deliverables:
 
-- [x] ASAN/UBSAN build and focused `server/frdp` CTest suite (`WITH_SANITIZE_ADDRESS=ON` plus `WITH_SANITIZE_UNDEFINED=ON`);
+- [x] ASAN/UBSAN build and focused `server/frdp` CTest suite (`WITH_SANITIZE_ADDRESS=ON` plus `WITH_SANITIZE_UNDEFINED=ON`), including focused CI coverage in the FRDP workflow;
 - [x] focused unit/CTest coverage for implemented static/dynamic channel config parsing, filter modes, capability validation, `max_connections` parsing, `frdpctl` CLI/session-IPC behavior, legacy V1/V2 session-open rejection before body decode, invalid V3 auth-token rejection, auth-token uid/gid/group/account-state tamper rejection, POSIX group mismatch rejection with a valid V3 token, delimiter-collision-resistant token serialization, explicit little-endian IPC header encoding, explicit auth broker request/response payload encoding, explicit canonical session V3 request/session close/session response payload encoding, explicit session list/reload response payload encoding, explicit agent input/frame/resize metadata payload encoding, and live auth/session helper survival after truncated IPC clients close the connection;
 - [ ] fuzzing harnesses for channel parsers and selected RDP inputs;
 - [ ] protocol regression suite;

@@ -9,6 +9,7 @@ on:
       - 'include/freerdp/channels/wtsvc.h'
       - 'libfreerdp/core/server.c'
       - 'libfreerdp/core/server.h'
+      - 'cmake/CompilerSanitizerOptions.cmake'
       - '.github/workflows/frdpd-compose.yml'
   push:
     branches: ['project/**']
@@ -18,6 +19,7 @@ on:
       - 'include/freerdp/channels/wtsvc.h'
       - 'libfreerdp/core/server.c'
       - 'libfreerdp/core/server.h'
+      - 'cmake/CompilerSanitizerOptions.cmake'
       - '.github/workflows/frdpd-compose.yml'
   schedule:
     - cron: '15 3 * * 0'
@@ -47,6 +49,83 @@ env:
   FRDP_E2E_ARTIFACTS: ${{ github.workspace }}/server/frdp/test/e2e/artifacts
 
 jobs:
+  sanitizer:
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.profile == 'quick' || inputs.profile == 'component' || inputs.profile == 'all'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q -y
+          sudo apt-get install -q -y --no-install-recommends \
+            build-essential \
+            cmake \
+            libcjson-dev \
+            libicu-dev \
+            libkrb5-dev \
+            libpam0g-dev \
+            libssl-dev \
+            libx11-dev \
+            libxdamage-dev \
+            libxext-dev \
+            libxfixes-dev \
+            libxi-dev \
+            libxkbfile-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libxtst-dev \
+            ninja-build \
+            pkg-config \
+            uuid-dev \
+            xvfb \
+            zlib1g-dev
+
+      - name: Configure ASan and UBSan FRDP build
+        run: |
+          cmake -S . -B build-frdp-asan-ubsan -GNinja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DBUILD_TESTING=ON \
+            -DWITH_FRDPD=ON \
+            -DWITH_SERVER=ON \
+            -DWITH_SHADOW=OFF \
+            -DWITH_PROXY=OFF \
+            -DWITH_SAMPLE=OFF \
+            -DWITH_MANPAGES=OFF \
+            -DWITH_WAYLAND=OFF \
+            -DWITH_SDL=OFF \
+            -DWITH_PULSE=OFF \
+            -DWITH_ALSA=OFF \
+            -DWITH_CUPS=OFF \
+            -DWITH_PCSC=OFF \
+            -DWITH_FFMPEG=OFF \
+            -DWITH_SWSCALE=OFF \
+            -DWITH_FUSE=OFF \
+            -DWITH_OPENCL=OFF \
+            -DCHANNEL_URBDRC=OFF \
+            -DWITH_SANITIZE_ADDRESS=ON \
+            -DWITH_SANITIZE_UNDEFINED=ON
+
+      - name: Build focused FRDP sanitizer tests
+        run: cmake --build build-frdp-asan-ubsan --target TestFreeRDPFrdp
+
+      - name: Run focused FRDP sanitizer tests
+        run: ctest --test-dir build-frdp-asan-ubsan -R '^TestFreeRDPFrdp' --output-on-failure
+
+      - name: Upload sanitizer logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frdpd-sanitizer-${{ github.run_id }}
+          path: |
+            build-frdp-asan-ubsan/CMakeFiles/CMakeOutput.log
+            build-frdp-asan-ubsan/CMakeFiles/CMakeError.log
+            build-frdp-asan-ubsan/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+
   quick:
     if: >-
       github.event_name != 'workflow_dispatch' ||
