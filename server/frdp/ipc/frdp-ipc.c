@@ -824,6 +824,157 @@ cleanup:
     return rc;
 }
 
+int frdp_ipc_send_session_list_response(int fd, const frdpSessionListResponse *response)
+{
+    uint8_t wire[FRDP_IPC_SESSION_LIST_RESPONSE_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response || (response->count > FRDP_IPC_MAX_SESSION_LIST_ENTRIES)) {
+        errno = EINVAL;
+        return -1;
+    }
+    frdp_ipc_write_u32_le(&wire[offset], response->success ? 1U : 0U);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], response->count);
+    offset += 4U;
+    for (uint32_t x = 0; x < FRDP_IPC_MAX_SESSION_LIST_ENTRIES; x++) {
+        if (x < response->count) {
+            memcpy(&wire[offset], response->entries[x].session_id,
+                   sizeof(response->entries[x].session_id));
+            offset += sizeof(response->entries[x].session_id);
+            memcpy(&wire[offset], response->entries[x].user, sizeof(response->entries[x].user));
+            offset += sizeof(response->entries[x].user);
+            memcpy(&wire[offset], response->entries[x].display,
+                   sizeof(response->entries[x].display));
+            offset += sizeof(response->entries[x].display);
+            frdp_ipc_write_u32_le(&wire[offset], (uint32_t)response->entries[x].agent_pid);
+            offset += 4U;
+        } else {
+            offset += FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE;
+        }
+    }
+    memcpy(&wire[offset], response->error, sizeof(response->error));
+
+    if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_LIST_RESPONSE, sizeof(wire)) != 0)
+        goto cleanup;
+    rc = frdp_ipc_send(fd, wire, sizeof(wire));
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_session_list_response(int fd, frdpSessionListResponse *response)
+{
+    frdpIpcHeader header = {0};
+    uint8_t wire[FRDP_IPC_SESSION_LIST_RESPONSE_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
+        return -1;
+    if ((header.type != FRDP_IPC_SESSION_LIST_RESPONSE) || (header.payload_len != sizeof(wire))) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    memset(response, 0, sizeof(*response));
+    response->success = frdp_ipc_read_u32_le(&wire[offset]) ? 1 : 0;
+    offset += 4U;
+    response->count = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    if (response->count > FRDP_IPC_MAX_SESSION_LIST_ENTRIES) {
+        errno = EINVAL;
+        memset(response, 0, sizeof(*response));
+        goto cleanup;
+    }
+    for (uint32_t x = 0; x < FRDP_IPC_MAX_SESSION_LIST_ENTRIES; x++) {
+        if (x < response->count) {
+            memcpy(response->entries[x].session_id, &wire[offset],
+                   sizeof(response->entries[x].session_id));
+            offset += sizeof(response->entries[x].session_id);
+            memcpy(response->entries[x].user, &wire[offset], sizeof(response->entries[x].user));
+            offset += sizeof(response->entries[x].user);
+            memcpy(response->entries[x].display, &wire[offset],
+                   sizeof(response->entries[x].display));
+            offset += sizeof(response->entries[x].display);
+            response->entries[x].agent_pid = (int32_t)frdp_ipc_read_u32_le(&wire[offset]);
+            offset += 4U;
+        } else {
+            offset += FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE;
+        }
+    }
+    memcpy(response->error, &wire[offset], sizeof(response->error));
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_send_session_reload_response(int fd, const frdpControlResponse *response)
+{
+    uint8_t wire[FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response) {
+        errno = EINVAL;
+        return -1;
+    }
+    frdp_ipc_write_u32_le(&wire[offset], response->success ? 1U : 0U);
+    offset += 4U;
+    memcpy(&wire[offset], response->message, sizeof(response->message));
+    offset += sizeof(response->message);
+    memcpy(&wire[offset], response->error, sizeof(response->error));
+
+    if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RELOAD_RESPONSE, sizeof(wire)) != 0)
+        goto cleanup;
+    rc = frdp_ipc_send(fd, wire, sizeof(wire));
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_session_reload_response(int fd, frdpControlResponse *response)
+{
+    frdpIpcHeader header = {0};
+    uint8_t wire[FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
+        return -1;
+    if ((header.type != FRDP_IPC_SESSION_RELOAD_RESPONSE) || (header.payload_len != sizeof(wire))) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    memset(response, 0, sizeof(*response));
+    response->success = frdp_ipc_read_u32_le(&wire[offset]) ? 1 : 0;
+    offset += 4U;
+    memcpy(response->message, &wire[offset], sizeof(response->message));
+    offset += sizeof(response->message);
+    memcpy(response->error, &wire[offset], sizeof(response->error));
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
 /* Close a socket */
 int frdp_ipc_close(int fd)
 {

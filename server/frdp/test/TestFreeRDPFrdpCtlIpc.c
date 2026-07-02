@@ -101,9 +101,7 @@ static int send_list_response(int fd)
 	snprintf(response.entries[1].display, sizeof(response.entries[1].display), ":21");
 	response.entries[1].agent_pid = 1002;
 
-	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_LIST_RESPONSE, sizeof(response)) != 0)
-		return -1;
-	return write_all(fd, &response, sizeof(response));
+	return frdp_ipc_send_session_list_response(fd, &response);
 }
 
 static int send_control_list_response(int fd)
@@ -117,9 +115,7 @@ static int send_control_list_response(int fd)
 	snprintf(response.entries[0].display, sizeof(response.entries[0].display), ":\\20");
 	response.entries[0].agent_pid = 1003;
 
-	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_LIST_RESPONSE, sizeof(response)) != 0)
-		return -1;
-	return write_all(fd, &response, sizeof(response));
+	return frdp_ipc_send_session_list_response(fd, &response);
 }
 
 static int handle_list_request(int fd)
@@ -228,9 +224,7 @@ static int handle_reload_request(int fd)
 
 	response.success = 1;
 	snprintf(response.message, sizeof(response.message), "accepted");
-	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RELOAD_RESPONSE, sizeof(response)) != 0)
-		return -1;
-	return write_all(fd, &response, sizeof(response));
+	return frdp_ipc_send_session_reload_response(fd, &response);
 }
 
 static int handle_reload_failure_request(int fd)
@@ -247,9 +241,7 @@ static int handle_reload_failure_request(int fd)
 
 	response.success = 0;
 	snprintf(response.error, sizeof(response.error), "busy\ntry later");
-	if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RELOAD_RESPONSE, sizeof(response)) != 0)
-		return -1;
-	return write_all(fd, &response, sizeof(response));
+	return frdp_ipc_send_session_reload_response(fd, &response);
 }
 
 static int make_socket(char* dir, size_t dir_size, char* path, size_t path_size)

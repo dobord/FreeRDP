@@ -249,15 +249,9 @@ static int receive_session_response(int fd, int expected_success, const char* ex
 static int receive_reload_response(int fd, int expected_success, const char* expected_message,
                                    const char* expected_error)
 {
-	frdpIpcHeader header = { 0 };
 	frdpControlResponse response = { 0 };
 
-	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
-		return -1;
-	if ((header.type != FRDP_IPC_SESSION_RELOAD_RESPONSE) ||
-	    (header.payload_len != sizeof(response)))
-		return -1;
-	if (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))
+	if (frdp_ipc_recv_session_reload_response(fd, &response) != 0)
 		return -1;
 	if (!!response.success != !!expected_success)
 		return -1;
@@ -483,7 +477,6 @@ cleanup:
 
 static int test_sesmand_list_empty(const char* socket_path)
 {
-	frdpIpcHeader header = { 0 };
 	frdpSessionListResponse response = { 0 };
 	int fd = frdp_ipc_connect(socket_path);
 	int rc = -1;
@@ -492,12 +485,7 @@ static int test_sesmand_list_empty(const char* socket_path)
 		return -1;
 	if (send_header(fd, FRDP_IPC_SESSION_LIST_REQUEST, 0) != 0)
 		goto cleanup;
-	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
-		goto cleanup;
-	if ((header.type != FRDP_IPC_SESSION_LIST_RESPONSE) ||
-	    (header.payload_len != sizeof(response)))
-		goto cleanup;
-	if (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))
+	if (frdp_ipc_recv_session_list_response(fd, &response) != 0)
 		goto cleanup;
 	if ((response.success != 1) || (response.count != 0))
 		goto cleanup;

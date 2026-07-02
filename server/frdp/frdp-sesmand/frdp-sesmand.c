@@ -704,9 +704,7 @@ static int send_session_list_response(int fd)
         resp.entries[i].agent_pid = sessions[i].agent_pid;
     }
 
-    if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_LIST_RESPONSE, sizeof(resp)) != 0)
-        return -1;
-    return frdp_ipc_send(fd, &resp, sizeof(resp));
+    return frdp_ipc_send_session_list_response(fd, &resp);
 }
 
 static int send_reload_response(int fd, int success, const char *message, const char *error)
@@ -720,9 +718,7 @@ static int send_reload_response(int fd, int success, const char *message, const 
     if (error)
         snprintf(resp.error, sizeof(resp.error), "%s", error);
 
-    if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RELOAD_RESPONSE, sizeof(resp)) != 0)
-        return -1;
-    return frdp_ipc_send(fd, &resp, sizeof(resp));
+    return frdp_ipc_send_session_reload_response(fd, &resp);
 }
 
 static int verify_peer(int fd)

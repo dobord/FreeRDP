@@ -142,10 +142,8 @@ static void terminate_session_list_response_strings(frdpSessionListResponse *res
 static int send_session_list_request(const char *socket_path, int status_only)
 {
     int fd = -1;
-    frdpIpcHeader response_header;
     frdpSessionListResponse response;
 
-    memset(&response_header, 0, sizeof(response_header));
     memset(&response, 0, sizeof(response));
 
     fd = frdp_ipc_connect(socket_path);
@@ -159,10 +157,7 @@ static int send_session_list_request(const char *socket_path, int status_only)
     }
 
     if ((frdp_ipc_send_header(fd, FRDP_IPC_SESSION_LIST_REQUEST, 0) != 0) ||
-        (frdp_ipc_recv_header(fd, &response_header) != (int)sizeof(response_header)) ||
-        (response_header.type != FRDP_IPC_SESSION_LIST_RESPONSE) ||
-        (response_header.payload_len != sizeof(response)) ||
-        (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))) {
+        (frdp_ipc_recv_session_list_response(fd, &response) != 0)) {
         fprintf(stderr, "session list IPC failed\n");
         frdp_ipc_close(fd);
         return 3;
@@ -265,10 +260,8 @@ static int send_session_close_request(const char *socket_path, const char *sessi
 static int send_reload_request(const char *socket_path)
 {
     int fd = -1;
-    frdpIpcHeader response_header;
     frdpControlResponse response;
 
-    memset(&response_header, 0, sizeof(response_header));
     memset(&response, 0, sizeof(response));
 
     fd = frdp_ipc_connect(socket_path);
@@ -282,10 +275,7 @@ static int send_reload_request(const char *socket_path)
     }
 
     if ((frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RELOAD_REQUEST, 0) != 0) ||
-        (frdp_ipc_recv_header(fd, &response_header) != (int)sizeof(response_header)) ||
-        (response_header.type != FRDP_IPC_SESSION_RELOAD_RESPONSE) ||
-        (response_header.payload_len != sizeof(response)) ||
-        (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))) {
+        (frdp_ipc_recv_session_reload_response(fd, &response) != 0)) {
         fprintf(stderr, "reload IPC failed\n");
         frdp_ipc_close(fd);
         return 3;

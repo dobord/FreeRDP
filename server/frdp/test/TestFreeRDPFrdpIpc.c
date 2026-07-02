@@ -587,6 +587,120 @@ cleanup:
 	return rc;
 }
 
+static int test_session_list_response_uses_explicit_wire_format(void)
+{
+	int fds[2] = { -1, -1 };
+	frdpSessionListResponse response = { 0 };
+	frdpSessionListResponse decoded = { 0 };
+	frdpIpcHeader header = { 0 };
+	uint8_t raw[FRDP_IPC_SESSION_LIST_RESPONSE_WIRE_SIZE] = { 0 };
+	const size_t count_offset = 4U;
+	const size_t entries_offset = count_offset + 4U;
+	const size_t entry1_offset = entries_offset + FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE;
+	const size_t pid_offset = entries_offset + 64U + 64U + 32U;
+	int rc = -1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	response.success = 1;
+	response.count = 1;
+	snprintf(response.entries[0].session_id, sizeof(response.entries[0].session_id), "session");
+	snprintf(response.entries[0].user, sizeof(response.entries[0].user), "alice");
+	snprintf(response.entries[0].display, sizeof(response.entries[0].display), ":10");
+	response.entries[0].agent_pid = 0x01020304;
+	snprintf(response.entries[1].session_id, sizeof(response.entries[1].session_id), "unused");
+	response.entries[1].agent_pid = 0x11121314;
+	snprintf(response.error, sizeof(response.error), "ignored");
+	if (frdp_ipc_send_session_list_response(fds[0], &response) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_SESSION_LIST_RESPONSE) ||
+	    (header.payload_len != FRDP_IPC_SESSION_LIST_RESPONSE_WIRE_SIZE))
+		goto cleanup;
+	if (frdp_ipc_recv(fds[1], raw, sizeof(raw)) != (int)sizeof(raw))
+		goto cleanup;
+	if ((raw[0] != 1U) || (raw[count_offset] != 1U) ||
+	    (memcmp(&raw[entries_offset], "session", 7) != 0) ||
+	    (memcmp(&raw[entries_offset + 64U], "alice", 5) != 0) ||
+	    (memcmp(&raw[entries_offset + 128U], ":10", 3) != 0) || (raw[pid_offset] != 0x04U) ||
+	    (raw[pid_offset + 3U] != 0x01U))
+		goto cleanup;
+	for (size_t x = 0; x < FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE; x++) {
+		if (raw[entry1_offset + x] != 0U)
+			goto cleanup;
+		raw[entry1_offset + x] = (uint8_t)(0xc0U + (x & 0x0fU));
+	}
+	if (frdp_ipc_send_header(fds[1], FRDP_IPC_SESSION_LIST_RESPONSE, sizeof(raw)) != 0 ||
+	    frdp_ipc_send(fds[1], raw, sizeof(raw)) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_session_list_response(fds[0], &decoded) != 0)
+		goto cleanup;
+	if ((decoded.success != response.success) || (decoded.count != response.count) ||
+	    (strcmp(decoded.entries[0].session_id, response.entries[0].session_id) != 0) ||
+	    (strcmp(decoded.entries[0].user, response.entries[0].user) != 0) ||
+	    (strcmp(decoded.entries[0].display, response.entries[0].display) != 0) ||
+	    (decoded.entries[0].agent_pid != response.entries[0].agent_pid) ||
+	    (decoded.entries[1].session_id[0] != '\0') || (decoded.entries[1].agent_pid != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
+static int test_session_reload_response_uses_explicit_wire_format(void)
+{
+	int fds[2] = { -1, -1 };
+	frdpControlResponse response = { 0 };
+	frdpControlResponse decoded = { 0 };
+	frdpIpcHeader header = { 0 };
+	uint8_t raw[FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE] = { 0 };
+	const size_t message_offset = 4U;
+	const size_t error_offset = message_offset + sizeof(response.message);
+	int rc = -1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	response.success = 1;
+	snprintf(response.message, sizeof(response.message), "accepted");
+	snprintf(response.error, sizeof(response.error), "ignored");
+	if (frdp_ipc_send_session_reload_response(fds[0], &response) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_SESSION_RELOAD_RESPONSE) ||
+	    (header.payload_len != FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE))
+		goto cleanup;
+	if (frdp_ipc_recv(fds[1], raw, sizeof(raw)) != (int)sizeof(raw))
+		goto cleanup;
+	if ((raw[0] != 1U) || (raw[1] != 0U) ||
+	    (memcmp(&raw[message_offset], "accepted", 8) != 0) ||
+	    (memcmp(&raw[error_offset], "ignored", 7) != 0))
+		goto cleanup;
+	if (frdp_ipc_send_header(fds[1], FRDP_IPC_SESSION_RELOAD_RESPONSE, sizeof(raw)) != 0 ||
+	    frdp_ipc_send(fds[1], raw, sizeof(raw)) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_session_reload_response(fds[0], &decoded) != 0)
+		goto cleanup;
+	if ((decoded.success != response.success) ||
+	    (strcmp(decoded.message, response.message) != 0) ||
+	    (strcmp(decoded.error, response.error) != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
 static int test_auth_token_binds_posix_account(void)
 {
 	char dir[1024] = { 0 };
@@ -682,6 +796,10 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_session_response_uses_explicit_wire_format() != 0)
 		return -1;
 	if (test_session_close_request_uses_explicit_wire_format() != 0)
+		return -1;
+	if (test_session_list_response_uses_explicit_wire_format() != 0)
+		return -1;
+	if (test_session_reload_response_uses_explicit_wire_format() != 0)
 		return -1;
 	if (test_auth_token_binds_posix_account() != 0)
 		return -1;

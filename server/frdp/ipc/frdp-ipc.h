@@ -50,6 +50,7 @@ typedef struct {
 
 #define FRDP_IPC_MAX_REQUEST_PAYLOAD_LEN 4096U
 #define FRDP_IPC_MAX_AUTH_GROUPS FRDP_AUTH_TOKEN_MAX_GROUPS
+#define FRDP_IPC_MAX_SESSION_LIST_ENTRIES 64U
 #define FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE (64U + 64U + 128U + 256U)
 #define FRDP_IPC_AUTH_RESPONSE_WIRE_SIZE \
     (4U + 128U + 192U + 8U + 8U + 4U + (FRDP_IPC_MAX_AUTH_GROUPS * 8U) + 4U)
@@ -58,6 +59,10 @@ typedef struct {
      (FRDP_IPC_MAX_AUTH_GROUPS * 8U) + 4U + 4U + 4U + 4U)
 #define FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE (64U + 64U + 64U + 128U + 4U + 4U + 4U)
 #define FRDP_IPC_SESSION_RESPONSE_WIRE_SIZE (4U + 64U + 32U + 108U + 128U)
+#define FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE (64U + 64U + 32U + 4U)
+#define FRDP_IPC_SESSION_LIST_RESPONSE_WIRE_SIZE \
+    (4U + 4U + (FRDP_IPC_MAX_SESSION_LIST_ENTRIES * FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE) + 128U)
+#define FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE (4U + 128U + 128U)
 #define FRDP_IPC_RATE_LIMIT_WINDOW_SECONDS 10U
 #define FRDP_IPC_RATE_LIMIT_MAX_REQUESTS 64U
 #define FRDP_IPC_RATE_LIMIT_MAX_PEERS 16U
@@ -141,8 +146,6 @@ typedef struct {
     char agent_socket[108];
     char error[128];
 } frdpSessionResponse;
-
-#define FRDP_IPC_MAX_SESSION_LIST_ENTRIES 64U
 
 typedef struct {
     char session_id[64];
@@ -240,6 +243,10 @@ int frdp_ipc_recv_session_close_request_payload(int fd, frdpSessionRequest *requ
                                                 uint32_t payload_len);
 int frdp_ipc_send_session_response(int fd, const frdpSessionResponse *response);
 int frdp_ipc_recv_session_response(int fd, frdpSessionResponse *response);
+int frdp_ipc_send_session_list_response(int fd, const frdpSessionListResponse *response);
+int frdp_ipc_recv_session_list_response(int fd, frdpSessionListResponse *response);
+int frdp_ipc_send_session_reload_response(int fd, const frdpControlResponse *response);
+int frdp_ipc_recv_session_reload_response(int fd, frdpControlResponse *response);
 
 /* Close a previously opened fd */
 int frdp_ipc_close(int fd);
