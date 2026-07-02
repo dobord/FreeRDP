@@ -92,6 +92,15 @@ if(SYSTEMD_ANALYZE_EXECUTABLE)
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpSystemd.cmake)
 endif()
 
+find_program(APPARMOR_PARSER_EXECUTABLE apparmor_parser)
+if(APPARMOR_PARSER_EXECUTABLE)
+  add_test(NAME TestFreeRDPFrdpAppArmor
+           COMMAND ${CMAKE_COMMAND}
+                   -DAPPARMOR_PARSER_EXECUTABLE=${APPARMOR_PARSER_EXECUTABLE}
+                   -DFRDP_APPARMOR_PROFILE=${CMAKE_SOURCE_DIR}/packaging/apparmor/frdpd
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpAppArmor.cmake)
+endif()
+
 set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "FreeRDP/Test")
 
 if(BUILD_FUZZERS)

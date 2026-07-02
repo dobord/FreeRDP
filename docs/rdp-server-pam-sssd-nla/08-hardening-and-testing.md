@@ -97,7 +97,7 @@ Write mandatory access control profiles to confine the RDP daemons:
 
 - Define a minimal policy allowing network listening on port 3389, access to `/etc/frdpd` for keys and configuration, execution of `/usr/bin/Xvfb` and reading user home directories.
 - Deny access to arbitrary files and prevent the daemon from loading untrusted modules.
-- Distribute example policies for both SELinux (`frdpd.te` and `frdpd.fc`) and AppArmor (`frdpd` profile) in `packaging/selinux` and `packaging/apparmor`.
+- Distribute example policies for both SELinux (`frdpd.te` and `frdpd.fc`) and AppArmor (`frdpd` profile) in `packaging/selinux` and `packaging/apparmor`; the AppArmor profile is parser-validated in CTest when `apparmor_parser` is available, while SELinux validation and production confinement review remain open.
 
 ## Systemd hardening
 

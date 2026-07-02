@@ -1,4 +1,6 @@
 # AppArmor profile for frdpd
+#include <tunables/global>
+
 profile frdpd /usr/bin/frdpd {
   # Include common abstractions
   #include <abstractions/base>
