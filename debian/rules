@@ -10,8 +10,7 @@ DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 
 # Keep the preview server package build tree outside the source directory and
 # away from ad hoc local build directories. LTO is kept off so local smoke
-# builds stay predictable, while Debian hardening and prefix-map flags remain
-# active.
+# builds stay predictable, while Debian and CMake prefix-map flags remain active.
 export CPPFLAGS := $(shell $(BUILD_FLAGS) --get CPPFLAGS)
 export CFLAGS := $(filter-out $(LTO_FLAGS),$(shell $(BUILD_FLAGS) --get CFLAGS))
 export CXXFLAGS := $(filter-out $(LTO_FLAGS),$(shell $(BUILD_FLAGS) --get CXXFLAGS))
@@ -38,7 +37,7 @@ override_dh_auto_configure:
 		-DWITH_SMARTCARD_EMULATE=OFF \
 		-DWITH_SMARTCARD_PCSC=OFF \
 		-DWITH_VAAPI_H264_ENCODING=OFF \
-		-DWITH_REPRODUCIBLE_BUILD_FLAGS=OFF \
+		-DWITH_REPRODUCIBLE_BUILD_FLAGS=ON \
 		-DFRDP_SYSTEMD_SYSTEM_UNIT_DIR=/lib/systemd/system \
 		-DCMAKE_C_FLAGS="$(CPPFLAGS) $(CFLAGS)" \
 		-DCMAKE_CXX_FLAGS="$(CPPFLAGS) $(CXXFLAGS)" \

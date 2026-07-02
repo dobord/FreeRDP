@@ -195,7 +195,7 @@ Deliverables:
 - [ ] load testing harness (partial: `server/frdp/test/e2e/scripts/rdp-load-probe.sh` provides a configurable parallel auth-only RDP probe for retained E2E client environments; full graphical session load/soak coverage remains open);
 - [ ] SELinux/AppArmor profiles (draft examples install under `/usr/share/frdpd/security`, but are not validated or activated);
 - [ ] systemd hardening (listener/auth/session unit examples install with baseline sandboxing directives, and the shared auth-token runtime directory is provided through tmpfiles, but package builds and production hardening validation remain open);
-- [ ] package signing and reproducible-build notes.
+- [x] package signing and reproducible-build notes (`11-packaging.md`; real release keys, RPM CI, install validation, and repository publication remain open).
 
 Exit criteria: the security baseline is accepted; no critical crashes are found during the fuzz/load-test window; packages install cleanly on target operating systems.
 

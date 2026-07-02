@@ -8,7 +8,7 @@ The root `debian/` directory contains minimal preview packaging for the server-o
 
 - Build depends list the toolchain and libraries required at build time, including debhelper compat 13, CMake/Ninja, PAM, Kerberos/GSSAPI, OpenSSL, systemd, JSON, FFmpeg codec libraries, Cairo, and the X11/XTest/XDamage/XRandR headers used by the server prototype.
 - The resulting binary package declares runtime dependencies through `${shlibs:Depends}` / `${misc:Depends}` plus `libpam0g`, `sssd`, and `xvfb` for the PAM/SSSD session-agent prototype.
-- Run `DEB_BUILD_OPTIONS='nocheck parallel=1' dpkg-buildpackage -uc -us -b -j1` from the project root for a local binary package smoke build. The serial build option avoids noisy local resource races while this preview package is still being hardened. `packaging/scripts/create_deb.sh -uc -us -b -j1` is a wrapper around the same root `debian/control` metadata.
+- Run `SOURCE_DATE_EPOCH=<commit-time> DEB_BUILD_OPTIONS='nocheck parallel=1' dpkg-buildpackage -uc -us -b -j1` from the project root for a local binary package smoke build. The serial build option avoids noisy local resource races while this preview package is still being hardened. `packaging/scripts/create_deb.sh -uc -us -b -j1` is a wrapper around the same root `debian/control` metadata.
 - The local smoke build has been verified to produce `frdpd_0.1.0-1_amd64.deb` with the `frdpd`, `frdp-authd`, `frdp-sesmand`, `frdp-session-agent`, and `frdpctl` binaries, FreeRDP/WinPR shared libraries, `/etc/frdpd` configuration, `/etc/pam.d/frdpd`, service unit examples under `/lib/systemd/system`, and inactive SELinux/AppArmor examples under `/usr/share/frdpd/security`. The current CMake `server` component install emits baseline-hardened versions of those service unit examples, and the focused CTest suite verifies the generated units with `systemd-analyze` when it is available.
 - This preview package currently installs its bundled FreeRDP/WinPR shared libraries into the public multiarch library directory. Production packaging must either split those libraries into policy-compliant packages or add appropriate conflict/replacement/private-libdir handling before coexisting with distro FreeRDP packages.
 - Sign the resulting packages with the project’s GPG key and publish them to an APT repository.
@@ -27,11 +27,57 @@ The `%files` section installs the daemons (`frdpd`, `frdp-authd`, `frdp-sesmand`
 
 ## Reproducible builds and signing
 
-To ensure supply-chain integrity and reproducibility:
+The preview package is not yet a release artifact, but release builds should
+already use a repeatable contract:
 
-- Pin compiler and toolchain versions in CI and use environment variables such as `SOURCE_DATE_EPOCH` for deterministic timestamps.
-- Strip build paths from debug information (e.g. use `-ffile-prefix-map` with GCC/Clang).
-- Sign binary packages using the project’s dedicated signing key. Provide the public key via the project’s web site or repository so that users can verify signatures.
+- Build from a signed Git tag or an immutable commit id. Record the commit,
+  package version, builder image digest, compiler versions, CMake version,
+  Ninja version, dependency repository snapshots, and enabled CMake flags.
+- Set `SOURCE_DATE_EPOCH` to the signed tag time or the commit time used for the
+  source archive. FreeRDP's CMake date helper consumes this value, and Debian
+  tooling uses it for deterministic archive metadata.
+- Keep CMake `WITH_REPRODUCIBLE_BUILD_FLAGS=ON` for package builds so
+  `-fdebug-prefix-map`, `-fmacro-prefix-map`, and `-ffile-prefix-map` normalize
+  source and build directory paths. The Debian preview package also uses
+  `dpkg-buildflags` hardening flags and disables LTO for predictable local smoke
+  builds.
+- Use a sanitized build environment: fixed locale (`LC_ALL=C.UTF-8`), fixed
+  timezone (`TZ=UTC`), no writable network dependency during the build step, and
+  no untracked source-tree files included in generated source archives.
+- Produce unsigned artifacts first with `dpkg-buildpackage -uc -us -b` or
+  `rpmbuild -ba`, then sign only after package validation succeeds.
+- Sign Debian `.changes` / `.buildinfo` / `.deb` artifacts with the project
+  release key (`debsign` or repository-signing tooling). Sign RPM artifacts with
+  the RPM release key (`rpm --addsign`) after importing the key into the builder
+  macro configuration.
+- Publish the public signing keys, fingerprints, revocation plan, package
+  checksums, `.buildinfo` files, and source archive checksums beside the package
+  repository metadata.
+
+Minimum release validation before signing:
+
+1. Run two clean builds from the same source in separate build directories or
+   builder containers with identical `SOURCE_DATE_EPOCH`.
+2. Compare package file lists, maintainer scripts, unit files, PAM files,
+   security draft files, ELF dependency metadata, and checksums. Use
+   `diffoscope` when byte-for-byte output differs.
+3. Install the unsigned package into a fresh target image and verify ownership
+   and permissions for `/etc/frdpd`, `/etc/pam.d/frdpd`, helper binaries,
+   systemd units, runtime directories, and inactive MAC policy examples.
+4. Run the focused FRDP CTest set or the component container profile against
+   the installed binaries.
+5. Sign only the artifacts that passed the install and component checks.
+
+Open reproducibility gaps:
+
+- RPM builds still need local and CI verification with distro macros available.
+- Debian maintainer scripts, copyright metadata, and lintian policy checks are
+  still incomplete.
+- Installed package validation does not yet prove PAM login, AD/SSSD policy,
+  real-client sessions, upgrade/rollback, or enforcing SELinux/AppArmor mode.
+- The preview package bundles FreeRDP/WinPR shared libraries in the public
+  library directory; production packaging needs a policy-compliant library split
+  or private-libdir/conflict handling.
 
 ## Repository structure
 
