@@ -26,6 +26,8 @@
 #error "FRDP_SESMAND_BINARY is not defined"
 #endif
 
+#define FRDP_IPC_SLOW_SEND_DELAY_US 1000U
+
 typedef struct
 {
 	pid_t pid;
@@ -206,6 +208,21 @@ static int send_partial_body_then_close(const char* socket_path, frdpIpcMessageT
 		rc = frdp_ipc_send(fd, payload, payload_len / 2U);
 	frdp_ipc_close(fd);
 	return rc;
+}
+
+static int send_slow_payload(int fd, const uint8_t* payload, size_t payload_len,
+                             useconds_t delay_us)
+{
+	if (!payload && (payload_len > 0))
+		return -1;
+	for (size_t x = 0; x < payload_len; x++)
+	{
+		if (frdp_ipc_send(fd, &payload[x], 1U) != 0)
+			return -1;
+		if (delay_us > 0)
+			usleep(delay_us);
+	}
+	return 0;
 }
 
 static int receive_auth_failure(int fd, const char* expected_error)
@@ -404,6 +421,26 @@ cleanup:
 	return rc;
 }
 
+static int test_authd_handles_slow_complete_client(const char* socket_path)
+{
+	uint8_t payload[FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE] = { 0 };
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	memset(payload, 'A', sizeof(((frdpAuthRequest*)0)->user));
+	if (send_header(fd, FRDP_IPC_AUTH_REQUEST_V2, sizeof(payload)) != 0)
+		goto cleanup;
+	if (send_slow_payload(fd, payload, sizeof(payload), FRDP_IPC_SLOW_SEND_DELAY_US) != 0)
+		goto cleanup;
+	rc = receive_auth_failure(fd, "invalid auth request");
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
 static int test_authd_survives_truncated_clients(const char* socket_path)
 {
 	frdpAuthRequest request = { 0 };
@@ -435,6 +472,8 @@ static int test_authd_component(void)
 	if (test_authd_rejects_unterminated_request(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_authd_survives_truncated_clients(helper.socket_path) != 0)
+		goto cleanup;
+	if (test_authd_handles_slow_complete_client(helper.socket_path) != 0)
 		goto cleanup;
 	/* A final request proves that malformed clients did not stop the service loop. */
 	if (test_authd_rejects_bad_length(helper.socket_path) != 0)
@@ -763,6 +802,25 @@ cleanup:
 	return rc;
 }
 
+static int test_sesmand_handles_slow_complete_client(const char* socket_path)
+{
+	uint8_t payload[FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE] = { 0 };
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	if (send_header(fd, FRDP_IPC_SESSION_CLOSE_REQUEST, sizeof(payload)) != 0)
+		goto cleanup;
+	if (send_slow_payload(fd, payload, sizeof(payload), FRDP_IPC_SLOW_SEND_DELAY_US) != 0)
+		goto cleanup;
+	rc = receive_session_response(fd, 0, "unknown session");
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
 static int test_sesmand_survives_truncated_clients(const char* socket_path)
 {
 	frdpSessionRequest request = { 0 };
@@ -900,6 +958,8 @@ static int test_sesmand_component(void)
 	if (test_sesmand_rejects_oversized_payload(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_survives_truncated_clients(helper.socket_path) != 0)
+		goto cleanup;
+	if (test_sesmand_handles_slow_complete_client(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_reload_payload(helper.socket_path) != 0)
 		goto cleanup;
