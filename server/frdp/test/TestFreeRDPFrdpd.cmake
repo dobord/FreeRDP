@@ -2,6 +2,10 @@ if(NOT DEFINED FRDPD_BINARY)
   message(FATAL_ERROR "FRDPD_BINARY is not set")
 endif()
 
+set(test_dir "${CMAKE_CURRENT_BINARY_DIR}/TestFreeRDPFrdpd")
+file(REMOVE_RECURSE "${test_dir}")
+file(MAKE_DIRECTORY "${test_dir}")
+
 function(run_frdpd_case_with_result name expected_result expected_message)
   execute_process(
     COMMAND "${FRDPD_BINARY}" ${ARGN}
@@ -24,6 +28,36 @@ endfunction()
 function(run_frdpd_case name expected_message)
   run_frdpd_case_with_result("${name}" 255 "${expected_message}" ${ARGN})
 endfunction()
+
+set(relative_auth_config "${test_dir}/relative-auth-socket.toml")
+file(WRITE "${relative_auth_config}"
+     "[server]\n"
+     "tls_cert = \"/missing\"\n"
+     "tls_key = \"/missing\"\n"
+     "[auth]\n"
+     "auth_socket = \"relative/authd.sock\"\n"
+     "[session]\n"
+     "session_socket = \"/tmp/frdpd-test-session.sock\"\n")
+run_frdpd_case_with_result(
+  "relative-auth-socket-config"
+  1
+  "failed to load configuration from ${relative_auth_config}"
+  --config "${relative_auth_config}")
+
+set(relative_session_config "${test_dir}/relative-session-socket.toml")
+file(WRITE "${relative_session_config}"
+     "[server]\n"
+     "tls_cert = \"/missing\"\n"
+     "tls_key = \"/missing\"\n"
+     "[auth]\n"
+     "auth_socket = \"/tmp/frdpd-test-auth.sock\"\n"
+     "[session]\n"
+     "session_socket = \"relative/sesmand.sock\"\n")
+run_frdpd_case_with_result(
+  "relative-session-socket-config"
+  1
+  "failed to load configuration from ${relative_session_config}"
+  --config "${relative_session_config}")
 
 run_frdpd_case(
   "missing-helper-sockets"

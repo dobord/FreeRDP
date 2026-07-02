@@ -118,6 +118,45 @@ static int test_server_max_connections(void)
 	return 0;
 }
 
+static int test_server_auth_session_fields(void)
+{
+	frdpConfig config = { 0 };
+	const char* body = "[server]\n"
+	                   "listen = \"127.0.0.1:3390\"\n"
+	                   "security = \"nla\"\n"
+	                   "tls_cert = \"/etc/frdpd/tls/server.crt\"\n"
+	                   "tls_key = \"/etc/frdpd/tls/server.key\"\n"
+	                   "max_connections = 9\n"
+	                   "[auth]\n"
+	                   "mode = \"pam-sssd\"\n"
+	                   "pam_service = \"frdpd-test\"\n"
+	                   "auth_socket = \"/run/frdp-authd/authd.sock\"\n"
+	                   "[session]\n"
+	                   "session_socket = \"/run/frdp-sesmand/sesmand.sock\"\n";
+
+	if (load_config_body("frdp-server-auth-session.toml", body, &config) != 0)
+		return -1;
+	if (strcmp(config.listen, "127.0.0.1:3390") != 0)
+		return -1;
+	if (config.max_connections != 9)
+		return -1;
+	if (strcmp(config.security, "nla") != 0)
+		return -1;
+	if (strcmp(config.tls_cert, "/etc/frdpd/tls/server.crt") != 0)
+		return -1;
+	if (strcmp(config.tls_key, "/etc/frdpd/tls/server.key") != 0)
+		return -1;
+	if (strcmp(config.auth_mode, "pam-sssd") != 0)
+		return -1;
+	if (strcmp(config.pam_service, "frdpd-test") != 0)
+		return -1;
+	if (strcmp(config.auth_socket, "/run/frdp-authd/authd.sock") != 0)
+		return -1;
+	if (strcmp(config.session_socket, "/run/frdp-sesmand/sesmand.sock") != 0)
+		return -1;
+	return 0;
+}
+
 static int test_empty_filter_lists(void)
 {
 	frdpConfig config = { 0 };
@@ -370,6 +409,39 @@ static int test_rejects_planned_auth_policy(void)
 
 static int test_invalid_channel_config(void)
 {
+	if (expect_load_failure("frdp-top-level-key.toml", "listen = \"127.0.0.1:3389\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-unknown-section.toml", "[logging]\nlevel = \"debug\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-server-section.toml",
+	                        "[server]\nlisten = \"127.0.0.1:3389\"\n[server]\nsecurity = \"nla\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-auth-section.toml",
+	                        "[auth]\nmode = \"pam-sssd\"\n[auth]\npam_service = \"frdpd\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-session-section.toml",
+	                        "[session]\nsession_socket = \"/tmp/a\"\n[session]\nsession_socket = \"/tmp/b\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-unknown-server-key.toml", "[server]\nport = \"3389\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-listen.toml",
+	                        "[server]\nlisten = \"127.0.0.1:3389\"\nlisten = \"127.0.0.1:3390\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-auth-socket.toml",
+	                        "[auth]\nauth_socket = \"/tmp/a\"\nauth_socket = \"/tmp/b\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-session-socket.toml",
+	                        "[session]\nsession_socket = \"/tmp/a\"\nsession_socket = \"/tmp/b\"\n") !=
+	    0)
+		return -1;
 	if (expect_load_failure("frdp-duplicate-max-connections.toml",
 	                        "[server]\nmax_connections = 1\nmax_connections = 2\n") != 0)
 		return -1;
@@ -541,6 +613,8 @@ int TestFreeRDPFrdpConfig(int argc, char* argv[])
 	if (test_empty_filter_lists() != 0)
 		return -1;
 	if (test_server_max_connections() != 0)
+		return -1;
+	if (test_server_auth_session_fields() != 0)
 		return -1;
 	if (test_static_allowlist() != 0)
 		return -1;
