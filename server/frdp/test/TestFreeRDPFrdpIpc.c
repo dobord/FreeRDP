@@ -259,6 +259,18 @@ static int test_rate_limiter_bounds_and_resets_window(void)
 	if (!limiter.entries[0].in_use || limiter.entries[0].uid != peer_uid ||
 	    limiter.entries[0].requests != 1U)
 		return -1;
+	memset(&limiter, 0, sizeof(limiter));
+	for (uint64_t x = 0; x < FRDP_IPC_RATE_LIMIT_MAX_PEERS; x++)
+	{
+		if (!frdp_ipc_rate_limiter_allow(&limiter, UINT64_C(5000) + x))
+			return -1;
+	}
+	if (frdp_ipc_rate_limiter_allow(&limiter, UINT64_C(6000)))
+		return -1;
+	if (!frdp_ipc_rate_limiter_allow(&limiter, UINT64_C(5000)))
+		return -1;
+	if (limiter.entries[0].requests != 2U)
+		return -1;
 	return 0;
 }
 
