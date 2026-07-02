@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 
 static int make_runtime_dir(char* dir, size_t dir_size)
@@ -231,6 +232,34 @@ cleanup:
 	if (fds[1] >= 0)
 		close(fds[1]);
 	return rc;
+}
+
+static int test_rate_limiter_bounds_and_resets_window(void)
+{
+	frdpIpcRateLimiter limiter = { 0 };
+	const uint64_t peer_uid = UINT64_C(4242);
+
+	errno = 0;
+	if (frdp_ipc_rate_limiter_allow(NULL, peer_uid) || (errno != EINVAL))
+		return -1;
+	for (uint32_t x = 0; x < FRDP_IPC_RATE_LIMIT_MAX_REQUESTS; x++)
+	{
+		if (!frdp_ipc_rate_limiter_allow(&limiter, peer_uid))
+			return -1;
+	}
+	if (frdp_ipc_rate_limiter_allow(&limiter, peer_uid))
+		return -1;
+	if (!limiter.entries[0].in_use || limiter.entries[0].uid != peer_uid ||
+	    limiter.entries[0].requests != FRDP_IPC_RATE_LIMIT_MAX_REQUESTS)
+		return -1;
+	limiter.entries[0].window_start =
+	    (unsigned long)time(NULL) - FRDP_IPC_RATE_LIMIT_WINDOW_SECONDS;
+	if (!frdp_ipc_rate_limiter_allow(&limiter, peer_uid))
+		return -1;
+	if (!limiter.entries[0].in_use || limiter.entries[0].uid != peer_uid ||
+	    limiter.entries[0].requests != 1U)
+		return -1;
+	return 0;
 }
 
 static int test_header_uses_little_endian_wire_format(void)
@@ -1184,6 +1213,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_send_recv_reject_null_buffers() != 0)
 		return -1;
 	if (test_get_peer_uid_validates_arguments_and_reads_peer() != 0)
+		return -1;
+	if (test_rate_limiter_bounds_and_resets_window() != 0)
 		return -1;
 	if (test_header_uses_little_endian_wire_format() != 0)
 		return -1;
