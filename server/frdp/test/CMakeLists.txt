@@ -114,6 +114,15 @@ if(CHECKMODULE_EXECUTABLE AND SEMODULE_PACKAGE_EXECUTABLE)
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpSELinux.cmake)
 endif()
 
+find_program(SYSTEMD_TMPFILES_EXECUTABLE systemd-tmpfiles)
+if(SYSTEMD_TMPFILES_EXECUTABLE)
+  add_test(NAME TestFreeRDPFrdpTmpfiles
+           COMMAND ${CMAKE_COMMAND}
+                   -DSYSTEMD_TMPFILES_EXECUTABLE=${SYSTEMD_TMPFILES_EXECUTABLE}
+                   -DFRDP_TMPFILES_CONFIG=${CMAKE_SOURCE_DIR}/packaging/tmpfiles/frdpd.conf
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpTmpfiles.cmake)
+endif()
+
 set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "FreeRDP/Test")
 
 if(BUILD_FUZZERS)
