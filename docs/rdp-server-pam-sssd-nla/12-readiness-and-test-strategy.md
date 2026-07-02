@@ -19,7 +19,7 @@ making the current canonical helper topology repeatably green.
 |---|---:|---|---|
 | Build integration | 65% | `WITH_FRDPD` builds the listener, helpers, agent, control CLI and focused tests | The branch is far behind and diverged from `master`; package builds and a supported dependency matrix are not green |
 | Password-backed NLA and PAM | 60% | Integrated FreeRDP server callbacks, CredSSP identity extraction, PAM auth/account handling, locked temporary secret buffers, auth broker IPC required for normal startup, in-process fallback hidden behind a development build option | Windows client and domain interoperability need repeatable evidence; development fallback builds can still process credentials in the peer worker |
-| Privilege-separated topology | 70% | `frdp-authd`, `frdp-sesmand`, per-user agent, Unix sockets, peer credential checks, process hardening, correlation IDs, normal startup requiring both helper sockets, signed single-use session-open auth tokens bound to POSIX uid/gid/bounded supplementary groups/account state, fixed-window per-peer helper IPC rate limits, live helper-topology startup smoke coverage, live-helper socket collision protection, explicit auth broker, session open/close, session list/reload response, and agent metadata IPC payload encoding, and no default in-process PAM fallback | Legacy session open/V2 still relies on native C struct layout, frame pixel bytes remain a raw tail after explicit agent frame metadata, and the token does not yet carry a richer account-policy profile |
+| Privilege-separated topology | 70% | `frdp-authd`, `frdp-sesmand`, per-user agent, Unix sockets, peer credential checks, process hardening, correlation IDs, normal startup requiring both helper sockets, signed single-use session-open auth tokens bound to POSIX uid/gid/bounded supplementary groups/account state, fixed-window per-peer helper IPC rate limits, live helper-topology startup smoke coverage, live-helper socket collision protection, explicit auth broker, session open/close, session list/reload response, and agent metadata IPC payload encoding, and no default in-process PAM fallback | Legacy V1/V2 session-open message IDs remain compatibility residue but are rejected before body decode, frame pixel bytes remain a raw tail after explicit agent frame metadata, and the token does not yet carry a richer account-policy profile |
 | Session lifecycle | 45% | PAM session ownership, uid/gid drop, Xvfb agent startup, close requests and cleanup exist | No reconnect, durable registry, logind/cgroup ownership, crash reconciliation, atomic display reservation or resource quotas |
 | Desktop data path | 36% | Input injection, raw/XDamage tile capture, bounded output scheduling, basic resize, agent-side resize IPC smoke coverage, and opportunistic NSCodec exist | No production RFX/RDPGFX policy, limited text/IME behavior, no systematic performance or real-client resolution interoperability evidence |
 | Virtual channels | 27% | Static-channel filtering, a DVC authorization hook, and disabled-by-default text clipboard policy fail closed; focused config and WTS deny-path coverage exists | No useful clipboard/audio handlers; `drdynvc` is deliberately guard-denied; no live-client channel tests |
@@ -64,15 +64,15 @@ Do not add another large subsystem until all of the following are true:
 Current status: the normal password-backed helper path now uses an HMAC-signed,
 short-lived V3 session-open token bound to user, remote host, correlation id,
 POSIX uid/gid, bounded supplementary groups, account-present state, nonce and
-expiry; `frdp-sesmand` rejects legacy V2 session-open requests, rejects
+expiry; `frdp-sesmand` rejects legacy V1/V2 session-open requests before body decode, rejects
 mismatched group payloads, and consumes accepted token nonces once. The common
 IPC header, auth broker request/response payloads, canonical V3 session-open
 handoff payloads, session close requests, shared session responses, session
 list/reload responses, and agent input/frame/resize metadata now use explicit
-little-endian/fixed-field wire formats, while legacy session open/V2 and richer
-account-policy payloads remain open. Session list/reload requests are
-header-only control messages, and frame pixel bytes remain a bounded raw tail
-after explicit agent frame metadata.
+little-endian/fixed-field wire formats, while richer account-policy payloads
+remain open. Session list/reload requests are header-only control messages,
+legacy V1/V2 open message IDs remain unsupported compatibility residue, and
+frame pixel bytes remain a bounded raw tail after explicit agent frame metadata.
 
 Exit criterion: the peer worker cannot authenticate or open a user session
 without both brokers, and replaying or modifying a session request fails.
