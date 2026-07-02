@@ -1036,7 +1036,6 @@ static void reap_exited_sessions(void)
 static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payload_len)
 {
     frdpSessionRequest req;
-    frdpSessionRequestV2 req_v2;
     frdpSessionRequestV3 req_v3;
     char correlation_id[sizeof(req.correlation_id)] = {0};
     char session_id[sizeof(req.session_id)] = {0};
@@ -1051,7 +1050,6 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
     int has_posix_account = 0;
 
     memset(&req, 0, sizeof(req));
-    memset(&req_v2, 0, sizeof(req_v2));
     memset(&req_v3, 0, sizeof(req_v3));
     if (type == FRDP_IPC_SESSION_REQUEST_V3) {
         if (frdp_ipc_recv_session_request_v3_payload(fd, &req_v3, payload_len) != 0)
@@ -1066,23 +1064,10 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
         uid = (uid_t)req_v3.uid;
         gid = (gid_t)req_v3.gid;
         has_posix_account = req_v3.has_posix_account;
-    } else if (type == FRDP_IPC_SESSION_REQUEST_V2) {
-        if (frdp_ipc_recv(fd, &req_v2, sizeof(req_v2)) != (int)sizeof(req_v2))
-            return -1;
-        memcpy(req.correlation_id, req_v2.correlation_id, sizeof(req.correlation_id));
-        memcpy(req.session_id, req_v2.session_id, sizeof(req.session_id));
-        memcpy(req.user, req_v2.user, sizeof(req.user));
-        memcpy(req.rhost, req_v2.rhost, sizeof(req.rhost));
-        req.desktop_width = req_v2.desktop_width;
-        req.desktop_height = req_v2.desktop_height;
-        req.color_depth = req_v2.color_depth;
-        uid = (uid_t)req_v2.uid;
-        gid = (gid_t)req_v2.gid;
-        has_posix_account = req_v2.has_posix_account;
     } else if (type == FRDP_IPC_SESSION_CLOSE_REQUEST) {
         if (frdp_ipc_recv_session_close_request_payload(fd, &req, payload_len) != 0)
             return -1;
-    } else if (frdp_ipc_recv(fd, &req, sizeof(req)) != (int)sizeof(req)) {
+    } else {
         return -1;
     }
     if (copy_ipc_string(correlation_id, sizeof(correlation_id), req.correlation_id,
@@ -1099,38 +1084,26 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
         return send_session_response(fd, 0, NULL, NULL, NULL, "invalid authorization");
     }
 
-    if ((type == FRDP_IPC_SESSION_REQUEST) || (type == FRDP_IPC_SESSION_REQUEST_V2) ||
-        (type == FRDP_IPC_SESSION_REQUEST_V3)) {
+    if (type == FRDP_IPC_SESSION_REQUEST_V3) {
         struct passwd *pwd = NULL;
 
         if (user[0] == '\0')
             return send_session_response(fd, 0, NULL, NULL, NULL, "missing user");
-        if (type == FRDP_IPC_SESSION_REQUEST_V2)
+        if (authorization_id[0] == '\0')
             return send_session_response(fd, 0, NULL, NULL, NULL, "missing authorization");
-        if ((type == FRDP_IPC_SESSION_REQUEST_V3) && (authorization_id[0] == '\0'))
-            return send_session_response(fd, 0, NULL, NULL, NULL, "missing authorization");
-        if ((type == FRDP_IPC_SESSION_REQUEST_V3) &&
-            (req_v3.group_count > FRDP_IPC_MAX_AUTH_GROUPS))
+        if (req_v3.group_count > FRDP_IPC_MAX_AUTH_GROUPS)
             return send_session_response(fd, 0, NULL, NULL, NULL, "missing POSIX account");
-        if ((type == FRDP_IPC_SESSION_REQUEST_V3) &&
-            validate_and_consume_authorization(authorization_id, user, rhost, correlation_id,
+        if (validate_and_consume_authorization(authorization_id, user, rhost, correlation_id,
                                                req_v3.uid, req_v3.gid, req_v3.groups,
-                                               req_v3.group_count,
-                                               req_v3.has_posix_account) != 0)
+                                               req_v3.group_count, req_v3.has_posix_account) != 0)
             return send_session_response(fd, 0, NULL, NULL, NULL, "invalid authorization");
-        if (((type != FRDP_IPC_SESSION_REQUEST_V2) && (type != FRDP_IPC_SESSION_REQUEST_V3)) ||
-            !has_posix_account ||
-            ((type == FRDP_IPC_SESSION_REQUEST_V2) &&
-             (((uint64_t)uid != req_v2.uid) || ((uint64_t)gid != req_v2.gid))) ||
-            ((type == FRDP_IPC_SESSION_REQUEST_V3) &&
-             (((uint64_t)uid != req_v3.uid) || ((uint64_t)gid != req_v3.gid) ||
-              (req_v3.group_count > FRDP_IPC_MAX_AUTH_GROUPS))))
+        if (!has_posix_account || ((uint64_t)uid != req_v3.uid) || ((uint64_t)gid != req_v3.gid) ||
+            (req_v3.group_count > FRDP_IPC_MAX_AUTH_GROUPS))
             return send_session_response(fd, 0, NULL, NULL, NULL, "missing POSIX account");
         pwd = getpwnam(user);
         if (!pwd || (pwd->pw_uid != uid) || (pwd->pw_gid != gid))
             return send_session_response(fd, 0, NULL, NULL, NULL, "POSIX account mismatch");
-        if ((type == FRDP_IPC_SESSION_REQUEST_V3) &&
-            !posix_groups_match(user, gid, req_v3.groups, req_v3.group_count))
+        if (!posix_groups_match(user, gid, req_v3.groups, req_v3.group_count))
             return send_session_response(fd, 0, NULL, NULL, NULL, "POSIX groups mismatch");
         if (open_session(user, uid, gid, req_v3.groups, req_v3.group_count, rhost,
                          correlation_id, req.desktop_width, req.desktop_height, req.color_depth,
@@ -1328,10 +1301,6 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             }
         } else if (((hdr.type == FRDP_IPC_SESSION_REQUEST_V3) &&
                     (hdr.payload_len == FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE)) ||
-                   ((hdr.type == FRDP_IPC_SESSION_REQUEST_V2) &&
-                    (hdr.payload_len == sizeof(frdpSessionRequestV2))) ||
-                   ((hdr.type == FRDP_IPC_SESSION_REQUEST) &&
-                    (hdr.payload_len == sizeof(frdpSessionRequest))) ||
                    ((hdr.type == FRDP_IPC_SESSION_CLOSE_REQUEST) &&
                     (hdr.payload_len == FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE))) {
             (void)handle_session_request(cfd, hdr.type, hdr.payload_len);

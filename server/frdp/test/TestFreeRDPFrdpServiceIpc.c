@@ -537,7 +537,23 @@ cleanup:
 	return rc;
 }
 
-static int test_sesmand_rejects_missing_posix_account(const char* socket_path)
+static int test_sesmand_rejects_legacy_v1_open_request(const char* socket_path)
+{
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	if (send_header(fd, FRDP_IPC_SESSION_REQUEST, sizeof(frdpSessionRequest)) != 0)
+		goto cleanup;
+	rc = receive_session_response(fd, 0, "unsupported IPC request");
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
+static int test_sesmand_rejects_legacy_v2_missing_posix_account(const char* socket_path)
 {
 	frdpSessionRequestV2 request = { 0 };
 	int fd = frdp_ipc_connect(socket_path);
@@ -550,17 +566,16 @@ static int test_sesmand_rejects_missing_posix_account(const char* socket_path)
 	snprintf(request.session_id, sizeof(request.session_id),
 	         "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
 	snprintf(request.user, sizeof(request.user), "nobody");
-	if (send_header(fd, FRDP_IPC_SESSION_REQUEST_V2, sizeof(request)) != 0 ||
-	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
+	if (send_header(fd, FRDP_IPC_SESSION_REQUEST_V2, sizeof(request)) != 0)
 		goto cleanup;
-	rc = receive_session_response(fd, 0, "missing authorization");
+	rc = receive_session_response(fd, 0, "unsupported IPC request");
 
 cleanup:
 	frdp_ipc_close(fd);
 	return rc;
 }
 
-static int test_sesmand_rejects_posix_account_mismatch(const char* socket_path)
+static int test_sesmand_rejects_legacy_v2_posix_account_mismatch(const char* socket_path)
 {
 	frdpSessionRequestV2 request = { 0 };
 	int fd = frdp_ipc_connect(socket_path);
@@ -576,10 +591,9 @@ static int test_sesmand_rejects_posix_account_mismatch(const char* socket_path)
 	request.has_posix_account = 1;
 	request.uid = 0;
 	request.gid = 0;
-	if (send_header(fd, FRDP_IPC_SESSION_REQUEST_V2, sizeof(request)) != 0 ||
-	    frdp_ipc_send(fd, &request, sizeof(request)) != 0)
+	if (send_header(fd, FRDP_IPC_SESSION_REQUEST_V2, sizeof(request)) != 0)
 		goto cleanup;
-	rc = receive_session_response(fd, 0, "missing authorization");
+	rc = receive_session_response(fd, 0, "unsupported IPC request");
 
 cleanup:
 	frdp_ipc_close(fd);
@@ -853,9 +867,11 @@ static int test_sesmand_component(void)
 		goto cleanup;
 	if (test_sesmand_rejects_unterminated_request(helper.socket_path) != 0)
 		goto cleanup;
-	if (test_sesmand_rejects_missing_posix_account(helper.socket_path) != 0)
+	if (test_sesmand_rejects_legacy_v1_open_request(helper.socket_path) != 0)
 		goto cleanup;
-	if (test_sesmand_rejects_posix_account_mismatch(helper.socket_path) != 0)
+	if (test_sesmand_rejects_legacy_v2_missing_posix_account(helper.socket_path) != 0)
+		goto cleanup;
+	if (test_sesmand_rejects_legacy_v2_posix_account_mismatch(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_missing_authorization(helper.socket_path) != 0)
 		goto cleanup;
