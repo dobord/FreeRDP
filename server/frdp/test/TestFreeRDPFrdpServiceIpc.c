@@ -181,7 +181,7 @@ static int send_header(int fd, frdpIpcMessageType type, uint32_t payload_len)
 }
 
 static int send_partial_header_then_close(const char* socket_path, frdpIpcMessageType type,
-                                          uint32_t payload_len)
+                                          uint32_t payload_len, size_t sent_len)
 {
 	frdpIpcHeader header = { 0 };
 	int fd = frdp_ipc_connect(socket_path);
@@ -189,23 +189,28 @@ static int send_partial_header_then_close(const char* socket_path, frdpIpcMessag
 
 	if (fd < 0)
 		return -1;
+	if (sent_len >= sizeof(header))
+		goto cleanup;
 	header.type = type;
 	header.payload_len = payload_len;
-	rc = frdp_ipc_send(fd, &header, sizeof(header) / 2U);
+	rc = frdp_ipc_send(fd, &header, sent_len);
+cleanup:
 	frdp_ipc_close(fd);
 	return rc;
 }
 
 static int send_partial_body_then_close(const char* socket_path, frdpIpcMessageType type,
-                                        const void* payload, size_t payload_len)
+                                        const void* payload, size_t payload_len, size_t sent_len)
 {
 	int fd = frdp_ipc_connect(socket_path);
 	int rc = -1;
 
+	if (!payload || (sent_len >= payload_len))
+		return -1;
 	if (fd < 0)
 		return -1;
 	if (send_header(fd, type, payload_len) == 0)
-		rc = frdp_ipc_send(fd, payload, payload_len / 2U);
+		rc = frdp_ipc_send(fd, payload, sent_len);
 	frdp_ipc_close(fd);
 	return rc;
 }
@@ -443,15 +448,19 @@ cleanup:
 
 static int test_authd_survives_truncated_clients(const char* socket_path)
 {
-	frdpAuthRequest request = { 0 };
+	uint8_t request[FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE] = { 0 };
 
-	snprintf(request.correlation_id, sizeof(request.correlation_id),
-	         "12121212-1212-4212-8212-121212121212");
 	if (send_partial_header_then_close(socket_path, FRDP_IPC_AUTH_REQUEST_V2,
-	                                   sizeof(request)) != 0)
+	                                   sizeof(request), sizeof(frdpIpcHeader) / 2U) != 0)
 		return -1;
 	if (send_partial_body_then_close(socket_path, FRDP_IPC_AUTH_REQUEST_V2, &request,
-	                                 sizeof(request)) != 0)
+	                                 sizeof(request), sizeof(request) / 2U) != 0)
+		return -1;
+	if (send_partial_header_then_close(socket_path, FRDP_IPC_AUTH_REQUEST_V2,
+	                                   sizeof(request), sizeof(frdpIpcHeader) - 1U) != 0)
+		return -1;
+	if (send_partial_body_then_close(socket_path, FRDP_IPC_AUTH_REQUEST_V2, &request,
+	                                 sizeof(request), sizeof(request) - 1U) != 0)
 		return -1;
 	return test_authd_rejects_bad_length(socket_path);
 }
@@ -823,15 +832,19 @@ cleanup:
 
 static int test_sesmand_survives_truncated_clients(const char* socket_path)
 {
-	frdpSessionRequest request = { 0 };
+	uint8_t request[FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE] = { 0 };
 
-	snprintf(request.correlation_id, sizeof(request.correlation_id),
-	         "77777777-7777-4777-8777-777777777777");
-	if (send_partial_header_then_close(socket_path, FRDP_IPC_SESSION_REQUEST,
-	                                   sizeof(request)) != 0)
+	if (send_partial_header_then_close(socket_path, FRDP_IPC_SESSION_REQUEST_V3,
+	                                   sizeof(request), sizeof(frdpIpcHeader) / 2U) != 0)
 		return -1;
-	if (send_partial_body_then_close(socket_path, FRDP_IPC_SESSION_REQUEST, &request,
-	                                 sizeof(request)) != 0)
+	if (send_partial_body_then_close(socket_path, FRDP_IPC_SESSION_REQUEST_V3, &request,
+	                                 sizeof(request), sizeof(request) / 2U) != 0)
+		return -1;
+	if (send_partial_header_then_close(socket_path, FRDP_IPC_SESSION_REQUEST_V3,
+	                                   sizeof(request), sizeof(frdpIpcHeader) - 1U) != 0)
+		return -1;
+	if (send_partial_body_then_close(socket_path, FRDP_IPC_SESSION_REQUEST_V3, &request,
+	                                 sizeof(request), sizeof(request) - 1U) != 0)
 		return -1;
 	return test_sesmand_list_empty(socket_path);
 }
