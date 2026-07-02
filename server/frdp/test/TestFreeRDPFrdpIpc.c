@@ -244,6 +244,72 @@ cleanup:
 	return rc;
 }
 
+static int expect_einval(int rc)
+{
+	return (rc == -1) && (errno == EINVAL) ? 0 : -1;
+}
+
+static int test_payload_decoders_reject_invalid_arguments(void)
+{
+	frdpAuthRequest auth_request = { 0 };
+	frdpSessionRequestV3 session_request_v3 = { 0 };
+	frdpSessionRequest session_close_request = { 0 };
+	frdpAgentInputEvent input = { 0 };
+	frdpAgentFrameRequest frame_request = { 0 };
+	frdpAgentResizeRequest resize_request = { 0 };
+
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_auth_request_v2_payload(
+	        -1, &auth_request, FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE - 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_auth_request_v2_payload(
+	        -1, NULL, FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_session_request_v3_payload(
+	        -1, &session_request_v3, FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE - 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_session_request_v3_payload(
+	        -1, NULL, FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_session_close_request_payload(
+	        -1, &session_close_request, FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE - 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_session_close_request_payload(
+	        -1, NULL, FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_agent_input_event_payload(
+	        -1, &input, FRDP_IPC_AGENT_INPUT_WIRE_SIZE - 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(
+	        frdp_ipc_recv_agent_input_event_payload(-1, NULL, FRDP_IPC_AGENT_INPUT_WIRE_SIZE)) !=
+	    0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_agent_frame_request_payload(
+	        -1, &frame_request, FRDP_IPC_AGENT_FRAME_REQUEST_WIRE_SIZE - 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_agent_frame_request_payload(
+	        -1, NULL, FRDP_IPC_AGENT_FRAME_REQUEST_WIRE_SIZE)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_agent_resize_request_payload(
+	        -1, &resize_request, FRDP_IPC_AGENT_RESIZE_REQUEST_WIRE_SIZE - 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_agent_resize_request_payload(
+	        -1, NULL, FRDP_IPC_AGENT_RESIZE_REQUEST_WIRE_SIZE)) != 0)
+		return -1;
+	return 0;
+}
+
 static int test_auth_response_uses_explicit_wire_format(void)
 {
 	int fds[2] = { -1, -1 };
@@ -1069,6 +1135,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_send_recv_reject_null_buffers() != 0)
 		return -1;
 	if (test_header_uses_little_endian_wire_format() != 0)
+		return -1;
+	if (test_payload_decoders_reject_invalid_arguments() != 0)
 		return -1;
 	if (test_auth_request_uses_explicit_wire_format() != 0)
 		return -1;
