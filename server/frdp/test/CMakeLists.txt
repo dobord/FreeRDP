@@ -101,6 +101,19 @@ if(APPARMOR_PARSER_EXECUTABLE)
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpAppArmor.cmake)
 endif()
 
+find_program(CHECKMODULE_EXECUTABLE checkmodule)
+find_program(SEMODULE_PACKAGE_EXECUTABLE semodule_package)
+if(CHECKMODULE_EXECUTABLE AND SEMODULE_PACKAGE_EXECUTABLE)
+  add_test(NAME TestFreeRDPFrdpSELinux
+           COMMAND ${CMAKE_COMMAND}
+                   -DCHECKMODULE_EXECUTABLE=${CHECKMODULE_EXECUTABLE}
+                   -DSEMODULE_PACKAGE_EXECUTABLE=${SEMODULE_PACKAGE_EXECUTABLE}
+                   -DFRDP_SELINUX_POLICY=${CMAKE_SOURCE_DIR}/packaging/selinux/frdpd.te
+                   -DFRDP_SELINUX_FILE_CONTEXTS=${CMAKE_SOURCE_DIR}/packaging/selinux/frdpd.fc
+                   -DFRDP_SELINUX_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/selinux-policy-test
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpSELinux.cmake)
+endif()
+
 set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "FreeRDP/Test")
 
 if(BUILD_FUZZERS)

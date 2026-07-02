@@ -62,6 +62,7 @@ a non-installed prototype in the current package.
 %dir %{_datadir}/frdpd/security/selinux
 %dir %{_datadir}/frdpd/security/apparmor
 %{_datadir}/frdpd/security/selinux/frdpd.te
+%{_datadir}/frdpd/security/selinux/frdpd.fc
 %{_datadir}/frdpd/security/apparmor/frdpd
 %dir %{_datadir}/frdpd/monitoring
 %{_datadir}/frdpd/monitoring/frdpd-node-exporter-textfile.sh

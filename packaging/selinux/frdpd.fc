@@ -1,0 +1,6 @@
+/usr/bin/frdpd -- gen_context(system_u:object_r:bin_t,s0)
+/usr/bin/frdp-authd -- gen_context(system_u:object_r:bin_t,s0)
+/usr/bin/frdp-sesmand -- gen_context(system_u:object_r:bin_t,s0)
+/usr/bin/frdp-session-agent -- gen_context(system_u:object_r:bin_t,s0)
+/etc/frdpd(/.*)? gen_context(system_u:object_r:etc_t,s0)
+/etc/pam\.d/frdpd -- gen_context(system_u:object_r:etc_t,s0)

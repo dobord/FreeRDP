@@ -145,7 +145,9 @@ install(FILES ${FRDP_SYSTEMD_UNIT_FILES}
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/tmpfiles/frdpd.conf
         DESTINATION ${FRDP_TMPFILES_DIR}
         COMPONENT server)
-install(FILES ${CMAKE_SOURCE_DIR}/packaging/selinux/frdpd.te
+install(FILES
+        ${CMAKE_SOURCE_DIR}/packaging/selinux/frdpd.te
+        ${CMAKE_SOURCE_DIR}/packaging/selinux/frdpd.fc
         DESTINATION ${FRDP_SECURITY_POLICY_DIR}/selinux
         COMPONENT server)
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/apparmor/frdpd
