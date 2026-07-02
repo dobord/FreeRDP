@@ -68,6 +68,8 @@ add_executable(frdp-sesmand
     frdp-sesmand/display_policy.h
     frdp-sesmand/session_cleanup.c
     frdp-sesmand/session_cleanup.h
+    frdp-sesmand/session_reconnect.c
+    frdp-sesmand/session_reconnect.h
     frdp-sesmand/session_state.c
     frdp-sesmand/session_state.h
     config/frdp-config.c
