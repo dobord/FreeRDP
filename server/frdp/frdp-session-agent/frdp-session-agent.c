@@ -42,6 +42,7 @@
 #include <winpr/platform.h>
 
 #include "../ipc/frdp-ipc.h"
+#include "input_policy.h"
 
 #define FRDP_AGENT_READY_MARKER 'R'
 #define FRDP_AGENT_FRAME_TILE_MAX 120U
@@ -1117,6 +1118,17 @@ static int handle_input_message(int fd, Display *display, uint32_t payload_len,
                        sizeof(escaped_correlation_id), escaped_session_id,
                        sizeof(escaped_session_id));
         syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected mismatched input event",
+               escaped_correlation_id, escaped_session_id);
+        return -1;
+    }
+    if (!frdp_agent_input_event_payload_is_valid(&event)) {
+        char escaped_correlation_id[256] = { 0 };
+        char escaped_session_id[256] = { 0 };
+
+        escape_log_ids(correlation_id, session_id, escaped_correlation_id,
+                       sizeof(escaped_correlation_id), escaped_session_id,
+                       sizeof(escaped_session_id));
+        syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected malformed input event",
                escaped_correlation_id, escaped_session_id);
         return -1;
     }

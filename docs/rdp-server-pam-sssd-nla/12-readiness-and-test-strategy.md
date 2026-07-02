@@ -140,6 +140,7 @@ They should cover:
 - channel policy exact matching and malformed `CHANNEL_DEF` input;
 - IPC encode/decode, versioning, length arithmetic, partial reads/writes,
   endianness and zeroization;
+- agent input event type, flag and parameter bounds before XTest injection;
 - session-state transitions, reconnect selection and cleanup decisions with
   process/PAM/logind adapters mocked;
 - display allocation and collision handling;
@@ -162,7 +163,7 @@ Extend it with:
 - additional peer UID rejection and server peer-credential validation;
 - live-socket/stale-socket startup behavior;
 - broker crash during auth and manager crash during open/close;
-- agent protocol frame/input bounds against Xvfb plus resize control-IPC coverage;
+- agent protocol frame/input runtime behavior against Xvfb beyond the focused input-policy and resize control-IPC coverage;
 - sanitizer and Valgrind/LSan variants.
 
 ### Docker Compose E2E

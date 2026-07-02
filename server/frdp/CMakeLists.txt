@@ -74,6 +74,8 @@ installwithrpath(TARGETS frdp-sesmand DESTINATION ${CMAKE_INSTALL_BINDIR} COMPON
 set_property(TARGET frdp-sesmand PROPERTY FOLDER "Server/frdp")
 
 add_executable(frdp-session-agent
+    frdp-session-agent/input_policy.c
+    frdp-session-agent/input_policy.h
     frdp-session-agent/frdp-session-agent.c
     $<TARGET_OBJECTS:frdp-ipc>)
 target_include_directories(frdp-session-agent SYSTEM PRIVATE ${X11_INCLUDE_DIR} ${X11_XTest_INCLUDE_PATH} ${X11_Xdamage_INCLUDE_PATH} ${X11_Xrandr_INCLUDE_PATH})

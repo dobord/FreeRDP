@@ -6,7 +6,8 @@ disable_warnings_for_directory(${CMAKE_CURRENT_BINARY_DIR})
 set(${MODULE_PREFIX}_DRIVER ${MODULE_NAME}.c)
 set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFreeRDPFrdpCtlIpc.c
                          TestFreeRDPFrdpHelperStop.c TestFreeRDPFrdpServiceIpc.c
-                         TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpPam.c)
+                         TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpInputPolicy.c
+                         TestFreeRDPFrdpPam.c)
 find_program(XVFB_EXECUTABLE Xvfb)
 if(XVFB_EXECUTABLE)
   list(APPEND ${MODULE_PREFIX}_TESTS TestFreeRDPFrdpAgentStop.c)
@@ -27,7 +28,9 @@ add_executable(${MODULE_NAME}
     ../frdpd/frame_policy.c
     ../frdpd/frame_policy.h
     ../frdpd/frdpd_pam.c
-    ../frdpd/frdpd_pam.h)
+    ../frdpd/frdpd_pam.h
+    ../frdp-session-agent/input_policy.c
+    ../frdp-session-agent/input_policy.h)
 add_dependencies(${MODULE_NAME} frdpd frdpctl frdp-authd frdp-sesmand frdp-session-agent)
 
 target_include_directories(${MODULE_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
