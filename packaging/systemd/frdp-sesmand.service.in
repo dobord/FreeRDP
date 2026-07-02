@@ -13,7 +13,13 @@ PrivateTmp=true
 ProtectSystem=full
 ReadWritePaths=/run/frdp-sesmand /run/frdp-auth-token
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+RestrictRealtime=true
+SystemCallArchitectures=native
 LockPersonality=true
+UMask=0077
 LimitNOFILE=1024
 TimeoutStopSec=30s
 

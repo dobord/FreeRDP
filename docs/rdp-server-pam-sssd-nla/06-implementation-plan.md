@@ -38,6 +38,13 @@ ctest --test-dir /tmp/opencode/freerdp-frdp-strict-warnings -R '^TestFreeRDPFrdp
 cmake -S . -B /tmp/opencode/freerdp-frdp-fuzz -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DBUILD_FUZZERS=ON -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SHADOW=OFF -DWITH_PROXY=OFF -DWITH_SAMPLE=OFF -DWITH_MANPAGES=OFF -DWITH_WAYLAND=OFF -DWITH_SDL=OFF -DWITH_PULSE=OFF -DWITH_ALSA=OFF -DWITH_CUPS=OFF -DWITH_PCSC=OFF -DWITH_FFMPEG=OFF -DWITH_SWSCALE=OFF -DWITH_FUSE=OFF -DWITH_OPENCL=OFF -DCHANNEL_URBDRC=OFF
 cmake --build /tmp/opencode/freerdp-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig
 /tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpConfig -runs=128 -max_len=1024
+cmake -S . -B /tmp/opencode/freerdp-frdp-systemd-check -GNinja -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SHADOW=OFF -DWITH_PROXY=OFF -DWITH_SAMPLE=OFF -DWITH_MANPAGES=OFF -DWITH_WAYLAND=OFF -DWITH_SDL=OFF -DWITH_PULSE=OFF -DWITH_ALSA=OFF -DWITH_CUPS=OFF -DWITH_PCSC=OFF -DWITH_FFMPEG=OFF -DWITH_SWSCALE=OFF -DWITH_FUSE=OFF -DWITH_OPENCL=OFF -DCHANNEL_URBDRC=OFF
+rm -rf /tmp/opencode/frdp-systemd-root && mkdir -p /tmp/opencode/frdp-systemd-root/etc/systemd/system /tmp/opencode/frdp-systemd-root/usr/local/bin
+cp /tmp/opencode/freerdp-frdp-systemd-check/server/frdp/frdpd.service /tmp/opencode/freerdp-frdp-systemd-check/server/frdp/frdp-authd.service /tmp/opencode/freerdp-frdp-systemd-check/server/frdp/frdp-sesmand.service /tmp/opencode/frdp-systemd-root/etc/systemd/system/
+touch /tmp/opencode/frdp-systemd-root/usr/local/bin/frdpd /tmp/opencode/frdp-systemd-root/usr/local/bin/frdp-authd /tmp/opencode/frdp-systemd-root/usr/local/bin/frdp-sesmand
+chmod 0755 /tmp/opencode/frdp-systemd-root/usr/local/bin/frdpd /tmp/opencode/frdp-systemd-root/usr/local/bin/frdp-authd /tmp/opencode/frdp-systemd-root/usr/local/bin/frdp-sesmand
+for unit in sysinit.target basic.target network.target multi-user.target; do printf '[Unit]\nDescription=%s\n' "$unit" > "/tmp/opencode/frdp-systemd-root/etc/systemd/system/$unit"; done
+systemd-analyze verify --root=/tmp/opencode/frdp-systemd-root frdpd.service frdp-authd.service frdp-sesmand.service
 ```
 
 Implemented in the integrated `server/frdp/frdpd` path:
@@ -169,7 +176,7 @@ Deliverables:
 - [ ] protocol regression suite;
 - [ ] load testing harness;
 - [ ] SELinux/AppArmor profiles (draft examples install under `/usr/share/frdpd/security`, but are not validated or activated);
-- [ ] systemd hardening (listener/auth/session unit examples install, and the shared auth-token runtime directory is provided through tmpfiles, but package builds and production hardening validation remain open);
+- [ ] systemd hardening (listener/auth/session unit examples install with baseline sandboxing directives, and the shared auth-token runtime directory is provided through tmpfiles, but package builds and production hardening validation remain open);
 - [ ] package signing and reproducible-build notes.
 
 Exit criteria: the security baseline is accepted; no critical crashes are found during the fuzz/load-test window; packages install cleanly on target operating systems.
