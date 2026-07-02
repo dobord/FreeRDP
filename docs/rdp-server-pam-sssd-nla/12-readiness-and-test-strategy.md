@@ -134,9 +134,9 @@ They should cover:
 
 - configuration parsing, duplicate keys, length boundaries and fail-closed
   unsupported policy;
-- user/domain normalization and PAM conversation behavior now have focused CTest
-  coverage through a testable PAM adapter boundary; PAM error mapping still needs
-  deterministic provider coverage;
+- user/domain normalization, PAM status mapping and PAM conversation behavior
+  now have focused CTest coverage through a testable PAM adapter boundary;
+  deterministic provider-module coverage remains open;
 - channel policy exact matching and malformed `CHANNEL_DEF` input;
 - IPC encode/decode, versioning, length arithmetic, partial reads/writes,
   endianness and zeroization;

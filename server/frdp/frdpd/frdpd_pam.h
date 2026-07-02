@@ -53,6 +53,8 @@ BOOL frdpd_pam_build_user(const char* user, const char* domain, frdpdDomainMode 
 void frdpd_pam_clear_secret(char* secret);
 int frdpd_pam_answer_conversation(int num_msg, const struct pam_message** msg,
                                   struct pam_response** resp, const char* password);
+frdpdPamAuthStatus frdpd_pam_authenticate_status_from_pam(int pam_status);
+frdpdPamAuthStatus frdpd_pam_account_status_from_pam(int pam_status);
 frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request);
 int frdpd_pam_close_session(void* pam_handle, const char* pam_user,
                             BOOL pam_credentials_established, BOOL pam_session_open);

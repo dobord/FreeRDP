@@ -125,6 +125,32 @@ static int test_pam_conversation_rejects_bad_arguments(void)
 	return 0;
 }
 
+static int test_pam_status_mapping(void)
+{
+	if (frdpd_pam_authenticate_status_from_pam(PAM_SUCCESS) != FRDPD_PAM_AUTH_OK)
+		return -1;
+	if (frdpd_pam_authenticate_status_from_pam(PAM_AUTH_ERR) != FRDPD_PAM_AUTH_DENIED)
+		return -1;
+	if (frdpd_pam_authenticate_status_from_pam(PAM_USER_UNKNOWN) != FRDPD_PAM_AUTH_DENIED)
+		return -1;
+	if (frdpd_pam_authenticate_status_from_pam(PAM_PERM_DENIED) != FRDPD_PAM_AUTH_DENIED)
+		return -1;
+	if (frdpd_pam_authenticate_status_from_pam(PAM_CRED_INSUFFICIENT) !=
+	    FRDPD_PAM_AUTH_DENIED)
+		return -1;
+	if (frdpd_pam_authenticate_status_from_pam(PAM_SYSTEM_ERR) != FRDPD_PAM_AUTH_ERROR)
+		return -1;
+	if (frdpd_pam_account_status_from_pam(PAM_SUCCESS) != FRDPD_PAM_AUTH_OK)
+		return -1;
+	if (frdpd_pam_account_status_from_pam(PAM_ACCT_EXPIRED) !=
+	    FRDPD_PAM_AUTH_ACCOUNT_DENIED)
+		return -1;
+	if (frdpd_pam_account_status_from_pam(PAM_PERM_DENIED) !=
+	    FRDPD_PAM_AUTH_ACCOUNT_DENIED)
+		return -1;
+	return 0;
+}
+
 int TestFreeRDPFrdpPam(int argc, char* argv[])
 {
 	(void)argc;
@@ -148,6 +174,11 @@ int TestFreeRDPFrdpPam(int argc, char* argv[])
 	if (test_pam_conversation_rejects_bad_arguments() != 0)
 	{
 		printf("PAM bad argument conversation test failed\n");
+		return -1;
+	}
+	if (test_pam_status_mapping() != 0)
+	{
+		printf("PAM status mapping test failed\n");
 		return -1;
 	}
 	return 0;

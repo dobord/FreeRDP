@@ -108,6 +108,27 @@ static int frdpd_pam_conv(int num_msg, const struct pam_message** msg, struct pa
 	                                     data && data->password ? data->password : "");
 }
 
+frdpdPamAuthStatus frdpd_pam_authenticate_status_from_pam(int pam_status)
+{
+	switch (pam_status)
+	{
+		case PAM_SUCCESS:
+			return FRDPD_PAM_AUTH_OK;
+		case PAM_AUTH_ERR:
+		case PAM_USER_UNKNOWN:
+		case PAM_PERM_DENIED:
+		case PAM_CRED_INSUFFICIENT:
+			return FRDPD_PAM_AUTH_DENIED;
+		default:
+			return FRDPD_PAM_AUTH_ERROR;
+	}
+}
+
+frdpdPamAuthStatus frdpd_pam_account_status_from_pam(int pam_status)
+{
+	return (pam_status == PAM_SUCCESS) ? FRDPD_PAM_AUTH_OK : FRDPD_PAM_AUTH_ACCOUNT_DENIED;
+}
+
 BOOL frdpd_pam_build_user(const char* user, const char* domain, frdpdDomainMode mode,
                           char** normalized_user)
 {
@@ -178,11 +199,12 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 	if (pam_status == PAM_SUCCESS)
 		pam_status = pam_authenticate(pamh, 0);
 
-	frdpdPamAuthStatus status = FRDPD_PAM_AUTH_ERROR;
-	if (pam_status == PAM_SUCCESS)
+	frdpdPamAuthStatus status = frdpd_pam_authenticate_status_from_pam(pam_status);
+	if (status == FRDPD_PAM_AUTH_OK)
 	{
 		pam_status = pam_acct_mgmt(pamh, 0);
-		if (pam_status == PAM_SUCCESS)
+		status = frdpd_pam_account_status_from_pam(pam_status);
+		if (status == FRDPD_PAM_AUTH_OK)
 		{
 			pam_status = pam_setcred(pamh, PAM_ESTABLISH_CRED);
 			if (pam_status == PAM_SUCCESS)
@@ -190,14 +212,9 @@ frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request)
 				credentials_established = TRUE;
 				status = FRDPD_PAM_AUTH_OK;
 			}
+			else
+				status = FRDPD_PAM_AUTH_ERROR;
 		}
-		else
-			status = FRDPD_PAM_AUTH_ACCOUNT_DENIED;
-	}
-	else if (pam_status == PAM_AUTH_ERR || pam_status == PAM_USER_UNKNOWN ||
-	         pam_status == PAM_PERM_DENIED || pam_status == PAM_CRED_INSUFFICIENT)
-	{
-		status = FRDPD_PAM_AUTH_DENIED;
 	}
 
 	if ((status == FRDPD_PAM_AUTH_OK) && request->open_session)
