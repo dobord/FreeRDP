@@ -187,6 +187,69 @@ static int send_agent_resize(const char* socket_path, uint32_t width, uint32_t h
 	return 0;
 }
 
+static int send_agent_frame_request(const char* socket_path, uint32_t width, uint32_t height)
+{
+	uint8_t* pixels = NULL;
+	size_t pixel_capacity = 0;
+	const size_t requested_width = width;
+	const size_t requested_height = height;
+	int fd = -1;
+	frdpAgentFrameRequest request;
+	frdpAgentFrameResponse response;
+
+	if ((requested_width == 0) || (requested_height == 0) ||
+	    (requested_width > SIZE_MAX / requested_height) ||
+	    (requested_width * requested_height > SIZE_MAX / 4U))
+		return -1;
+	pixel_capacity = requested_width * requested_height * 4U;
+	pixels = (uint8_t*)calloc(1, pixel_capacity);
+	if (!pixels)
+		return -1;
+
+	memset(&request, 0, sizeof(request));
+	memset(&response, 0, sizeof(response));
+
+	fd = frdp_ipc_connect(socket_path);
+	if (fd < 0)
+		goto fail;
+
+	snprintf(request.correlation_id, sizeof(request.correlation_id), "%s", TEST_CORRELATION_ID);
+	snprintf(request.session_id, sizeof(request.session_id), "%s", TEST_SESSION_ID);
+	request.x = 0;
+	request.y = 0;
+	request.width = width;
+	request.height = height;
+	request.flags = FRDP_AGENT_FRAME_REQUEST_FORCE;
+
+	if (frdp_ipc_send_agent_frame_request(fd, &request) != 0)
+		goto fail;
+	if (frdp_ipc_recv_agent_frame_response(fd, &response) != 0)
+		goto fail;
+	if (!response.success || (response.flags & FRDP_AGENT_FRAME_RESPONSE_UNCHANGED))
+		goto fail;
+	if (strcmp(response.correlation_id, TEST_CORRELATION_ID) != 0 ||
+	    strcmp(response.session_id, TEST_SESSION_ID) != 0)
+		goto fail;
+	if ((response.x != 0) || (response.y != 0) || (response.width != width) ||
+	    (response.height != height) || (response.bpp != 32) || (response.stride != width * 4U))
+		goto fail;
+	if (response.data_length != response.stride * response.height ||
+	    response.data_length > pixel_capacity)
+		goto fail;
+	if (frdp_ipc_recv(fd, pixels, response.data_length) != (int)response.data_length)
+		goto fail;
+
+	frdp_ipc_close(fd);
+	free(pixels);
+	return 0;
+
+fail:
+	if (fd >= 0)
+		frdp_ipc_close(fd);
+	free(pixels);
+	return -1;
+}
+
 int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 {
 	(void)argc;
@@ -200,10 +263,12 @@ int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 	int status = 0;
 	int rc = -1;
 	int resize_checked = 0;
+	int frame_checked = 0;
 
 	if (pipe(ready_pipe) != 0)
 		return -1;
-	control_fd = create_control_socket(socket_dir, sizeof(socket_dir), socket_path, sizeof(socket_path));
+	control_fd =
+	    create_control_socket(socket_dir, sizeof(socket_dir), socket_path, sizeof(socket_path));
 	if (control_fd < 0)
 		goto cleanup;
 
@@ -242,6 +307,12 @@ int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 	if (send_agent_resize(socket_path, 64, 64, geteuid() == 0) != 0)
 		goto cleanup;
 	resize_checked = 1;
+	if (geteuid() == 0)
+	{
+		if (send_agent_frame_request(socket_path, 16, 16) != 0)
+			goto cleanup;
+		frame_checked = 1;
+	}
 	if (kill(-pid, SIGTERM) != 0)
 		goto cleanup;
 	if (wait_for_exit(pid, &status) != 0)
@@ -275,5 +346,7 @@ cleanup:
 		printf("frdp-session-agent stop cleanup failed\n");
 	else if (resize_checked && geteuid() != 0)
 		printf("frdp-session-agent control peer rejection verified for non-root test uid\n");
+	else if (resize_checked && frame_checked)
+		printf("frdp-session-agent root resize and frame capture verified\n");
 	return rc;
 }
