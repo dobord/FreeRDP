@@ -66,6 +66,8 @@ add_executable(frdp-sesmand
     frdp-sesmand/frdp-sesmand.c
     frdp-sesmand/display_policy.c
     frdp-sesmand/display_policy.h
+    frdp-sesmand/session_state.c
+    frdp-sesmand/session_state.h
     config/frdp-config.c
     config/frdp-config.h
     $<TARGET_OBJECTS:frdp-ipc>)

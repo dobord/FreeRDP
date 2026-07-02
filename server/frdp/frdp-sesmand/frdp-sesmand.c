@@ -40,6 +40,7 @@
 #include "../ipc/frdp-auth-token.h"
 #include "../ipc/frdp-ipc.h"
 #include "display_policy.h"
+#include "session_state.h"
 
 /* Session registry entry.  Each session retains its PAM handle and the
  * process group of the launched agent/backend so that cleanup can terminate
@@ -53,6 +54,7 @@ typedef struct {
     time_t start_time;
     pam_handle_t *pamh;
     int credentials_established;
+    frdpSesmandSessionState state;
     int display_number;
     int display_reservation_fd;
     char display_reservation[sizeof(((struct sockaddr_un *)0)->sun_path)];
@@ -630,6 +632,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     s->start_time = time(NULL);
     s->pamh = pamh;
     s->credentials_established = credentials_established;
+    s->state = FRDP_SESMAND_SESSION_ACTIVE;
     s->display_number = display;
     s->display_reservation_fd = display_reservation_fd;
     display_reservation_fd = -1;
@@ -666,6 +669,8 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 static void cleanup_session(int idx)
 {
     session *s = &sessions[idx];
+    if (frdp_sesmand_session_state_can_transition(s->state, FRDP_SESMAND_SESSION_STOPPING))
+        s->state = FRDP_SESMAND_SESSION_STOPPING;
     /* Terminate the entire process group (agent + display backend). */
     if (s->pgid > 0) {
         kill(-s->pgid, SIGTERM);
@@ -684,6 +689,8 @@ static void cleanup_session(int idx)
     if (s->agent_socket[0] != '\0')
         unlink(s->agent_socket);
     release_display_reservation(&s->display_reservation_fd, s->display_reservation);
+    if (frdp_sesmand_session_state_can_transition(s->state, FRDP_SESMAND_SESSION_DEAD))
+        s->state = FRDP_SESMAND_SESSION_DEAD;
     if (idx < session_count - 1) {
         sessions[idx] = sessions[session_count - 1];
     }
