@@ -264,6 +264,38 @@ static int send_partial_body_then_close(const char* socket_path, frdpIpcMessageT
 	return rc;
 }
 
+static int send_truncated_boundaries(const char* socket_path, frdpIpcMessageType type,
+                                     const void* payload, size_t payload_len)
+{
+	const size_t header_lengths[] = { 1U, sizeof(frdpIpcHeader) / 2U,
+		                              sizeof(frdpIpcHeader) - 1U };
+	const size_t header_length_count = sizeof(header_lengths) / sizeof(header_lengths[0]);
+	size_t body_lengths[3] = { 0 };
+
+	if (!socket_path || (!payload && (payload_len > 0)))
+		return -1;
+	for (size_t x = 0; x < header_length_count; x++)
+	{
+		if (send_partial_header_then_close(socket_path, type, (uint32_t)payload_len,
+		                                   header_lengths[x]) != 0)
+			return -1;
+	}
+	if (payload_len == 0)
+		return 0;
+	body_lengths[0] = 1U;
+	body_lengths[1] = payload_len / 2U;
+	body_lengths[2] = payload_len - 1U;
+	for (size_t x = 0; x < (sizeof(body_lengths) / sizeof(body_lengths[0])); x++)
+	{
+		if ((body_lengths[x] == 0) || (body_lengths[x] >= payload_len))
+			continue;
+		if (send_partial_body_then_close(socket_path, type, payload, payload_len,
+		                                 body_lengths[x]) != 0)
+			return -1;
+	}
+	return 0;
+}
+
 static int send_slow_payload(int fd, const uint8_t* payload, size_t payload_len,
                              useconds_t delay_us)
 {
@@ -521,17 +553,8 @@ static int test_authd_survives_truncated_clients(const char* socket_path)
 {
 	uint8_t request[FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE] = { 0 };
 
-	if (send_partial_header_then_close(socket_path, FRDP_IPC_AUTH_REQUEST_V2,
-	                                   sizeof(request), sizeof(frdpIpcHeader) / 2U) != 0)
-		return -1;
-	if (send_partial_body_then_close(socket_path, FRDP_IPC_AUTH_REQUEST_V2, &request,
-	                                 sizeof(request), sizeof(request) / 2U) != 0)
-		return -1;
-	if (send_partial_header_then_close(socket_path, FRDP_IPC_AUTH_REQUEST_V2,
-	                                   sizeof(request), sizeof(frdpIpcHeader) - 1U) != 0)
-		return -1;
-	if (send_partial_body_then_close(socket_path, FRDP_IPC_AUTH_REQUEST_V2, &request,
-	                                 sizeof(request), sizeof(request) - 1U) != 0)
+	if (send_truncated_boundaries(socket_path, FRDP_IPC_AUTH_REQUEST_V2, request,
+	                              sizeof(request)) != 0)
 		return -1;
 	return test_authd_rejects_bad_length(socket_path);
 }
@@ -958,19 +981,18 @@ cleanup:
 
 static int test_sesmand_survives_truncated_clients(const char* socket_path)
 {
-	uint8_t request[FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE] = { 0 };
+	uint8_t open_request[FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE] = { 0 };
+	uint8_t close_request[FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE] = { 0 };
 
-	if (send_partial_header_then_close(socket_path, FRDP_IPC_SESSION_REQUEST_V3,
-	                                   sizeof(request), sizeof(frdpIpcHeader) / 2U) != 0)
+	if (send_truncated_boundaries(socket_path, FRDP_IPC_SESSION_REQUEST_V3, open_request,
+	                              sizeof(open_request)) != 0)
 		return -1;
-	if (send_partial_body_then_close(socket_path, FRDP_IPC_SESSION_REQUEST_V3, &request,
-	                                 sizeof(request), sizeof(request) / 2U) != 0)
+	if (send_truncated_boundaries(socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST, close_request,
+	                              sizeof(close_request)) != 0)
 		return -1;
-	if (send_partial_header_then_close(socket_path, FRDP_IPC_SESSION_REQUEST_V3,
-	                                   sizeof(request), sizeof(frdpIpcHeader) - 1U) != 0)
+	if (send_truncated_boundaries(socket_path, FRDP_IPC_SESSION_LIST_REQUEST, NULL, 0) != 0)
 		return -1;
-	if (send_partial_body_then_close(socket_path, FRDP_IPC_SESSION_REQUEST_V3, &request,
-	                                 sizeof(request), sizeof(request) - 1U) != 0)
+	if (send_truncated_boundaries(socket_path, FRDP_IPC_SESSION_RELOAD_REQUEST, NULL, 0) != 0)
 		return -1;
 	return test_sesmand_list_empty(socket_path);
 }
