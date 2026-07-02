@@ -14,6 +14,9 @@
 #include <pwd.h>
 #include <unistd.h>
 
+extern void crypto_base64_decode(const char *enc_data, size_t length, unsigned char **dec_data,
+                                 size_t *res_length);
+
 static void display_status(const char *msg, OM_uint32 code, int type)
 {
     OM_uint32 maj_stat, min_stat;
@@ -116,12 +119,55 @@ static int run_normalize_principal_test(const char *principal)
     return 0;
 }
 
+static int decode_input_token(const char *token_b64, gss_buffer_desc *input_token)
+{
+    unsigned char *decoded = NULL;
+    size_t decoded_len = 0;
+
+    if (!token_b64 || !input_token)
+        return -1;
+
+    input_token->value = NULL;
+    input_token->length = 0;
+
+    crypto_base64_decode(token_b64, strlen(token_b64), &decoded, &decoded_len);
+    if (!decoded || (decoded_len == 0))
+    {
+        free(decoded);
+        return -1;
+    }
+
+    input_token->value = decoded;
+    input_token->length = decoded_len;
+    return 0;
+}
+
+static int run_decode_token_test(const char *token_b64)
+{
+    gss_buffer_desc input_token = GSS_C_EMPTY_BUFFER;
+
+    if (decode_input_token(token_b64, &input_token) != 0)
+    {
+        fprintf(stderr, "invalid base64 Kerberos token\n");
+        return 2;
+    }
+
+    printf("%zu ", input_token.length);
+    for (size_t x = 0; x < input_token.length; x++)
+        printf("%02x", ((const unsigned char *)input_token.value)[x]);
+    printf("\n");
+    free(input_token.value);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
+    int rc = 0;
     const char *token_b64 = NULL;
 
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s [--normalize-principal-test <principal>] <base64-token>\n",
+        fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                        "--decode-token-test <base64-token>] <base64-token>\n",
                 argv[0]);
         return 1;
     }
@@ -129,14 +175,25 @@ int main(int argc, char **argv)
     {
         if (argc != 3)
         {
-            fprintf(stderr, "Usage: %s [--normalize-principal-test <principal>] <base64-token>\n",
+            fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--decode-token-test <base64-token>] <base64-token>\n",
                     argv[0]);
             return 1;
         }
         return run_normalize_principal_test(argv[2]);
     }
+    if (strcmp(argv[1], "--decode-token-test") == 0)
+    {
+        if (argc != 3)
+        {
+            fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--decode-token-test <base64-token>] <base64-token>\n",
+                    argv[0]);
+            return 1;
+        }
+        return run_decode_token_test(argv[2]);
+    }
     token_b64 = argv[1];
-    (void)token_b64;
 
     /* Set keytab via environment. Adjust the path as needed. */
     if (!getenv("KRB5_KTNAME"))
@@ -157,9 +214,13 @@ int main(int argc, char **argv)
     gss_ctx_id_t context = GSS_C_NO_CONTEXT;
     OM_uint32 maj_stat = 0, min_stat = 0;
 
-    /* For demonstration, we skip base64 decoding. In production, decode
-     * token_b64 into input_token.value/length here. */
-    fprintf(stderr, "frdp-krb-authd: skeleton - implement SPNEGO token handling.\n");
+    if (decode_input_token(token_b64, &input_token) != 0)
+    {
+        fprintf(stderr, "invalid base64 Kerberos token\n");
+        return 1;
+    }
+
+    fprintf(stderr, "frdp-krb-authd: skeleton - accepting decoded SPNEGO token.\n");
 
     /* Accept the security context. On success, client_name will hold the principal. */
     maj_stat = gss_accept_sec_context(&min_stat, &context, GSS_C_NO_CREDENTIAL,
@@ -169,7 +230,8 @@ int main(int argc, char **argv)
     if (maj_stat != GSS_S_COMPLETE && maj_stat != GSS_S_CONTINUE_NEEDED) {
         display_status("gss_accept_sec_context", maj_stat, GSS_C_GSS_CODE);
         display_status("gss_accept_sec_context", min_stat, GSS_C_MECH_CODE);
-        return 1;
+        rc = 1;
+        goto cleanup;
     }
 
     /* Display the authenticated principal and map to a POSIX user. */
@@ -210,5 +272,6 @@ cleanup:
         gss_delete_sec_context(&min_stat, &context, GSS_C_NO_BUFFER);
     if (output_token.length > 0)
         gss_release_buffer(&min_stat, &output_token);
-    return 0;
+    free(input_token.value);
+    return rc;
 }

@@ -19,7 +19,9 @@ This document describes how to enable Kerberos-first authentication for the Free
 The `frdp-krb-authd` component (see `server/frdp/frdp-krb-authd/frdp-krb-authd.c`) demonstrates how to accept a GSSAPI security context. It:
 
 - Sets the keytab via the environment variable `KRB5_KTNAME`.
-- Calls `gss_accept_sec_context()` on an incoming token provided by the RDP CredSSP client.
+- Base64-decodes the standalone token argument and calls `gss_accept_sec_context()`
+  on the resulting token bytes. Production `frdpd` still needs to extract the
+  SPNEGO token from the RDP CredSSP handshake and pass it to the acceptor path.
 - Extracts the authenticated principal using `gss_display_name()`.
 - Maps the principal to a POSIX account (`getpwnam()`). The build-only
   prototype first tries the displayed principal exactly, then fail-closed
