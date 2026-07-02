@@ -264,11 +264,19 @@ static int test_payload_decoders_reject_invalid_arguments(void)
 		return -1;
 	errno = 0;
 	if (expect_einval(frdp_ipc_recv_auth_request_v2_payload(
+	        -1, &auth_request, FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE + 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_auth_request_v2_payload(
 	        -1, NULL, FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE)) != 0)
 		return -1;
 	errno = 0;
 	if (expect_einval(frdp_ipc_recv_session_request_v3_payload(
 	        -1, &session_request_v3, FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE - 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_session_request_v3_payload(
+	        -1, &session_request_v3, FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE + 1U)) != 0)
 		return -1;
 	errno = 0;
 	if (expect_einval(frdp_ipc_recv_session_request_v3_payload(
@@ -280,11 +288,19 @@ static int test_payload_decoders_reject_invalid_arguments(void)
 		return -1;
 	errno = 0;
 	if (expect_einval(frdp_ipc_recv_session_close_request_payload(
+	        -1, &session_close_request, FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE + 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_session_close_request_payload(
 	        -1, NULL, FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE)) != 0)
 		return -1;
 	errno = 0;
 	if (expect_einval(frdp_ipc_recv_agent_input_event_payload(
 	        -1, &input, FRDP_IPC_AGENT_INPUT_WIRE_SIZE - 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_agent_input_event_payload(
+	        -1, &input, FRDP_IPC_AGENT_INPUT_WIRE_SIZE + 1U)) != 0)
 		return -1;
 	errno = 0;
 	if (expect_einval(
@@ -297,11 +313,19 @@ static int test_payload_decoders_reject_invalid_arguments(void)
 		return -1;
 	errno = 0;
 	if (expect_einval(frdp_ipc_recv_agent_frame_request_payload(
+	        -1, &frame_request, FRDP_IPC_AGENT_FRAME_REQUEST_WIRE_SIZE + 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_agent_frame_request_payload(
 	        -1, NULL, FRDP_IPC_AGENT_FRAME_REQUEST_WIRE_SIZE)) != 0)
 		return -1;
 	errno = 0;
 	if (expect_einval(frdp_ipc_recv_agent_resize_request_payload(
 	        -1, &resize_request, FRDP_IPC_AGENT_RESIZE_REQUEST_WIRE_SIZE - 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_agent_resize_request_payload(
+	        -1, &resize_request, FRDP_IPC_AGENT_RESIZE_REQUEST_WIRE_SIZE + 1U)) != 0)
 		return -1;
 	errno = 0;
 	if (expect_einval(frdp_ipc_recv_agent_resize_request_payload(
