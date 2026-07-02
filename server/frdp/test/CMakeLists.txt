@@ -75,4 +75,16 @@ if(BUILD_FUZZERS)
       PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${TESTING_OUTPUT_DIRECTORY}"
                  FOLDER "FreeRDP/Test/Fuzzers")
   add_dependencies(fuzzers ${FRDP_CONFIG_FUZZER})
+
+  set(FRDP_AUTH_TOKEN_FUZZER TestFuzzFreeRDPFrdpAuthToken)
+  add_executable(${FRDP_AUTH_TOKEN_FUZZER}
+      TestFuzzFreeRDPFrdpAuthToken.c
+      ../ipc/frdp-auth-token.c
+      ../ipc/frdp-auth-token.h)
+  target_include_directories(${FRDP_AUTH_TOKEN_FUZZER} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+  target_link_libraries(${FRDP_AUTH_TOKEN_FUZZER} PUBLIC fuzzer_config winpr ${UUID_LIBRARY})
+  set_target_properties(${FRDP_AUTH_TOKEN_FUZZER}
+      PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${TESTING_OUTPUT_DIRECTORY}"
+                 FOLDER "FreeRDP/Test/Fuzzers")
+  add_dependencies(fuzzers ${FRDP_AUTH_TOKEN_FUZZER})
 endif()
