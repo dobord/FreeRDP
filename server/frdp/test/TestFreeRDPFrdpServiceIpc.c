@@ -795,6 +795,24 @@ cleanup:
 	return rc;
 }
 
+static int test_sesmand_rejects_reload_payload(const char* socket_path)
+{
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	if (send_header(fd, FRDP_IPC_SESSION_RELOAD_REQUEST, 1) != 0)
+		goto cleanup;
+	rc = receive_session_response(fd, 0, "unsupported IPC request");
+
+cleanup:
+	frdp_ipc_close(fd);
+	if (rc != 0)
+		return rc;
+	return test_sesmand_list_empty(socket_path);
+}
+
 static int write_sesmand_config(const char* path, const char* pam_service)
 {
 	FILE* fp = NULL;
@@ -882,6 +900,8 @@ static int test_sesmand_component(void)
 	if (test_sesmand_rejects_oversized_payload(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_survives_truncated_clients(helper.socket_path) != 0)
+		goto cleanup;
+	if (test_sesmand_rejects_reload_payload(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_reload(helper.socket_path, 1, "accepted", NULL) != 0)
 		goto cleanup;
