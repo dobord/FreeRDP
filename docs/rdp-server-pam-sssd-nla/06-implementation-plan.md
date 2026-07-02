@@ -195,7 +195,7 @@ Deliverables:
 - [ ] load testing harness (partial: `server/frdp/test/e2e/scripts/rdp-load-probe.sh` provides a configurable parallel auth-only RDP probe for retained E2E client environments; full graphical session load/soak coverage remains open);
 - [ ] SELinux/AppArmor profiles (draft examples install under `/usr/share/frdpd/security`; the SELinux example has module/package validation when `checkmodule` and `semodule_package` are available, and the AppArmor example has parser validation when `apparmor_parser` is available; activation and production confinement review remain open);
 - [ ] systemd hardening (listener/auth/session unit examples install with baseline sandboxing directives, and the shared auth-token runtime directory is provided through tmpfiles, but package builds and production hardening validation remain open);
-- [x] package signing and reproducible-build notes (`11-packaging.md`; real release keys, RPM CI, install validation, and repository publication remain open).
+- [x] package signing and reproducible-build notes (`11-packaging.md`; real release keys, distro RPM CI, install validation, and repository publication remain open).
 
 Exit criteria: the security baseline is accepted; no critical crashes are found during the fuzz/load-test window; packages install cleanly on target operating systems.
 
@@ -204,7 +204,7 @@ Exit criteria: the security baseline is accepted; no critical crashes are found 
 Deliverables:
 
 - [x] CMake install rules for FRDP runtime helper binaries, `frdpd.toml`, PAM service, systemd unit examples, and inactive MAC policy examples verified with the `server` component in an isolated build;
-- [x] deb package preview (root `debian/` metadata supports a verified server-only binary package smoke build with `dpkg-buildpackage`; RPM CMake flags are aligned with `WITH_FRDPD`, but RPM and production distro policy verification remain open);
+- [x] package previews (root `debian/` metadata supports a verified server-only binary package smoke build with `dpkg-buildpackage`; `packaging/rpm/frdpd.spec` supports a verified server-only `rpmbuild -bb --nodeps` smoke build with local macros, while distro RPM CI and production distro policy verification remain open);
 - [x] admin CLI `frdpctl` builds and installs under `WITH_FRDPD`;
 - [x] admin CLI `frdpctl status` / `list-sessions` / `kill-session` operations over `frdp-sesmand` session IPC, with local CTest smoke coverage for request/response behavior;
 - [x] admin CLI `frdpctl reload` session IPC operation, with local request/response CTest coverage;

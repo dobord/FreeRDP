@@ -26,12 +26,12 @@ a non-installed prototype in the current package.
 
 %build
 # Configure and build using CMake
-%cmake -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SAMPLE=OFF -DWITH_SHADOW=OFF -DWITH_PROXY=OFF -DFRDP_SYSTEMD_SYSTEM_UNIT_DIR=%{_unitdir} .
-%cmake_build
+%cmake -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_CLIENT=OFF -DWITH_SAMPLE=OFF -DWITH_SHADOW=OFF -DWITH_PROXY=OFF -DFRDP_SYSTEMD_SYSTEM_UNIT_DIR=%{_unitdir} .
+%cmake_build --target frdpd frdp-authd frdp-sesmand frdp-session-agent frdpctl
 
 %install
 # Install built binaries and configuration
-%cmake_install
+%cmake_install --component server
 
 %post
 %systemd_post frdpd.service frdp-authd.service frdp-sesmand.service
@@ -57,6 +57,7 @@ a non-installed prototype in the current package.
 %{_unitdir}/frdpd.service
 %{_unitdir}/frdp-authd.service
 %{_unitdir}/frdp-sesmand.service
+%{_tmpfilesdir}/frdpd.conf
 %dir %{_datadir}/frdpd
 %dir %{_datadir}/frdpd/security
 %dir %{_datadir}/frdpd/security/selinux

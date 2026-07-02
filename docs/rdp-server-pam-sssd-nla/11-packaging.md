@@ -16,7 +16,7 @@ The root `debian/` directory contains minimal preview packaging for the server-o
 
 ## RPM packaging
 
-The `packaging/rpm/frdpd.spec` file is a starting point for building an RPM. It defines the package name, summary, license, build requirements and installation scripts. To build an RPM:
+The `packaging/rpm/frdpd.spec` file is a starting point for building a server-only RPM. It defines the package name, summary, license, build requirements and installation scripts, builds only the FRDP server/helper targets, and installs the CMake `server` component. To build an RPM:
 
 1. Create a source archive (`frdpd-0.1.0.tar.gz`) containing the project source tree.
 2. Place the spec file in your `~/rpmbuild/SPECS` directory and the source archive in `~/rpmbuild/SOURCES`.
@@ -24,6 +24,8 @@ The `packaging/rpm/frdpd.spec` file is a starting point for building an RPM. It 
 4. Import the project’s RPM signing key and sign the packages using `rpm --addsign`.
 
 The `%files` section installs the daemons (`frdpd`, `frdp-authd`, `frdp-sesmand`, `frdp-session-agent`), the administrative tool `frdpctl`, configuration files under `/etc/frdpd`, and documentation. `frdp-krb-authd` remains a build-only prototype until the Kerberos acceptor path is implemented.
+
+A local Ubuntu smoke build was verified with `rpmbuild -bb --nodeps` plus a temporary macro overlay for Fedora-style `%cmake`, `%cmake_build`, `%cmake_install`, `%_unitdir`, `%_tmpfilesdir`, and systemd scriptlet macros. That smoke produced `frdpd-0.1.0-1.x86_64.rpm` containing the FRDP daemons/helpers, `/etc/frdpd`, `/etc/pam.d/frdpd`, systemd units, the tmpfiles rule, monitoring examples, and inactive SELinux/AppArmor examples. Target RPM distro CI still needs to run with real BuildRequires resolution and distro-provided macros.
 
 ## Reproducible builds and signing
 
@@ -70,7 +72,7 @@ Minimum release validation before signing:
 
 Open reproducibility gaps:
 
-- RPM builds still need local and CI verification with distro macros available.
+- RPM builds still need dependency-checked CI verification on target distros with distro macros available.
 - Debian maintainer scripts, copyright metadata, and lintian policy checks are
   still incomplete.
 - Installed package validation does not yet prove PAM login, AD/SSSD policy,
@@ -97,4 +99,4 @@ debian/
   source/
 ```
 
-Future work includes production Debian policy validation, RPM build verification, production-reviewed enforcing SELinux and AppArmor policies, and automated package builds in CI. The packaging guidelines above keep pilot and GA packaging work tied to executable package builds instead of draft-only metadata.
+Future work includes production Debian policy validation, dependency-checked RPM CI, production-reviewed enforcing SELinux and AppArmor policies, and automated package builds in CI. The packaging guidelines above keep pilot and GA packaging work tied to executable package builds instead of draft-only metadata.
