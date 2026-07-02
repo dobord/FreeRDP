@@ -82,6 +82,12 @@ add_test(NAME TestFreeRDPFrdpd
                  -DFRDPD_IN_PROCESS_PAM=$<BOOL:${WITH_FRDPD_IN_PROCESS_PAM}>
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpd.cmake)
 
+if(TARGET frdp-krb-authd)
+  add_test(NAME TestFreeRDPFrdpKrbAuthd
+           COMMAND ${CMAKE_COMMAND} -DFRDP_KRB_AUTHD_BINARY=$<TARGET_FILE:frdp-krb-authd>
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpKrbAuthd.cmake)
+endif()
+
 find_program(SYSTEMD_ANALYZE_EXECUTABLE systemd-analyze)
 if(SYSTEMD_ANALYZE_EXECUTABLE)
   add_test(NAME TestFreeRDPFrdpSystemd

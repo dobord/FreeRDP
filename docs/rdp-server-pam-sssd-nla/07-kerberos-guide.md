@@ -21,7 +21,10 @@ The `frdp-krb-authd` component (see `server/frdp/frdp-krb-authd/frdp-krb-authd.c
 - Sets the keytab via the environment variable `KRB5_KTNAME`.
 - Calls `gss_accept_sec_context()` on an incoming token provided by the RDP CredSSP client.
 - Extracts the authenticated principal using `gss_display_name()`.
-- Maps the principal to a POSIX account (`getpwnam()`).
+- Maps the principal to a POSIX account (`getpwnam()`). The build-only
+  prototype first tries the displayed principal exactly, then fail-closed
+  normalizes simple `user@REALM` names to a local account candidate and rejects
+  service/instance principals such as `host/server@REALM`.
 - Optionally opens a PAM session for the user (reusing the logic from `frdp-authd`).
 
 In a production server, the RDP daemon must decode the SPNEGO token from the CredSSP handshake, invoke the GSSAPI acceptor to obtain the client’s principal, and use that identity for PAM/SSSD account checks. NTLM fallback must be disabled by an enforced daemon policy. The current parser rejects `ntlm_fallback` until that policy is implemented, so do not add it to `frdpd.toml` yet.

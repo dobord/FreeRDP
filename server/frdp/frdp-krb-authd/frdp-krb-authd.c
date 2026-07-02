@@ -7,6 +7,7 @@
  */
 
 #include <gssapi/gssapi.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,17 +30,126 @@ static void display_status(const char *msg, OM_uint32 code, int type)
     } while (msg_ctx != 0);
 }
 
+static int normalize_user_principal(const char *principal, char *user, size_t user_size)
+{
+    const char *at = NULL;
+    const char *extra_at = NULL;
+    const char *realm = NULL;
+    size_t user_len = 0;
+
+    if (!principal || !user || (user_size == 0))
+        return -1;
+    user[0] = '\0';
+
+    at = strchr(principal, '@');
+    if (!at || (at == principal) || (at[1] == '\0'))
+        return -1;
+    extra_at = strchr(at + 1, '@');
+    if (extra_at)
+        return -1;
+    realm = at + 1;
+
+    user_len = (size_t)(at - principal);
+    if ((user_len == 0) || (user_len >= user_size))
+        return -1;
+    if (memchr(principal, '/', user_len) || memchr(principal, '\\', user_len) ||
+        memchr(principal, ':', user_len))
+        return -1;
+
+    for (size_t x = 0; x < user_len; x++)
+    {
+        const unsigned char c = (unsigned char)principal[x];
+        if (!isalnum(c) && (c != '_') && (c != '-') && (c != '.'))
+            return -1;
+    }
+    for (size_t x = 0; realm[x] != '\0'; x++)
+    {
+        const unsigned char c = (unsigned char)realm[x];
+        if (!isalnum(c) && (c != '_') && (c != '-') && (c != '.'))
+            return -1;
+    }
+
+    memcpy(user, principal, user_len);
+    user[user_len] = '\0';
+    return 0;
+}
+
+static struct passwd *lookup_principal_account(const char *principal, char *normalized,
+                                               size_t normalized_size, const char **mapping)
+{
+    struct passwd *pwd = NULL;
+
+    if (mapping)
+        *mapping = NULL;
+    if (normalized && (normalized_size > 0))
+        normalized[0] = '\0';
+    if (!principal)
+        return NULL;
+
+    if (normalize_user_principal(principal, normalized, normalized_size) != 0)
+        return NULL;
+
+    pwd = getpwnam(principal);
+    if (pwd)
+    {
+        if (mapping)
+            *mapping = "exact-principal";
+        return pwd;
+    }
+
+    pwd = getpwnam(normalized);
+    if (pwd && mapping)
+        *mapping = "normalized-principal";
+    return pwd;
+}
+
+static int run_normalize_principal_test(const char *principal)
+{
+    char user[64] = { 0 };
+
+    if (normalize_user_principal(principal, user, sizeof(user)) != 0)
+    {
+        fprintf(stderr, "invalid Kerberos user principal\n");
+        return 2;
+    }
+    printf("%s\n", user);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
+    const char *token_b64 = NULL;
+
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <base64-token>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--normalize-principal-test <principal>] <base64-token>\n",
+                argv[0]);
         return 1;
     }
-    const char *token_b64 = argv[1];
+    if (strcmp(argv[1], "--normalize-principal-test") == 0)
+    {
+        if (argc != 3)
+        {
+            fprintf(stderr, "Usage: %s [--normalize-principal-test <principal>] <base64-token>\n",
+                    argv[0]);
+            return 1;
+        }
+        return run_normalize_principal_test(argv[2]);
+    }
+    token_b64 = argv[1];
     (void)token_b64;
 
     /* Set keytab via environment. Adjust the path as needed. */
-    setenv("KRB5_KTNAME", "/etc/frdpd/frdpd.keytab", 1);
+    if (!getenv("KRB5_KTNAME"))
+    {
+        const char *keytab = getenv("FRDP_KRB_KEYTAB");
+        if (!keytab)
+            keytab = "/etc/frdpd/frdpd.keytab";
+        if (setenv("KRB5_KTNAME", keytab, 1) != 0)
+        {
+            perror("setenv(KRB5_KTNAME)");
+            return 1;
+        }
+    }
 
     gss_buffer_desc input_token = GSS_C_EMPTY_BUFFER;
     gss_buffer_desc output_token = GSS_C_EMPTY_BUFFER;
@@ -49,7 +159,7 @@ int main(int argc, char **argv)
 
     /* For demonstration, we skip base64 decoding. In production, decode
      * token_b64 into input_token.value/length here. */
-    fprintf(stderr, "frdp-krb-authd: skeleton – implement SPNEGO token handling.\n");
+    fprintf(stderr, "frdp-krb-authd: skeleton - implement SPNEGO token handling.\n");
 
     /* Accept the security context. On success, client_name will hold the principal. */
     maj_stat = gss_accept_sec_context(&min_stat, &context, GSS_C_NO_CREDENTIAL,
@@ -66,18 +176,34 @@ int main(int argc, char **argv)
     gss_buffer_desc name_buf = GSS_C_EMPTY_BUFFER;
     maj_stat = gss_display_name(&min_stat, client_name, &name_buf, NULL);
     if (maj_stat == GSS_S_COMPLETE) {
-        printf("Kerberos principal: %.*s\n", (int)name_buf.length,
-               (char *)name_buf.value);
-        struct passwd *pwd = getpwnam((char *)name_buf.value);
+        char principal[256] = { 0 };
+        char normalized_user[64] = { 0 };
+        const char *mapping = NULL;
+        if (name_buf.length >= sizeof(principal))
+        {
+            printf("No POSIX account found for principal; principal too long\n");
+            gss_release_buffer(&min_stat, &name_buf);
+            goto cleanup;
+        }
+        memcpy(principal, name_buf.value, name_buf.length);
+        principal[name_buf.length] = '\0';
+        printf("Kerberos principal: %s\n", principal);
+
+        struct passwd *pwd = lookup_principal_account(principal, normalized_user,
+                                                      sizeof(normalized_user), &mapping);
         if (pwd) {
-            printf("Mapped user: %s uid=%d gid=%d\n",
-                   pwd->pw_name, (int)pwd->pw_uid, (int)pwd->pw_gid);
+            printf("Mapped user: %s uid=%d gid=%d mapping=%s\n",
+                   pwd->pw_name, (int)pwd->pw_uid, (int)pwd->pw_gid,
+                   mapping ? mapping : "unknown");
+        } else if (normalized_user[0] != '\0') {
+            printf("No POSIX account found for normalized user: %s\n", normalized_user);
         } else {
-            printf("No POSIX account found for principal\n");
+            printf("No POSIX account found for principal; mapping rejected\n");
         }
         gss_release_buffer(&min_stat, &name_buf);
     }
 
+cleanup:
     if (client_name != GSS_C_NO_NAME)
         gss_release_name(&min_stat, &client_name);
     if (context != GSS_C_NO_CONTEXT)
