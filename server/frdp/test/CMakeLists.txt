@@ -7,7 +7,7 @@ set(${MODULE_PREFIX}_DRIVER ${MODULE_NAME}.c)
 set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFreeRDPFrdpCtlIpc.c
                          TestFreeRDPFrdpHelperStop.c TestFreeRDPFrdpServiceIpc.c
                          TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpInputPolicy.c
-                         TestFreeRDPFrdpPam.c)
+                         TestFreeRDPFrdpDisplayPolicy.c TestFreeRDPFrdpPam.c)
 find_program(XVFB_EXECUTABLE Xvfb)
 if(XVFB_EXECUTABLE)
   list(APPEND ${MODULE_PREFIX}_TESTS TestFreeRDPFrdpAgentStop.c)
@@ -30,7 +30,9 @@ add_executable(${MODULE_NAME}
     ../frdpd/frdpd_pam.c
     ../frdpd/frdpd_pam.h
     ../frdp-session-agent/input_policy.c
-    ../frdp-session-agent/input_policy.h)
+    ../frdp-session-agent/input_policy.h
+    ../frdp-sesmand/display_policy.c
+    ../frdp-sesmand/display_policy.h)
 add_dependencies(${MODULE_NAME} frdpd frdpctl frdp-authd frdp-sesmand frdp-session-agent)
 
 target_include_directories(${MODULE_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)

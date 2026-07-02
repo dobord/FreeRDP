@@ -64,6 +64,8 @@ set_property(TARGET frdp-authd PROPERTY FOLDER "Server/frdp")
 
 add_executable(frdp-sesmand
     frdp-sesmand/frdp-sesmand.c
+    frdp-sesmand/display_policy.c
+    frdp-sesmand/display_policy.h
     config/frdp-config.c
     config/frdp-config.h
     $<TARGET_OBJECTS:frdp-ipc>)

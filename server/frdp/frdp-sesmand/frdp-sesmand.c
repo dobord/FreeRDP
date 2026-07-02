@@ -39,6 +39,7 @@
 #include "../config/frdp-config.h"
 #include "../ipc/frdp-auth-token.h"
 #include "../ipc/frdp-ipc.h"
+#include "display_policy.h"
 
 /* Session registry entry.  Each session retains its PAM handle and the
  * process group of the launched agent/backend so that cleanup can terminate
@@ -60,11 +61,9 @@ typedef struct {
 
 #define MAX_SESSIONS 64
 #define FRDP_AGENT_READY_MARKER 'R'
-#define FRDP_DISPLAY_MIN 100
-#define FRDP_DISPLAY_MAX 65535
 static session sessions[MAX_SESSIONS];
 static int session_count = 0;
-static int next_display = FRDP_DISPLAY_MIN;
+static int next_display = FRDP_SESMAND_DISPLAY_MIN;
 static char g_pam_service[64] = "frdpd";
 static char g_config_path[1024] = {0};
 static char g_agent_socket_dir[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
@@ -171,17 +170,6 @@ static int build_agent_socket_path(char *dst, size_t dst_size, const char *sessi
         return 0;
 
     rc = snprintf(dst, dst_size, "%s/agent-%s.sock", g_agent_socket_dir, session_id);
-    return (rc >= 0 && (size_t)rc < dst_size) ? 0 : -1;
-}
-
-static int build_display_reservation_path(char *dst, size_t dst_size, int display)
-{
-    int rc = 0;
-    const char *dir = (g_agent_socket_dir[0] != '\0') ? g_agent_socket_dir : "/tmp";
-
-    if (!dst || dst_size == 0 || display < FRDP_DISPLAY_MIN || display > FRDP_DISPLAY_MAX)
-        return -1;
-    rc = snprintf(dst, dst_size, "%s/frdp-display-%d.lock", dir, display);
     return (rc >= 0 && (size_t)rc < dst_size) ? 0 : -1;
 }
 
@@ -416,51 +404,26 @@ static int display_number_in_use(int display)
 static int allocate_display_number(int *display, int *reservation_fd, char *reservation_path,
                                    size_t reservation_path_size)
 {
-    char candidate_reservation[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
-
     if (!display || !reservation_fd || !reservation_path || reservation_path_size == 0)
         return -1;
     *reservation_fd = -1;
     reservation_path[0] = '\0';
 
-    for (int attempts = 0; attempts <= (FRDP_DISPLAY_MAX - FRDP_DISPLAY_MIN); attempts++) {
+    for (int attempts = 0; attempts <= (FRDP_SESMAND_DISPLAY_MAX - FRDP_SESMAND_DISPLAY_MIN);
+         attempts++) {
         const int candidate = next_display;
+        const char *dir = (g_agent_socket_dir[0] != '\0') ? g_agent_socket_dir : "/tmp";
+        int fd = -1;
 
         next_display++;
-        if (next_display > FRDP_DISPLAY_MAX)
-            next_display = FRDP_DISPLAY_MIN;
+        if (next_display > FRDP_SESMAND_DISPLAY_MAX)
+            next_display = FRDP_SESMAND_DISPLAY_MIN;
         if (display_number_in_use(candidate))
             continue;
-        if (build_display_reservation_path(candidate_reservation, sizeof(candidate_reservation),
-                                           candidate) != 0)
-            return -1;
-        int open_flags = O_WRONLY | O_CREAT | O_EXCL;
-#ifdef O_CLOEXEC
-        open_flags |= O_CLOEXEC;
-#endif
-        const int fd = open(candidate_reservation, open_flags, 0600);
-        if (fd < 0) {
+        if (frdp_sesmand_display_reservation_create(candidate, dir, &fd, reservation_path,
+                                                    reservation_path_size) != 0) {
             if (errno == EEXIST)
                 continue;
-            return -1;
-        }
-        if (set_fd_cloexec(fd, 1) != 0) {
-            const int saved_errno = errno;
-
-            close(fd);
-            unlink(candidate_reservation);
-            errno = saved_errno;
-            return -1;
-        }
-        if (dprintf(fd, "%ld\n", (long)getpid()) < 0) {
-            close(fd);
-            unlink(candidate_reservation);
-            return -1;
-        }
-        if (snprintf(reservation_path, reservation_path_size, "%s", candidate_reservation) >=
-            (int)reservation_path_size) {
-            unlink(candidate_reservation);
-            close(fd);
             return -1;
         }
         *display = candidate;
@@ -472,19 +435,7 @@ static int allocate_display_number(int *display, int *reservation_fd, char *rese
 
 static void release_display_reservation(int *reservation_fd, const char *reservation_path)
 {
-    if (!reservation_fd || *reservation_fd < 0)
-        return;
-    if (reservation_path && reservation_path[0] != '\0') {
-        struct stat fd_stat;
-        struct stat path_stat;
-
-        if ((fstat(*reservation_fd, &fd_stat) == 0) &&
-            (lstat(reservation_path, &path_stat) == 0) &&
-            (fd_stat.st_dev == path_stat.st_dev) && (fd_stat.st_ino == path_stat.st_ino))
-            unlink(reservation_path);
-    }
-    close(*reservation_fd);
-    *reservation_fd = -1;
+    frdp_sesmand_display_reservation_release(reservation_fd, reservation_path);
 }
 
 static int copy_groups_to_native(const uint64_t *groups, uint32_t group_count,

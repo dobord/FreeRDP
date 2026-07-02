@@ -143,7 +143,7 @@ They should cover:
 - agent input event type, flag and parameter bounds before XTest injection;
 - session-state transitions, reconnect selection and cleanup decisions with
   process/PAM/logind adapters mocked;
-- display allocation and collision handling;
+- display reservation path bounds, collision handling and safe same-inode cleanup;
 - frame rectangle/stride/size validation and scheduler budgets.
 
 Private static functions that contain policy should be moved into small modules
