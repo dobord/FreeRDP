@@ -163,6 +163,42 @@ cleanup:
 	return rc;
 }
 
+static int test_prepare_listener_rejects_live_and_unlinks_stale_socket(void)
+{
+	char dir[1024] = { 0 };
+	char socket_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
+	int server_fd = -1;
+	int rc = -1;
+
+	if (make_runtime_dir(dir, sizeof(dir)) != 0)
+		return -1;
+	server_fd = make_secure_socket(dir, socket_path, sizeof(socket_path));
+	if (server_fd < 0)
+		goto cleanup;
+	errno = 0;
+	if (frdp_ipc_prepare_listener_socket_path(socket_path) == 0)
+		goto cleanup;
+	if (errno != EADDRINUSE)
+		goto cleanup;
+	if (access(socket_path, F_OK) != 0)
+		goto cleanup;
+
+	close(server_fd);
+	server_fd = -1;
+	if (frdp_ipc_prepare_listener_socket_path(socket_path) != 0)
+		goto cleanup;
+	if (access(socket_path, F_OK) == 0 || errno != ENOENT)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (server_fd >= 0)
+		close(server_fd);
+	unlink(socket_path);
+	rmdir(dir);
+	return rc;
+}
+
 static int test_recv_rejects_short_read(void)
 {
 	int fds[2] = { -1, -1 };
@@ -1224,6 +1260,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_connect_rejects_insecure_parent() != 0)
 		return -1;
 	if (test_connect_rejects_insecure_socket() != 0)
+		return -1;
+	if (test_prepare_listener_rejects_live_and_unlinks_stale_socket() != 0)
 		return -1;
 	if (test_recv_rejects_short_read() != 0)
 		return -1;
