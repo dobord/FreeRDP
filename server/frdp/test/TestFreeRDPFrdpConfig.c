@@ -351,6 +351,23 @@ static int test_clipboard_policy(void)
 	return 0;
 }
 
+static int test_rejects_planned_auth_policy(void)
+{
+	if (expect_load_failure("frdp-auth-kerberos-planned.toml",
+	                        "[auth]\nkerberos = true\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-auth-ntlm-fallback-planned.toml",
+	                        "[auth]\nntlm_fallback = false\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-auth-keytab-planned.toml",
+	                        "[auth]\nkeytab = \"/etc/krb5.keytab\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-auth-spn-planned.toml",
+	                        "[auth]\naccepted_spn = \"TERMSRV/host.example.com\"\n") != 0)
+		return -1;
+	return 0;
+}
+
 static int test_invalid_channel_config(void)
 {
 	if (expect_load_failure("frdp-duplicate-max-connections.toml",
@@ -534,6 +551,8 @@ int TestFreeRDPFrdpConfig(int argc, char* argv[])
 	if (test_dynamic_blocklist() != 0)
 		return -1;
 	if (test_clipboard_policy() != 0)
+		return -1;
+	if (test_rejects_planned_auth_policy() != 0)
 		return -1;
 	if (test_invalid_channel_config() != 0)
 		return -1;
