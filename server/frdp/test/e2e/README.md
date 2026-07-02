@@ -63,7 +63,7 @@ The first FreeIPA start provisions the realm and can take several minutes. The i
 3. `/auth-only` fails for a locked or disabled account.
 4. A normal graphical connection under client-side Xvfb remains connected, appears in `frdpctl list-sessions`, and disappears after client termination.
 
-The client mounts only the session-manager socket volume. This allows it to observe the real manager registry without inspecting server process memory. Logs, session listings and an XWD capture of the client display are written below `artifacts/<profile>/`.
+The client mounts only the session-manager socket volume. This allows it to observe the real manager registry without inspecting server process memory. Logs, session listings and an XWD capture of the client display are written below `artifacts/<profile>/`. The harness also preserves the rendered Compose model, timestamped aggregate logs, per-container logs, per-container inspect JSON and the component profile CTest `LastTest.log` when available.
 
 ## Useful direct commands
 

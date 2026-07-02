@@ -34,10 +34,12 @@ run_profile()
 	local exit_service=$2
 	local status=0
 	local output="$artifacts/$profile/compose-up.log"
+	local container_ids="$artifacts/$profile/container-ids.txt"
 
 	mkdir -p "$artifacts/$profile"
 	: >"$output"
 	"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+	"${compose[@]}" --profile "$profile" config >"$artifacts/$profile/compose-config.yaml" 2>&1 || true
 
 	set +e
 	"${compose[@]}" --profile "$profile" up --build \
@@ -47,8 +49,22 @@ run_profile()
 	status=${PIPESTATUS[0]}
 	set -e
 
-	"${compose[@]}" --profile "$profile" logs --no-color >"$artifacts/$profile/compose.log" 2>&1 || true
+	"${compose[@]}" --profile "$profile" logs --no-color --timestamps >"$artifacts/$profile/compose.log" 2>&1 || true
 	"${compose[@]}" --profile "$profile" ps -a >"$artifacts/$profile/compose-ps.txt" 2>&1 || true
+	"${compose[@]}" --profile "$profile" ps -a -q >"$container_ids" 2>/dev/null || true
+	mkdir -p "$artifacts/$profile/container-logs" "$artifacts/$profile/container-inspect"
+	while IFS= read -r container_id; do
+		[[ -n $container_id ]] || continue
+		local container_name
+		container_name=$(docker inspect --format '{{.Name}}' "$container_id" 2>/dev/null || true)
+		container_name=${container_name#/}
+		container_name=${container_name//[^A-Za-z0-9_.-]/_}
+		if [[ -z $container_name ]]; then
+			container_name=$container_id
+		fi
+		docker logs --timestamps "$container_id" >"$artifacts/$profile/container-logs/$container_name.log" 2>&1 || true
+		docker inspect "$container_id" >"$artifacts/$profile/container-inspect/$container_name.json" 2>&1 || true
+	done <"$container_ids"
 	printf '%s\n' "$status" >"$artifacts/$profile/exit-code.txt"
 	cleanup
 	return "$status"

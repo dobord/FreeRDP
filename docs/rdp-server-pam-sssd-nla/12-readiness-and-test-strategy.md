@@ -25,7 +25,7 @@ making the current canonical helper topology repeatably green.
 | Virtual channels | 27% | Static-channel filtering, a DVC authorization hook, and disabled-by-default text clipboard policy fail closed; focused config and WTS deny-path coverage exists | No useful clipboard/audio handlers; `drdynvc` is deliberately guard-denied; no live-client channel tests |
 | Kerberos-first path | 10% | A build-only GSSAPI helper skeleton and architecture documentation exist | No CredSSP/SPNEGO token transport, configured keytab/SPN validation, SSSD principal mapping, account/session binding or security review |
 | Operations and packaging | 25% | Example systemd units, PAM file, configuration, install rules and draft MAC policy files exist | No completed DEB/RPM build, active SELinux/AppArmor validation, upgrade/rollback, socket activation, metrics or operational SLOs |
-| Automated verification | 56% | Unit tests, helper-process component tests, live helper-topology startup smoke coverage, truncated auth/session helper client coverage, invalid session-open authorization coverage, agent resize control-IPC smoke coverage, focused `server/frdp` ASan+UBSan and strict-warning build/CTest coverage in the FRDP workflow, and Docker Compose profiles for local PAM, Samba AD and FreeIPA are present | Compose profiles must become green and stable; no Windows `mstsc`, reconnect, load, fuzzing, Valgrind/LSan variant matrix or crash-recovery gates yet |
+| Automated verification | 57% | Unit tests, helper-process component tests, live helper-topology startup smoke coverage, truncated auth/session helper client coverage, invalid session-open authorization coverage, agent resize control-IPC smoke coverage, focused `server/frdp` ASan+UBSan and strict-warning build/CTest coverage in the FRDP workflow, Docker Compose profiles for local PAM, Samba AD and FreeIPA, and preserved Compose/CTest/container diagnostic artifacts are present | Compose profiles must become green and stable; no Windows `mstsc`, reconnect, load, fuzzing, Valgrind/LSan variant matrix or crash-recovery gates yet |
 | Overall production readiness | **25–30%** | A testable MVP skeleton with meaningful security boundaries | Several correctness, lifecycle, interoperability and operability gates remain open |
 
 ## Highest-value implementation order
@@ -42,7 +42,8 @@ Do not add another large subsystem until all of the following are true:
 4. The branch is rebased or recreated on a pinned, supported FreeRDP revision;
    the current large divergence from `master` must not be allowed to hide API
    breakage.
-5. CI preserves complete build, daemon and client logs on every failure.
+5. Keep CI log artifacts complete enough to diagnose build, daemon and client
+   failures without rerunning the profile.
 
 ### Gate 1 — Make the security architecture canonical
 

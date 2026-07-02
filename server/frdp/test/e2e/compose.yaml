@@ -21,7 +21,11 @@ services:
     command:
       - >-
         ctest --test-dir /opt/freerdp-build --output-on-failure
-        -R '^TestFreeRDPFrdp'
+        -R '^TestFreeRDPFrdp';
+        status=$?;
+        cp /opt/freerdp-build/Testing/Temporary/LastTest.log
+        /artifacts/LastTest.log 2>/dev/null || true;
+        exit $$status
     volumes:
       - ${FRDP_E2E_ARTIFACTS:-./artifacts}/component:/artifacts
 
