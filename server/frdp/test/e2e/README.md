@@ -90,6 +90,14 @@ FRDP_LOAD_CONCURRENCY=4 FRDP_LOAD_ITERATIONS=10 \
   bash /opt/frdp-e2e/scripts/rdp-load-probe.sh
 ```
 
+Run the retained-client protocol regression probe, which exercises a small
+auth-only NLA matrix across display depth, geometry and network profile
+settings while preserving per-case logs:
+
+```bash
+bash /opt/frdp-e2e/scripts/rdp-protocol-regression.sh
+```
+
 Clean all test state, including the FreeIPA data volume:
 
 ```bash
@@ -98,6 +106,6 @@ docker compose -f server/frdp/test/e2e/compose.yaml down --volumes --remove-orph
 
 ## Coverage still required
 
-This harness does not yet prove Kerberos-only CredSSP, reconnect semantics, RDPGFX/RFX policy, clipboard/audio channels, logind/cgroups, durable session reconciliation, a joined FreeIPA host with HBAC, full graphical session load/soak behavior, or Windows `mstsc` interoperability. Those should be added as separate profiles or an external lab matrix rather than weakening the deterministic baseline tests.
+This harness does not yet prove Kerberos-only CredSSP, reconnect semantics, RDPGFX/RFX policy, clipboard/audio channels, logind/cgroups, durable session reconciliation, a joined FreeIPA host with HBAC, full graphical session load/soak behavior, broad protocol regression coverage, or Windows `mstsc` interoperability. Those should be added as separate profiles or an external lab matrix rather than weakening the deterministic baseline tests.
 
 All committed passwords are test-only defaults for an isolated Compose network. Do not expose provider ports or reuse these credentials outside the testbed.

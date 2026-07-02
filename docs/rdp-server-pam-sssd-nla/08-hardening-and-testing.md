@@ -74,6 +74,9 @@ For network-level fuzzing, integrate with AFL or clusterfuzz to generate malform
 
 Develop a regression suite that uses `xfreerdp` and `mstsc` clients to exercise supported features:
 
+- `server/frdp/test/e2e/scripts/rdp-protocol-regression.sh` is the first retained-client
+  probe. It runs auth-only NLA checks across a small geometry, color-depth and network-profile
+  option matrix and preserves per-case logs under the configured artifact directory.
 - Automated scripts to connect, authenticate via Kerberos/PAM, create sessions, transfer clipboard text, audio and files.
 - Verify reconnect, session timeouts and denial of forbidden channels.
 - Capture and compare framebuffers to detect rendering regressions.
