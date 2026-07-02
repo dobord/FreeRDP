@@ -143,4 +143,20 @@ if(BUILD_FUZZERS)
       PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${TESTING_OUTPUT_DIRECTORY}"
                  FOLDER "FreeRDP/Test/Fuzzers")
   add_dependencies(fuzzers ${FRDP_INPUT_POLICY_FUZZER})
+
+  set(FRDP_SESSION_LIFECYCLE_FUZZER TestFuzzFreeRDPFrdpSessionLifecycle)
+  add_executable(${FRDP_SESSION_LIFECYCLE_FUZZER}
+      TestFuzzFreeRDPFrdpSessionLifecycle.c
+      ../frdp-sesmand/session_cleanup.c
+      ../frdp-sesmand/session_cleanup.h
+      ../frdp-sesmand/session_reconnect.c
+      ../frdp-sesmand/session_reconnect.h
+      ../frdp-sesmand/session_state.c
+      ../frdp-sesmand/session_state.h)
+  target_include_directories(${FRDP_SESSION_LIFECYCLE_FUZZER} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+  target_link_libraries(${FRDP_SESSION_LIFECYCLE_FUZZER} PUBLIC fuzzer_config winpr)
+  set_target_properties(${FRDP_SESSION_LIFECYCLE_FUZZER}
+      PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${TESTING_OUTPUT_DIRECTORY}"
+                 FOLDER "FreeRDP/Test/Fuzzers")
+  add_dependencies(fuzzers ${FRDP_SESSION_LIFECYCLE_FUZZER})
 endif()
