@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,7 +22,7 @@
 
 static int make_runtime_dir(char* dir, size_t dir_size)
 {
-	const int rc = snprintf(dir, dir_size, "%s/frdp-helper-stop-XXXXXX", CMAKE_CURRENT_BINARY_DIR);
+	const int rc = snprintf(dir, dir_size, "/tmp/frdp-helper-stop-XXXXXX");
 
 	if ((rc < 0) || ((size_t)rc >= dir_size))
 		return -1;
@@ -111,6 +112,34 @@ static int connect_socket(const char* socket_path)
 		return -1;
 	}
 	return fd;
+}
+
+static int set_nonblock(int fd)
+{
+	const int flags = fcntl(fd, F_GETFL, 0);
+
+	if (flags < 0)
+		return -1;
+	return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+static int accept_pending_connections(int fd)
+{
+	for (;;)
+	{
+		const int accepted = accept(fd, NULL, NULL);
+
+		if (accepted >= 0)
+		{
+			close(accepted);
+			continue;
+		}
+		if ((errno == EAGAIN) || (errno == EWOULDBLOCK))
+			return 0;
+		if (errno == EINTR)
+			continue;
+		return -1;
+	}
 }
 
 static int run_stop_test(const char* binary, const char* name)
@@ -209,14 +238,10 @@ static int run_live_socket_protection_test(const char* binary, const char* name,
 	if (!WIFEXITED(status) || (WEXITSTATUS(status) == 0))
 		goto cleanup;
 
-	if (prefill_backlog)
-	{
-		accepted_fd = accept(live_fd, NULL, NULL);
-		if (accepted_fd < 0)
-			goto cleanup;
-		close(accepted_fd);
-		accepted_fd = -1;
-	}
+	if (set_nonblock(live_fd) != 0)
+		goto cleanup;
+	if (accept_pending_connections(live_fd) != 0)
+		goto cleanup;
 	client_fd = connect_socket(socket_path);
 	if (client_fd < 0)
 		goto cleanup;
