@@ -16,12 +16,15 @@ cmake -S . -B /tmp/freerdp-frdp-asan-ubsan \
   -DWITH_SANITIZE_ADDRESS=ON \
   -DWITH_SANITIZE_UNDEFINED=ON
 cmake --build /tmp/freerdp-frdp-asan-ubsan --target TestFreeRDPFrdp -j"$(nproc)"
-ctest --test-dir /tmp/freerdp-frdp-asan-ubsan -R '^TestFreeRDPFrdp' --output-on-failure
+mkdir -p /tmp/freerdp-frdp-asan-ubsan/sanitizer-logs
+ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:allocator_may_return_null=1:log_path=/tmp/freerdp-frdp-asan-ubsan/sanitizer-logs/asan LSAN_OPTIONS=print_suppressions=0:log_path=/tmp/freerdp-frdp-asan-ubsan/sanitizer-logs/lsan UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:log_path=/tmp/freerdp-frdp-asan-ubsan/sanitizer-logs/ubsan ctest --test-dir /tmp/freerdp-frdp-asan-ubsan -R '^TestFreeRDPFrdp' --output-on-failure
 ```
 
 These flags add `-fsanitize=address` and `-fsanitize=undefined` and link against the sanitizer
 runtimes. Run the sanitised binaries in a dedicated environment; the sanitiser will abort on memory
-errors and print a report. Leave sanitizer options disabled in production builds.
+errors and print a report. The explicit runtime options enable leak detection, fail fast on sanitizer
+findings, and write sanitizer logs under `sanitizer-logs/` for CI artifact upload. Leave sanitizer
+options disabled in production builds.
 
 ## Strict warning builds
 

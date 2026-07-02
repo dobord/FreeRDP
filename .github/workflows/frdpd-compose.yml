@@ -276,7 +276,13 @@ jobs:
         run: cmake --build build-frdp-asan-ubsan --target TestFreeRDPFrdp
 
       - name: Run focused FRDP sanitizer tests
-        run: ctest --test-dir build-frdp-asan-ubsan -R '^TestFreeRDPFrdp' --output-on-failure
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:allocator_may_return_null=1:log_path=${{ github.workspace }}/build-frdp-asan-ubsan/sanitizer-logs/asan
+          LSAN_OPTIONS: print_suppressions=0:log_path=${{ github.workspace }}/build-frdp-asan-ubsan/sanitizer-logs/lsan
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1:log_path=${{ github.workspace }}/build-frdp-asan-ubsan/sanitizer-logs/ubsan
+        run: |
+          mkdir -p build-frdp-asan-ubsan/sanitizer-logs
+          ctest --test-dir build-frdp-asan-ubsan -R '^TestFreeRDPFrdp' --output-on-failure
 
       - name: Upload sanitizer logs
         if: always()
@@ -287,6 +293,7 @@ jobs:
             build-frdp-asan-ubsan/CMakeFiles/CMakeOutput.log
             build-frdp-asan-ubsan/CMakeFiles/CMakeError.log
             build-frdp-asan-ubsan/Testing/Temporary/LastTest.log
+            build-frdp-asan-ubsan/sanitizer-logs/*
           if-no-files-found: ignore
 
   quick:
