@@ -28,6 +28,7 @@
 
 #define FRDP_IPC_SLOW_SEND_DELAY_US 1000U
 #define FRDP_IPC_CONCURRENT_CLIENTS 8U
+#define FRDP_TEST_HELPER_TIMEOUT_MS "200"
 
 typedef struct
 {
@@ -494,6 +495,28 @@ cleanup:
 	return rc;
 }
 
+static int test_authd_times_out_incomplete_client(const char* socket_path)
+{
+	uint8_t payload[FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE] = { 0 };
+	frdpIpcHeader response = { 0 };
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	if (send_header(fd, FRDP_IPC_AUTH_REQUEST_V2, sizeof(payload)) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fd, &response) >= 0)
+		goto cleanup;
+	if (test_authd_rejects_bad_length(socket_path) != 0)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
 static int test_authd_survives_truncated_clients(const char* socket_path)
 {
 	uint8_t request[FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE] = { 0 };
@@ -571,6 +594,36 @@ static int test_authd_rate_limit(void)
 cleanup:
 	if (stop_helper(&helper) != 0)
 		rc = -1;
+	return rc;
+}
+
+static int test_authd_slowloris_timeout(void)
+{
+	frdpTestHelper helper;
+	const char* previous = getenv("FRDP_HELPER_IPC_TIMEOUT_MS");
+	char* saved = previous ? strdup(previous) : NULL;
+	int rc = -1;
+
+	if (previous && !saved)
+		return -1;
+	memset(&helper, 0, sizeof(helper));
+	helper.pid = -1;
+	if (setenv("FRDP_HELPER_IPC_TIMEOUT_MS", FRDP_TEST_HELPER_TIMEOUT_MS, 1) != 0)
+		goto cleanup_env;
+	if (start_helper(FRDP_AUTHD_BINARY, "frdp-authd-slowloris", &helper) != 0)
+		goto cleanup_env;
+	rc = test_authd_times_out_incomplete_client(helper.socket_path);
+	if (stop_helper(&helper) != 0)
+		rc = -1;
+
+cleanup_env:
+	if (saved)
+	{
+		setenv("FRDP_HELPER_IPC_TIMEOUT_MS", saved, 1);
+		free(saved);
+	}
+	else
+		unsetenv("FRDP_HELPER_IPC_TIMEOUT_MS");
 	return rc;
 }
 
@@ -881,6 +934,28 @@ cleanup:
 	return rc;
 }
 
+static int test_sesmand_times_out_incomplete_client(const char* socket_path)
+{
+	uint8_t payload[FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE] = { 0 };
+	frdpIpcHeader response = { 0 };
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	if (send_header(fd, FRDP_IPC_SESSION_CLOSE_REQUEST, sizeof(payload)) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fd, &response) >= 0)
+		goto cleanup;
+	if (test_sesmand_list_empty(socket_path) != 0)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
 static int test_sesmand_survives_truncated_clients(const char* socket_path)
 {
 	uint8_t request[FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE] = { 0 };
@@ -1071,6 +1146,36 @@ cleanup:
 	return rc;
 }
 
+static int test_sesmand_slowloris_timeout(void)
+{
+	frdpTestHelper helper;
+	const char* previous = getenv("FRDP_HELPER_IPC_TIMEOUT_MS");
+	char* saved = previous ? strdup(previous) : NULL;
+	int rc = -1;
+
+	if (previous && !saved)
+		return -1;
+	memset(&helper, 0, sizeof(helper));
+	helper.pid = -1;
+	if (setenv("FRDP_HELPER_IPC_TIMEOUT_MS", FRDP_TEST_HELPER_TIMEOUT_MS, 1) != 0)
+		goto cleanup_env;
+	if (start_helper(FRDP_SESMAND_BINARY, "frdp-sesmand-slowloris", &helper) != 0)
+		goto cleanup_env;
+	rc = test_sesmand_times_out_incomplete_client(helper.socket_path);
+	if (stop_helper(&helper) != 0)
+		rc = -1;
+
+cleanup_env:
+	if (saved)
+	{
+		setenv("FRDP_HELPER_IPC_TIMEOUT_MS", saved, 1);
+		free(saved);
+	}
+	else
+		unsetenv("FRDP_HELPER_IPC_TIMEOUT_MS");
+	return rc;
+}
+
 static int file_contains(const char* path, const char* needle)
 {
 	char buffer[4096] = { 0 };
@@ -1233,6 +1338,16 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_sesmand_rate_limit() != 0)
 	{
 		printf("frdp-sesmand IPC rate-limit test failed\n");
+		return -1;
+	}
+	if (test_authd_slowloris_timeout() != 0)
+	{
+		printf("frdp-authd slowloris timeout test failed\n");
+		return -1;
+	}
+	if (test_sesmand_slowloris_timeout() != 0)
+	{
+		printf("frdp-sesmand slowloris timeout test failed\n");
 		return -1;
 	}
 	if (test_sesmand_rejects_posix_groups_mismatch() != 0)

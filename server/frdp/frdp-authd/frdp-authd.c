@@ -305,9 +305,21 @@ static int verify_peer(int fd)
 static int set_client_timeouts(int fd)
 {
     struct timeval timeout;
+    unsigned long timeout_ms = 10000UL;
+    const char *value = getenv("FRDP_HELPER_IPC_TIMEOUT_MS");
 
-    timeout.tv_sec = 10;
-    timeout.tv_usec = 0;
+    if (value && value[0]) {
+        char *end = NULL;
+
+        errno = 0;
+        timeout_ms = strtoul(value, &end, 10);
+        if ((errno != 0) || !end || (*end != '\0') || (timeout_ms == 0) ||
+            (timeout_ms > 600000UL))
+            return -1;
+    }
+
+    timeout.tv_sec = (time_t)(timeout_ms / 1000UL);
+    timeout.tv_usec = (suseconds_t)((timeout_ms % 1000UL) * 1000UL);
     if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0)
         return -1;
     if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0)
