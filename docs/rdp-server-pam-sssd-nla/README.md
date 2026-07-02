@@ -14,8 +14,15 @@
 | [05-system-requirements.md](05-system-requirements.md) | Operating systems, packages, AD/Kerberos prerequisites, network, sizing, and security. |
 | [06-implementation-plan.md](06-implementation-plan.md) | Step-by-step implementation plan, milestones, risks, and acceptance criteria. |
 | [07-configuration-and-ops.md](07-configuration-and-ops.md) | Configuration examples, systemd, PAM, SSSD, operations, and audit. |
+| [07-kerberos-guide.md](07-kerberos-guide.md) | SPN, keytab, DNS, and Kerberos-first deployment guide. |
+| [08-hardening-and-testing.md](08-hardening-and-testing.md) | Sanitizer, strict-warning, fuzzing, protocol regression, load, MAC, systemd, and supply-chain hardening notes. |
 | [08-sources.md](08-sources.md) | Sources and documentation links. |
 | [09-implementation-issues.md](09-implementation-issues.md) | Current implementation issues with severity and confidence ratings. |
+| [09-runbooks.md](09-runbooks.md) | Operator runbooks for AD join, keytab rotation, login troubleshooting, and service diagnostics. |
+| [10-configuration-reference.md](10-configuration-reference.md) | Current `frdpd.toml` fields, defaults, and fail-closed unsupported policy. |
+| [11-packaging.md](11-packaging.md) | Packaging layout, install paths, systemd/PAM/MAC artifacts, and current DEB/RPM status. |
+| [12-readiness-and-test-strategy.md](12-readiness-and-test-strategy.md) | Current readiness assessment, highest-value implementation order, and executable test strategy. |
+| [13-threat-model.md](13-threat-model.md) | Draft threat model for FRDP helper topology, trust boundaries, current controls, and validation gates. |
 
 ## Main recommendation
 
