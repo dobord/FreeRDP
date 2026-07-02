@@ -158,7 +158,7 @@ Extend it with:
 - a purpose-built PAM test module with deterministic success, account denial,
   session-open failure and audit recording;
 - additional concurrent clients, slowloris timeout variants and broader truncated-message boundary variants;
-- peer UID rejection and server peer-credential validation;
+- additional peer UID rejection and server peer-credential validation;
 - live-socket/stale-socket startup behavior;
 - broker crash during auth and manager crash during open/close;
 - agent protocol frame/input bounds against Xvfb plus resize control-IPC coverage;

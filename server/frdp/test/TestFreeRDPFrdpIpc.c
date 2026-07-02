@@ -208,6 +208,31 @@ cleanup:
 	return rc;
 }
 
+static int test_get_peer_uid_validates_arguments_and_reads_peer(void)
+{
+	int fds[2] = { -1, -1 };
+	uint64_t uid = UINT64_MAX;
+	int rc = -1;
+
+	errno = 0;
+	if ((frdp_ipc_get_peer_uid(-1, NULL) != -1) || (errno != EINVAL))
+		return -1;
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	if (frdp_ipc_get_peer_uid(fds[0], &uid) != 0)
+		goto cleanup;
+	if (uid != (uint64_t)geteuid())
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
 static int test_header_uses_little_endian_wire_format(void)
 {
 	int fds[2] = { -1, -1 };
@@ -1157,6 +1182,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_recv_rejects_short_read() != 0)
 		return -1;
 	if (test_send_recv_reject_null_buffers() != 0)
+		return -1;
+	if (test_get_peer_uid_validates_arguments_and_reads_peer() != 0)
 		return -1;
 	if (test_header_uses_little_endian_wire_format() != 0)
 		return -1;
