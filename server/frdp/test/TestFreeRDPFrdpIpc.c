@@ -701,6 +701,289 @@ cleanup:
 	return rc;
 }
 
+static int test_agent_messages_use_explicit_wire_format(void)
+{
+	int fds[2] = { -1, -1 };
+	frdpIpcHeader header = { 0 };
+	frdpAgentInputEvent input = { 0 };
+	frdpAgentInputEvent decoded_input = { 0 };
+	frdpAgentFrameRequest frame_request = { 0 };
+	frdpAgentFrameRequest decoded_frame_request = { 0 };
+	frdpAgentFrameResponse frame_response = { 0 };
+	frdpAgentFrameResponse decoded_frame_response = { 0 };
+	frdpAgentResizeRequest resize_request = { 0 };
+	frdpAgentResizeRequest decoded_resize_request = { 0 };
+	frdpAgentResizeResponse resize_response = { 0 };
+	frdpAgentResizeResponse decoded_resize_response = { 0 };
+	uint8_t input_raw[FRDP_IPC_AGENT_INPUT_WIRE_SIZE] = { 0 };
+	uint8_t frame_request_raw[FRDP_IPC_AGENT_FRAME_REQUEST_WIRE_SIZE] = { 0 };
+	uint8_t frame_response_raw[FRDP_IPC_AGENT_FRAME_RESPONSE_WIRE_SIZE] = { 0 };
+	uint8_t resize_request_raw[FRDP_IPC_AGENT_RESIZE_REQUEST_WIRE_SIZE] = { 0 };
+	uint8_t resize_response_raw[FRDP_IPC_AGENT_RESIZE_RESPONSE_WIRE_SIZE] = { 0 };
+	const size_t input_session_offset = sizeof(input.correlation_id);
+	const size_t input_type_offset = input_session_offset + sizeof(input.session_id);
+	const size_t input_flags_offset = input_type_offset + 4U;
+	const size_t input_param1_offset = input_flags_offset + 4U;
+	const size_t input_param2_offset = input_param1_offset + 4U;
+	const size_t frame_request_session_offset = sizeof(frame_request.correlation_id);
+	const size_t frame_request_x_offset =
+	    frame_request_session_offset + sizeof(frame_request.session_id);
+	const size_t frame_request_y_offset = frame_request_x_offset + 4U;
+	const size_t frame_request_width_offset = frame_request_y_offset + 4U;
+	const size_t frame_request_height_offset = frame_request_width_offset + 4U;
+	const size_t frame_request_flags_offset = frame_request_height_offset + 4U;
+	const size_t frame_response_session_offset = sizeof(frame_response.correlation_id);
+	const size_t frame_response_success_offset =
+	    frame_response_session_offset + sizeof(frame_response.session_id);
+	const size_t frame_response_x_offset = frame_response_success_offset + 4U;
+	const size_t frame_response_y_offset = frame_response_x_offset + 4U;
+	const size_t frame_response_width_offset = frame_response_y_offset + 4U;
+	const size_t frame_response_height_offset = frame_response_width_offset + 4U;
+	const size_t frame_response_stride_offset = frame_response_height_offset + 4U;
+	const size_t frame_response_bpp_offset = frame_response_stride_offset + 4U;
+	const size_t frame_response_flags_offset = frame_response_bpp_offset + 4U;
+	const size_t frame_response_data_length_offset = frame_response_flags_offset + 4U;
+	const size_t frame_response_error_offset = frame_response_data_length_offset + 4U;
+	const size_t resize_request_session_offset = sizeof(resize_request.correlation_id);
+	const size_t resize_request_width_offset =
+	    resize_request_session_offset + sizeof(resize_request.session_id);
+	const size_t resize_request_height_offset = resize_request_width_offset + 4U;
+	const size_t resize_request_color_depth_offset = resize_request_height_offset + 4U;
+	const size_t resize_response_session_offset = sizeof(resize_response.correlation_id);
+	const size_t resize_response_success_offset =
+	    resize_response_session_offset + sizeof(resize_response.session_id);
+	const size_t resize_response_width_offset = resize_response_success_offset + 4U;
+	const size_t resize_response_height_offset = resize_response_width_offset + 4U;
+	const size_t resize_response_error_offset = resize_response_height_offset + 4U;
+	int rc = -1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+
+	snprintf(input.correlation_id, sizeof(input.correlation_id), "corr");
+	snprintf(input.session_id, sizeof(input.session_id), "session");
+	input.event_type = FRDP_AGENT_INPUT_KEYBOARD;
+	input.flags = 0x11223344U;
+	input.param1 = (int32_t)0x88776655U;
+	input.param2 = -2;
+	if (frdp_ipc_send_agent_input_event(fds[0], &input) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_AGENT_INPUT) ||
+	    (header.payload_len != FRDP_IPC_AGENT_INPUT_WIRE_SIZE))
+		goto cleanup;
+	if (frdp_ipc_recv(fds[1], input_raw, sizeof(input_raw)) != (int)sizeof(input_raw))
+		goto cleanup;
+	if ((memcmp(&input_raw[0], "corr", 4) != 0) ||
+	    (memcmp(&input_raw[input_session_offset], "session", 7) != 0) ||
+	    (input_raw[input_type_offset] != FRDP_AGENT_INPUT_KEYBOARD) ||
+	    (input_raw[input_flags_offset] != 0x44U) || (input_raw[input_flags_offset + 3U] != 0x11U) ||
+	    (input_raw[input_param1_offset] != 0x55U) ||
+	    (input_raw[input_param1_offset + 3U] != 0x88U) ||
+	    (input_raw[input_param2_offset] != 0xfeU) ||
+	    (input_raw[input_param2_offset + 3U] != 0xffU))
+		goto cleanup;
+	if (frdp_ipc_send(fds[1], input_raw, sizeof(input_raw)) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_agent_input_event_payload(fds[0], &decoded_input,
+	                                            sizeof(input_raw)) != 0)
+		goto cleanup;
+	if ((strcmp(decoded_input.correlation_id, input.correlation_id) != 0) ||
+	    (strcmp(decoded_input.session_id, input.session_id) != 0) ||
+	    (decoded_input.event_type != input.event_type) || (decoded_input.flags != input.flags) ||
+	    (decoded_input.param1 != input.param1) || (decoded_input.param2 != input.param2))
+		goto cleanup;
+
+	snprintf(frame_request.correlation_id, sizeof(frame_request.correlation_id), "corr");
+	snprintf(frame_request.session_id, sizeof(frame_request.session_id), "session");
+	frame_request.x = 0x01020304U;
+	frame_request.y = 0x11121314U;
+	frame_request.width = 0x21222324U;
+	frame_request.height = 0x31323334U;
+	frame_request.flags = FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY;
+	if (frdp_ipc_send_agent_frame_request(fds[0], &frame_request) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_AGENT_FRAME_REQUEST) ||
+	    (header.payload_len != FRDP_IPC_AGENT_FRAME_REQUEST_WIRE_SIZE))
+		goto cleanup;
+	if (frdp_ipc_recv(fds[1], frame_request_raw, sizeof(frame_request_raw)) !=
+	    (int)sizeof(frame_request_raw))
+		goto cleanup;
+	if ((memcmp(&frame_request_raw[0], "corr", 4) != 0) ||
+	    (memcmp(&frame_request_raw[frame_request_session_offset], "session", 7) != 0) ||
+	    (frame_request_raw[frame_request_x_offset] != 0x04U) ||
+	    (frame_request_raw[frame_request_x_offset + 3U] != 0x01U) ||
+	    (frame_request_raw[frame_request_y_offset] != 0x14U) ||
+	    (frame_request_raw[frame_request_y_offset + 3U] != 0x11U) ||
+	    (frame_request_raw[frame_request_width_offset] != 0x24U) ||
+	    (frame_request_raw[frame_request_width_offset + 3U] != 0x21U) ||
+	    (frame_request_raw[frame_request_height_offset] != 0x34U) ||
+	    (frame_request_raw[frame_request_height_offset + 3U] != 0x31U) ||
+	    (frame_request_raw[frame_request_flags_offset] != FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
+		goto cleanup;
+	if (frdp_ipc_send(fds[1], frame_request_raw, sizeof(frame_request_raw)) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_agent_frame_request_payload(fds[0], &decoded_frame_request,
+	                                             sizeof(frame_request_raw)) != 0)
+		goto cleanup;
+	if ((strcmp(decoded_frame_request.correlation_id, frame_request.correlation_id) != 0) ||
+	    (strcmp(decoded_frame_request.session_id, frame_request.session_id) != 0) ||
+	    (decoded_frame_request.x != frame_request.x) ||
+	    (decoded_frame_request.y != frame_request.y) ||
+	    (decoded_frame_request.width != frame_request.width) ||
+	    (decoded_frame_request.height != frame_request.height) ||
+	    (decoded_frame_request.flags != frame_request.flags))
+		goto cleanup;
+
+	snprintf(frame_response.correlation_id, sizeof(frame_response.correlation_id), "corr");
+	snprintf(frame_response.session_id, sizeof(frame_response.session_id), "session");
+	frame_response.success = 1;
+	frame_response.x = 0x01020304U;
+	frame_response.y = 0x11121314U;
+	frame_response.width = 0x21222324U;
+	frame_response.height = 0x31323334U;
+	frame_response.stride = 0x41424344U;
+	frame_response.bpp = 32;
+	frame_response.flags = FRDP_AGENT_FRAME_RESPONSE_UNCHANGED;
+	frame_response.data_length = 0x51525354U;
+	snprintf(frame_response.error, sizeof(frame_response.error), "ignored");
+	if (frdp_ipc_send_agent_frame_response(fds[0], &frame_response) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_AGENT_FRAME_RESPONSE) ||
+	    (header.payload_len != FRDP_IPC_AGENT_FRAME_RESPONSE_WIRE_SIZE))
+		goto cleanup;
+	if (frdp_ipc_recv(fds[1], frame_response_raw, sizeof(frame_response_raw)) !=
+	    (int)sizeof(frame_response_raw))
+		goto cleanup;
+	if ((memcmp(&frame_response_raw[0], "corr", 4) != 0) ||
+	    (memcmp(&frame_response_raw[frame_response_session_offset], "session", 7) != 0) ||
+	    (frame_response_raw[frame_response_success_offset] != 1U) ||
+	    (frame_response_raw[frame_response_x_offset] != 0x04U) ||
+	    (frame_response_raw[frame_response_x_offset + 3U] != 0x01U) ||
+	    (frame_response_raw[frame_response_y_offset] != 0x14U) ||
+	    (frame_response_raw[frame_response_y_offset + 3U] != 0x11U) ||
+	    (frame_response_raw[frame_response_width_offset] != 0x24U) ||
+	    (frame_response_raw[frame_response_width_offset + 3U] != 0x21U) ||
+	    (frame_response_raw[frame_response_height_offset] != 0x34U) ||
+	    (frame_response_raw[frame_response_height_offset + 3U] != 0x31U) ||
+	    (frame_response_raw[frame_response_stride_offset] != 0x44U) ||
+	    (frame_response_raw[frame_response_stride_offset + 3U] != 0x41U) ||
+	    (frame_response_raw[frame_response_bpp_offset] != 32U) ||
+	    (frame_response_raw[frame_response_flags_offset] != FRDP_AGENT_FRAME_RESPONSE_UNCHANGED) ||
+	    (frame_response_raw[frame_response_data_length_offset] != 0x54U) ||
+	    (frame_response_raw[frame_response_data_length_offset + 3U] != 0x51U) ||
+	    (memcmp(&frame_response_raw[frame_response_error_offset], "ignored", 7) != 0))
+		goto cleanup;
+	if (frdp_ipc_send_header(fds[1], FRDP_IPC_AGENT_FRAME_RESPONSE,
+	                         sizeof(frame_response_raw)) != 0 ||
+	    frdp_ipc_send(fds[1], frame_response_raw, sizeof(frame_response_raw)) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_agent_frame_response(fds[0], &decoded_frame_response) != 0)
+		goto cleanup;
+	if ((strcmp(decoded_frame_response.correlation_id, frame_response.correlation_id) != 0) ||
+	    (strcmp(decoded_frame_response.session_id, frame_response.session_id) != 0) ||
+	    (decoded_frame_response.success != frame_response.success) ||
+	    (decoded_frame_response.x != frame_response.x) ||
+	    (decoded_frame_response.y != frame_response.y) ||
+	    (decoded_frame_response.width != frame_response.width) ||
+	    (decoded_frame_response.height != frame_response.height) ||
+	    (decoded_frame_response.stride != frame_response.stride) ||
+	    (decoded_frame_response.bpp != frame_response.bpp) ||
+	    (decoded_frame_response.flags != frame_response.flags) ||
+	    (decoded_frame_response.data_length != frame_response.data_length) ||
+	    (strcmp(decoded_frame_response.error, frame_response.error) != 0))
+		goto cleanup;
+
+	snprintf(resize_request.correlation_id, sizeof(resize_request.correlation_id), "corr");
+	snprintf(resize_request.session_id, sizeof(resize_request.session_id), "session");
+	resize_request.width = 0x01020304U;
+	resize_request.height = 0x11121314U;
+	resize_request.color_depth = 0x21222324U;
+	if (frdp_ipc_send_agent_resize_request(fds[0], &resize_request) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_AGENT_RESIZE_REQUEST) ||
+	    (header.payload_len != FRDP_IPC_AGENT_RESIZE_REQUEST_WIRE_SIZE))
+		goto cleanup;
+	if (frdp_ipc_recv(fds[1], resize_request_raw, sizeof(resize_request_raw)) !=
+	    (int)sizeof(resize_request_raw))
+		goto cleanup;
+	if ((memcmp(&resize_request_raw[0], "corr", 4) != 0) ||
+	    (memcmp(&resize_request_raw[resize_request_session_offset], "session", 7) != 0) ||
+	    (resize_request_raw[resize_request_width_offset] != 0x04U) ||
+	    (resize_request_raw[resize_request_width_offset + 3U] != 0x01U) ||
+	    (resize_request_raw[resize_request_height_offset] != 0x14U) ||
+	    (resize_request_raw[resize_request_height_offset + 3U] != 0x11U) ||
+	    (resize_request_raw[resize_request_color_depth_offset] != 0x24U) ||
+	    (resize_request_raw[resize_request_color_depth_offset + 3U] != 0x21U))
+		goto cleanup;
+	if (frdp_ipc_send(fds[1], resize_request_raw, sizeof(resize_request_raw)) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_agent_resize_request_payload(fds[0], &decoded_resize_request,
+	                                              sizeof(resize_request_raw)) != 0)
+		goto cleanup;
+	if ((strcmp(decoded_resize_request.correlation_id, resize_request.correlation_id) != 0) ||
+	    (strcmp(decoded_resize_request.session_id, resize_request.session_id) != 0) ||
+	    (decoded_resize_request.width != resize_request.width) ||
+	    (decoded_resize_request.height != resize_request.height) ||
+	    (decoded_resize_request.color_depth != resize_request.color_depth))
+		goto cleanup;
+
+	snprintf(resize_response.correlation_id, sizeof(resize_response.correlation_id), "corr");
+	snprintf(resize_response.session_id, sizeof(resize_response.session_id), "session");
+	resize_response.success = 1;
+	resize_response.width = 0x01020304U;
+	resize_response.height = 0x11121314U;
+	snprintf(resize_response.error, sizeof(resize_response.error), "ignored");
+	if (frdp_ipc_send_agent_resize_response(fds[0], &resize_response) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_AGENT_RESIZE_RESPONSE) ||
+	    (header.payload_len != FRDP_IPC_AGENT_RESIZE_RESPONSE_WIRE_SIZE))
+		goto cleanup;
+	if (frdp_ipc_recv(fds[1], resize_response_raw, sizeof(resize_response_raw)) !=
+	    (int)sizeof(resize_response_raw))
+		goto cleanup;
+	if ((memcmp(&resize_response_raw[0], "corr", 4) != 0) ||
+	    (memcmp(&resize_response_raw[resize_response_session_offset], "session", 7) != 0) ||
+	    (resize_response_raw[resize_response_success_offset] != 1U) ||
+	    (resize_response_raw[resize_response_width_offset] != 0x04U) ||
+	    (resize_response_raw[resize_response_width_offset + 3U] != 0x01U) ||
+	    (resize_response_raw[resize_response_height_offset] != 0x14U) ||
+	    (resize_response_raw[resize_response_height_offset + 3U] != 0x11U) ||
+	    (memcmp(&resize_response_raw[resize_response_error_offset], "ignored", 7) != 0))
+		goto cleanup;
+	if (frdp_ipc_send_header(fds[1], FRDP_IPC_AGENT_RESIZE_RESPONSE,
+	                         sizeof(resize_response_raw)) != 0 ||
+	    frdp_ipc_send(fds[1], resize_response_raw, sizeof(resize_response_raw)) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_agent_resize_response(fds[0], &decoded_resize_response) != 0)
+		goto cleanup;
+	if ((strcmp(decoded_resize_response.correlation_id, resize_response.correlation_id) != 0) ||
+	    (strcmp(decoded_resize_response.session_id, resize_response.session_id) != 0) ||
+	    (decoded_resize_response.success != resize_response.success) ||
+	    (decoded_resize_response.width != resize_response.width) ||
+	    (decoded_resize_response.height != resize_response.height) ||
+	    (strcmp(decoded_resize_response.error, resize_response.error) != 0))
+		goto cleanup;
+
+	rc = 0;
+
+cleanup:
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
 static int test_auth_token_binds_posix_account(void)
 {
 	char dir[1024] = { 0 };
@@ -800,6 +1083,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_session_list_response_uses_explicit_wire_format() != 0)
 		return -1;
 	if (test_session_reload_response_uses_explicit_wire_format() != 0)
+		return -1;
+	if (test_agent_messages_use_explicit_wire_format() != 0)
 		return -1;
 	if (test_auth_token_binds_posix_account() != 0)
 		return -1;

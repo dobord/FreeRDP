@@ -975,6 +975,369 @@ cleanup:
     return rc;
 }
 
+int frdp_ipc_send_agent_input_event(int fd, const frdpAgentInputEvent *event)
+{
+    uint8_t wire[FRDP_IPC_AGENT_INPUT_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!event) {
+        errno = EINVAL;
+        return -1;
+    }
+    memcpy(&wire[offset], event->correlation_id, sizeof(event->correlation_id));
+    offset += sizeof(event->correlation_id);
+    memcpy(&wire[offset], event->session_id, sizeof(event->session_id));
+    offset += sizeof(event->session_id);
+    frdp_ipc_write_u32_le(&wire[offset], event->event_type);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], event->flags);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], (uint32_t)event->param1);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], (uint32_t)event->param2);
+
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AGENT_INPUT, sizeof(wire)) != 0)
+        goto cleanup;
+    rc = frdp_ipc_send(fd, wire, sizeof(wire));
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_agent_input_event_payload(int fd, frdpAgentInputEvent *event,
+                                            uint32_t payload_len)
+{
+    uint8_t wire[FRDP_IPC_AGENT_INPUT_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!event) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (payload_len != sizeof(wire)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    memset(event, 0, sizeof(*event));
+    memcpy(event->correlation_id, &wire[offset], sizeof(event->correlation_id));
+    offset += sizeof(event->correlation_id);
+    memcpy(event->session_id, &wire[offset], sizeof(event->session_id));
+    offset += sizeof(event->session_id);
+    event->event_type = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    event->flags = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    event->param1 = (int32_t)frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    event->param2 = (int32_t)frdp_ipc_read_u32_le(&wire[offset]);
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_send_agent_frame_request(int fd, const frdpAgentFrameRequest *request)
+{
+    uint8_t wire[FRDP_IPC_AGENT_FRAME_REQUEST_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!request) {
+        errno = EINVAL;
+        return -1;
+    }
+    memcpy(&wire[offset], request->correlation_id, sizeof(request->correlation_id));
+    offset += sizeof(request->correlation_id);
+    memcpy(&wire[offset], request->session_id, sizeof(request->session_id));
+    offset += sizeof(request->session_id);
+    frdp_ipc_write_u32_le(&wire[offset], request->x);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], request->y);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], request->width);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], request->height);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], request->flags);
+
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AGENT_FRAME_REQUEST, sizeof(wire)) != 0)
+        goto cleanup;
+    rc = frdp_ipc_send(fd, wire, sizeof(wire));
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_agent_frame_request_payload(int fd, frdpAgentFrameRequest *request,
+                                              uint32_t payload_len)
+{
+    uint8_t wire[FRDP_IPC_AGENT_FRAME_REQUEST_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!request) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (payload_len != sizeof(wire)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    memset(request, 0, sizeof(*request));
+    memcpy(request->correlation_id, &wire[offset], sizeof(request->correlation_id));
+    offset += sizeof(request->correlation_id);
+    memcpy(request->session_id, &wire[offset], sizeof(request->session_id));
+    offset += sizeof(request->session_id);
+    request->x = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    request->y = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    request->width = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    request->height = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    request->flags = frdp_ipc_read_u32_le(&wire[offset]);
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_send_agent_frame_response(int fd, const frdpAgentFrameResponse *response)
+{
+    uint8_t wire[FRDP_IPC_AGENT_FRAME_RESPONSE_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response) {
+        errno = EINVAL;
+        return -1;
+    }
+    memcpy(&wire[offset], response->correlation_id, sizeof(response->correlation_id));
+    offset += sizeof(response->correlation_id);
+    memcpy(&wire[offset], response->session_id, sizeof(response->session_id));
+    offset += sizeof(response->session_id);
+    frdp_ipc_write_u32_le(&wire[offset], response->success ? 1U : 0U);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], response->x);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], response->y);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], response->width);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], response->height);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], response->stride);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], response->bpp);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], response->flags);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], response->data_length);
+    offset += 4U;
+    memcpy(&wire[offset], response->error, sizeof(response->error));
+
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AGENT_FRAME_RESPONSE, sizeof(wire)) != 0)
+        goto cleanup;
+    rc = frdp_ipc_send(fd, wire, sizeof(wire));
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_agent_frame_response(int fd, frdpAgentFrameResponse *response)
+{
+    frdpIpcHeader header = {0};
+    uint8_t wire[FRDP_IPC_AGENT_FRAME_RESPONSE_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
+        return -1;
+    if ((header.type != FRDP_IPC_AGENT_FRAME_RESPONSE) || (header.payload_len != sizeof(wire))) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    memset(response, 0, sizeof(*response));
+    memcpy(response->correlation_id, &wire[offset], sizeof(response->correlation_id));
+    offset += sizeof(response->correlation_id);
+    memcpy(response->session_id, &wire[offset], sizeof(response->session_id));
+    offset += sizeof(response->session_id);
+    response->success = frdp_ipc_read_u32_le(&wire[offset]) ? 1 : 0;
+    offset += 4U;
+    response->x = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    response->y = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    response->width = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    response->height = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    response->stride = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    response->bpp = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    response->flags = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    response->data_length = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    memcpy(response->error, &wire[offset], sizeof(response->error));
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_send_agent_resize_request(int fd, const frdpAgentResizeRequest *request)
+{
+    uint8_t wire[FRDP_IPC_AGENT_RESIZE_REQUEST_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!request) {
+        errno = EINVAL;
+        return -1;
+    }
+    memcpy(&wire[offset], request->correlation_id, sizeof(request->correlation_id));
+    offset += sizeof(request->correlation_id);
+    memcpy(&wire[offset], request->session_id, sizeof(request->session_id));
+    offset += sizeof(request->session_id);
+    frdp_ipc_write_u32_le(&wire[offset], request->width);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], request->height);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], request->color_depth);
+
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AGENT_RESIZE_REQUEST, sizeof(wire)) != 0)
+        goto cleanup;
+    rc = frdp_ipc_send(fd, wire, sizeof(wire));
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_agent_resize_request_payload(int fd, frdpAgentResizeRequest *request,
+                                               uint32_t payload_len)
+{
+    uint8_t wire[FRDP_IPC_AGENT_RESIZE_REQUEST_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!request) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (payload_len != sizeof(wire)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    memset(request, 0, sizeof(*request));
+    memcpy(request->correlation_id, &wire[offset], sizeof(request->correlation_id));
+    offset += sizeof(request->correlation_id);
+    memcpy(request->session_id, &wire[offset], sizeof(request->session_id));
+    offset += sizeof(request->session_id);
+    request->width = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    request->height = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    request->color_depth = frdp_ipc_read_u32_le(&wire[offset]);
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_send_agent_resize_response(int fd, const frdpAgentResizeResponse *response)
+{
+    uint8_t wire[FRDP_IPC_AGENT_RESIZE_RESPONSE_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response) {
+        errno = EINVAL;
+        return -1;
+    }
+    memcpy(&wire[offset], response->correlation_id, sizeof(response->correlation_id));
+    offset += sizeof(response->correlation_id);
+    memcpy(&wire[offset], response->session_id, sizeof(response->session_id));
+    offset += sizeof(response->session_id);
+    frdp_ipc_write_u32_le(&wire[offset], response->success ? 1U : 0U);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], response->width);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], response->height);
+    offset += 4U;
+    memcpy(&wire[offset], response->error, sizeof(response->error));
+
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AGENT_RESIZE_RESPONSE, sizeof(wire)) != 0)
+        goto cleanup;
+    rc = frdp_ipc_send(fd, wire, sizeof(wire));
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_agent_resize_response(int fd, frdpAgentResizeResponse *response)
+{
+    frdpIpcHeader header = {0};
+    uint8_t wire[FRDP_IPC_AGENT_RESIZE_RESPONSE_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
+        return -1;
+    if ((header.type != FRDP_IPC_AGENT_RESIZE_RESPONSE) || (header.payload_len != sizeof(wire))) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    memset(response, 0, sizeof(*response));
+    memcpy(response->correlation_id, &wire[offset], sizeof(response->correlation_id));
+    offset += sizeof(response->correlation_id);
+    memcpy(response->session_id, &wire[offset], sizeof(response->session_id));
+    offset += sizeof(response->session_id);
+    response->success = frdp_ipc_read_u32_le(&wire[offset]) ? 1 : 0;
+    offset += 4U;
+    response->width = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    response->height = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    memcpy(response->error, &wire[offset], sizeof(response->error));
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
 /* Close a socket */
 int frdp_ipc_close(int fd)
 {

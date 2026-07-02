@@ -63,6 +63,12 @@ typedef struct {
 #define FRDP_IPC_SESSION_LIST_RESPONSE_WIRE_SIZE \
     (4U + 4U + (FRDP_IPC_MAX_SESSION_LIST_ENTRIES * FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE) + 128U)
 #define FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE (4U + 128U + 128U)
+#define FRDP_IPC_AGENT_INPUT_WIRE_SIZE (64U + 64U + 4U + 4U + 4U + 4U)
+#define FRDP_IPC_AGENT_FRAME_REQUEST_WIRE_SIZE (64U + 64U + 4U + 4U + 4U + 4U + 4U)
+#define FRDP_IPC_AGENT_FRAME_RESPONSE_WIRE_SIZE \
+    (64U + 64U + 4U + 4U + 4U + 4U + 4U + 4U + 4U + 4U + 4U + 128U)
+#define FRDP_IPC_AGENT_RESIZE_REQUEST_WIRE_SIZE (64U + 64U + 4U + 4U + 4U)
+#define FRDP_IPC_AGENT_RESIZE_RESPONSE_WIRE_SIZE (64U + 64U + 4U + 4U + 4U + 128U)
 #define FRDP_IPC_RATE_LIMIT_WINDOW_SECONDS 10U
 #define FRDP_IPC_RATE_LIMIT_MAX_REQUESTS 64U
 #define FRDP_IPC_RATE_LIMIT_MAX_PEERS 16U
@@ -247,6 +253,19 @@ int frdp_ipc_send_session_list_response(int fd, const frdpSessionListResponse *r
 int frdp_ipc_recv_session_list_response(int fd, frdpSessionListResponse *response);
 int frdp_ipc_send_session_reload_response(int fd, const frdpControlResponse *response);
 int frdp_ipc_recv_session_reload_response(int fd, frdpControlResponse *response);
+int frdp_ipc_send_agent_input_event(int fd, const frdpAgentInputEvent *event);
+int frdp_ipc_recv_agent_input_event_payload(int fd, frdpAgentInputEvent *event,
+                                            uint32_t payload_len);
+int frdp_ipc_send_agent_frame_request(int fd, const frdpAgentFrameRequest *request);
+int frdp_ipc_recv_agent_frame_request_payload(int fd, frdpAgentFrameRequest *request,
+                                              uint32_t payload_len);
+int frdp_ipc_send_agent_frame_response(int fd, const frdpAgentFrameResponse *response);
+int frdp_ipc_recv_agent_frame_response(int fd, frdpAgentFrameResponse *response);
+int frdp_ipc_send_agent_resize_request(int fd, const frdpAgentResizeRequest *request);
+int frdp_ipc_recv_agent_resize_request_payload(int fd, frdpAgentResizeRequest *request,
+                                               uint32_t payload_len);
+int frdp_ipc_send_agent_resize_response(int fd, const frdpAgentResizeResponse *response);
+int frdp_ipc_recv_agent_resize_response(int fd, frdpAgentResizeResponse *response);
 
 /* Close a previously opened fd */
 int frdp_ipc_close(int fd);

@@ -1106,9 +1106,7 @@ static int handle_input_message(int fd, Display *display, uint32_t payload_len,
 
     memset(&event, 0, sizeof(event));
 
-    if (payload_len != sizeof(event))
-        return -1;
-    if (recv_exact(fd, &event, sizeof(event)) != 0)
+    if (frdp_ipc_recv_agent_input_event_payload(fd, &event, payload_len) != 0)
         return -1;
 
     event.correlation_id[sizeof(event.correlation_id) - 1] = '\0';
@@ -1131,9 +1129,7 @@ static int handle_input_message(int fd, Display *display, uint32_t payload_len,
 static int send_frame_response(int fd, const frdpAgentFrameResponse *response,
                                const unsigned char *pixels)
 {
-    if (frdp_ipc_send_header(fd, FRDP_IPC_AGENT_FRAME_RESPONSE, sizeof(*response)) != 0)
-        return -1;
-    if (send_exact(fd, response, sizeof(*response)) != 0)
+    if (frdp_ipc_send_agent_frame_response(fd, response) != 0)
         return -1;
     if (response->success && response->data_length > 0) {
         if (!pixels)
@@ -1146,9 +1142,7 @@ static int send_frame_response(int fd, const frdpAgentFrameResponse *response,
 
 static int send_resize_response(int fd, const frdpAgentResizeResponse *response)
 {
-    if (frdp_ipc_send_header(fd, FRDP_IPC_AGENT_RESIZE_RESPONSE, sizeof(*response)) != 0)
-        return -1;
-    return send_exact(fd, response, sizeof(*response));
+    return frdp_ipc_send_agent_resize_response(fd, response);
 }
 
 static int handle_resize_message(int fd, Display *display, uint32_t payload_len,
@@ -1161,9 +1155,7 @@ static int handle_resize_message(int fd, Display *display, uint32_t payload_len,
     memset(&request, 0, sizeof(request));
     memset(&response, 0, sizeof(response));
 
-    if (payload_len != sizeof(request))
-        return -1;
-    if (recv_exact(fd, &request, sizeof(request)) != 0)
+    if (frdp_ipc_recv_agent_resize_request_payload(fd, &request, payload_len) != 0)
         return -1;
     request.correlation_id[sizeof(request.correlation_id) - 1] = '\0';
     request.session_id[sizeof(request.session_id) - 1] = '\0';
@@ -1209,9 +1201,7 @@ static int handle_frame_message(int fd, frdpAgentFrameState *frame_state, uint32
     memset(&request, 0, sizeof(request));
     memset(&response, 0, sizeof(response));
 
-    if (payload_len != sizeof(request))
-        return -1;
-    if (recv_exact(fd, &request, sizeof(request)) != 0)
+    if (frdp_ipc_recv_agent_frame_request_payload(fd, &request, payload_len) != 0)
         return -1;
     request.correlation_id[sizeof(request.correlation_id) - 1] = '\0';
     request.session_id[sizeof(request.session_id) - 1] = '\0';

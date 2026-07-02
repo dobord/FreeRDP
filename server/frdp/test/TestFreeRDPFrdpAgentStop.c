@@ -146,11 +146,9 @@ static int send_agent_resize(const char* socket_path, uint32_t width, uint32_t h
                              int expect_response)
 {
 	int fd = -1;
-	frdpIpcHeader header;
 	frdpAgentResizeRequest request;
 	frdpAgentResizeResponse response;
 
-	memset(&header, 0, sizeof(header));
 	memset(&request, 0, sizeof(request));
 	memset(&response, 0, sizeof(response));
 
@@ -164,30 +162,17 @@ static int send_agent_resize(const char* socket_path, uint32_t width, uint32_t h
 	request.height = height;
 	request.color_depth = 24;
 
-	if (frdp_ipc_send_header(fd, FRDP_IPC_AGENT_RESIZE_REQUEST, sizeof(request)) != 0)
+	if (frdp_ipc_send_agent_resize_request(fd, &request) != 0)
 	{
 		frdp_ipc_close(fd);
 		return expect_response ? -1 : 0;
 	}
-	if (frdp_ipc_send(fd, &request, sizeof(request)) != 0)
-	{
-		frdp_ipc_close(fd);
-		return expect_response ? -1 : 0;
-	}
-
-	if (frdp_ipc_recv_header(fd, &header) < 0)
+	if (frdp_ipc_recv_agent_resize_response(fd, &response) != 0)
 	{
 		frdp_ipc_close(fd);
 		return expect_response ? -1 : 0;
 	}
 	if (!expect_response)
-	{
-		frdp_ipc_close(fd);
-		return -1;
-	}
-	if (header.type != FRDP_IPC_AGENT_RESIZE_RESPONSE ||
-	    header.payload_len != sizeof(response) ||
-	    frdp_ipc_recv(fd, &response, sizeof(response)) < 0)
 	{
 		frdp_ipc_close(fd);
 		return -1;

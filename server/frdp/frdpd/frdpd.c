@@ -278,8 +278,7 @@ static BOOL frdpd_send_agent_input(frdpdPeerContext* context, frdpAgentInputType
 	if (fd < 0)
 		goto fail;
 
-	if ((frdp_ipc_send_header(fd, FRDP_IPC_AGENT_INPUT, sizeof(event)) < 0) ||
-	    (frdp_ipc_send(fd, &event, sizeof(event)) < 0))
+	if (frdp_ipc_send_agent_input_event(fd, &event) != 0)
 		goto fail;
 	ok = TRUE;
 
@@ -486,7 +485,6 @@ static BOOL frdpd_send_agent_resize(frdpdPeerContext* context, UINT32 width, UIN
                                     UINT32 color_depth)
 {
 	int fd = -1;
-	frdpIpcHeader response_header = { 0 };
 	frdpAgentResizeRequest request = { 0 };
 	frdpAgentResizeResponse response = { 0 };
 	BOOL ok = FALSE;
@@ -509,16 +507,9 @@ static BOOL frdpd_send_agent_resize(frdpdPeerContext* context, UINT32 width, UIN
 	if (!frdpd_set_resize_ipc_timeout(fd))
 		goto fail;
 
-	if ((frdp_ipc_send_header(fd, FRDP_IPC_AGENT_RESIZE_REQUEST, sizeof(request)) < 0) ||
-	    (frdp_ipc_send(fd, &request, sizeof(request)) < 0))
+	if (frdp_ipc_send_agent_resize_request(fd, &request) != 0)
 		goto fail;
-
-	if (frdp_ipc_recv_header(fd, &response_header) != (int)sizeof(response_header))
-		goto fail;
-	if ((response_header.type != FRDP_IPC_AGENT_RESIZE_RESPONSE) ||
-	    (response_header.payload_len != sizeof(response)))
-		goto fail;
-	if (frdp_ipc_recv(fd, &response, sizeof(response)) != (int)sizeof(response))
+	if (frdp_ipc_recv_agent_resize_response(fd, &response) != 0)
 		goto fail;
 
 	response.correlation_id[sizeof(response.correlation_id) - 1] = '\0';
@@ -544,7 +535,6 @@ static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT3
                                       frdpAgentFrameResponse* response, BYTE** data)
 {
 	int fd = -1;
-	frdpIpcHeader response_header = { 0 };
 	frdpAgentFrameRequest request = { 0 };
 	BOOL ok = FALSE;
 
@@ -574,16 +564,9 @@ static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT3
 	if (!frdpd_set_frame_ipc_timeout(fd))
 		goto fail;
 
-	if ((frdp_ipc_send_header(fd, FRDP_IPC_AGENT_FRAME_REQUEST, sizeof(request)) < 0) ||
-	    (frdp_ipc_send(fd, &request, sizeof(request)) < 0))
+	if (frdp_ipc_send_agent_frame_request(fd, &request) != 0)
 		goto fail;
-
-	if (frdp_ipc_recv_header(fd, &response_header) != (int)sizeof(response_header))
-		goto fail;
-	if ((response_header.type != FRDP_IPC_AGENT_FRAME_RESPONSE) ||
-	    (response_header.payload_len != sizeof(*response)))
-		goto fail;
-	if (frdp_ipc_recv(fd, response, sizeof(*response)) != (int)sizeof(*response))
+	if (frdp_ipc_recv_agent_frame_response(fd, response) != 0)
 		goto fail;
 
 	response->correlation_id[sizeof(response->correlation_id) - 1] = '\0';
