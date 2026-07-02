@@ -51,6 +51,8 @@
 
 static volatile sig_atomic_t g_stop_requested = 0;
 
+static void clear_secret(char *secret, size_t length);
+
 static void authd_signal_handler(int signum)
 {
     (void)signum;
@@ -72,6 +74,20 @@ static int install_signal_handlers(void)
     return 0;
 }
 
+static void clear_pam_responses(struct pam_response *responses, int count)
+{
+    if (!responses || count <= 0)
+        return;
+
+    for (int x = 0; x < count; x++) {
+        if (responses[x].resp) {
+            clear_secret(responses[x].resp, strlen(responses[x].resp));
+            free(responses[x].resp);
+            responses[x].resp = NULL;
+        }
+    }
+}
+
 static int pam_conversation(int num_msg, const struct pam_message **msg,
                             struct pam_response **resp, void *appdata_ptr)
 {
@@ -83,8 +99,7 @@ static int pam_conversation(int num_msg, const struct pam_message **msg,
         if (msg[i]->msg_style == PAM_PROMPT_ECHO_OFF) {
             aresp[i].resp = strdup(password ? password : "");
             if (!aresp[i].resp) {
-                for (int j = 0; j < i; j++)
-                    free(aresp[j].resp);
+                clear_pam_responses(aresp, i);
                 free(aresp);
                 return PAM_BUF_ERR;
             }
@@ -315,7 +330,7 @@ int authenticate_user(const char *service, const char *rhost, const char *correl
     memcpy(buf, password, pwlen + 1);
     if (mlock(buf, pwlen + 1) != 0) {
         /* Hard fail if we cannot lock memory to protect secrets */
-        memset(buf, 0, pwlen + 1);
+        clear_secret(buf, pwlen + 1);
         munmap(buf, pwlen + 1);
         return -1;
     }
@@ -364,7 +379,7 @@ int authenticate_user(const char *service, const char *rhost, const char *correl
     }
 
     /* Clear and unlock secret data. */
-    memset(buf, 0, pwlen + 1);
+    clear_secret(buf, pwlen + 1);
     munlock(buf, pwlen + 1);
     munmap(buf, pwlen + 1);
 
