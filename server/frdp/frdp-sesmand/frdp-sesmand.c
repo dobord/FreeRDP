@@ -40,6 +40,7 @@
 #include "../ipc/frdp-auth-token.h"
 #include "../ipc/frdp-ipc.h"
 #include "display_policy.h"
+#include "session_cleanup.h"
 #include "session_state.h"
 
 /* Session registry entry.  Each session retains its PAM handle and the
@@ -669,27 +670,46 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 static void cleanup_session(int idx)
 {
     session *s = &sessions[idx];
-    if (frdp_sesmand_session_state_can_transition(s->state, FRDP_SESMAND_SESSION_STOPPING))
+    frdpSesmandSessionCleanupPlan cleanup = {0};
+    frdpSesmandSessionCleanupContext cleanup_context = {
+        .state = s->state,
+        .has_process_group = s->pgid > 0,
+        .has_pam_handle = s->pamh != NULL,
+        .credentials_established = s->credentials_established,
+        .has_agent_socket = s->agent_socket[0] != '\0',
+        .has_display_reservation = (s->display_reservation_fd >= 0) ||
+                                   (s->display_reservation[0] != '\0')
+    };
+    if (frdp_sesmand_session_cleanup_plan(&cleanup_context, &cleanup) != 0) {
+        cleanup.terminate_process_group = cleanup_context.has_process_group;
+        cleanup.close_pam_session = cleanup_context.has_pam_handle;
+        cleanup.delete_pam_credentials = cleanup_context.has_pam_handle &&
+                                         cleanup_context.credentials_established;
+        cleanup.unlink_agent_socket = cleanup_context.has_agent_socket;
+        cleanup.release_display_reservation = cleanup_context.has_display_reservation;
+    }
+    if (cleanup.mark_stopping)
         s->state = FRDP_SESMAND_SESSION_STOPPING;
     /* Terminate the entire process group (agent + display backend). */
-    if (s->pgid > 0) {
+    if (cleanup.terminate_process_group) {
         kill(-s->pgid, SIGTERM);
         wait_for_agent_exit(s->agent_pid, s->pgid);
     }
     /* Close PAM session and end handle. */
-    if (s->pamh) {
+    if (cleanup.close_pam_session) {
         int status = pam_close_session(s->pamh, 0);
-        if (s->credentials_established) {
+        if (cleanup.delete_pam_credentials) {
             int cred_status = pam_setcred(s->pamh, PAM_DELETE_CRED);
             if (status == PAM_SUCCESS && cred_status != PAM_SUCCESS)
                 status = cred_status;
         }
         pam_end(s->pamh, status);
     }
-    if (s->agent_socket[0] != '\0')
+    if (cleanup.unlink_agent_socket)
         unlink(s->agent_socket);
-    release_display_reservation(&s->display_reservation_fd, s->display_reservation);
-    if (frdp_sesmand_session_state_can_transition(s->state, FRDP_SESMAND_SESSION_DEAD))
+    if (cleanup.release_display_reservation)
+        release_display_reservation(&s->display_reservation_fd, s->display_reservation);
+    if (cleanup.mark_dead)
         s->state = FRDP_SESMAND_SESSION_DEAD;
     if (idx < session_count - 1) {
         sessions[idx] = sessions[session_count - 1];
