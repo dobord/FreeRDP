@@ -123,6 +123,7 @@ endif()
 set(FRDP_SYSTEMD_SYSTEM_UNIT_DIR "lib/systemd/system" CACHE PATH "systemd system unit install directory")
 set(FRDP_TMPFILES_DIR "lib/tmpfiles.d" CACHE PATH "systemd tmpfiles install directory")
 set(FRDP_SECURITY_POLICY_DIR "${CMAKE_INSTALL_DATADIR}/frdpd/security" CACHE PATH "FRDP security policy example install directory")
+set(FRDP_MONITORING_DIR "${CMAKE_INSTALL_DATADIR}/frdpd/monitoring" CACHE PATH "FRDP monitoring example install directory")
 set(FRDP_SYSTEMD_UNITS
     frdpd.service
     frdp-authd.service
@@ -149,6 +150,12 @@ install(FILES ${CMAKE_SOURCE_DIR}/packaging/selinux/frdpd.te
         COMPONENT server)
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/apparmor/frdpd
         DESTINATION ${FRDP_SECURITY_POLICY_DIR}/apparmor
+        COMPONENT server)
+install(PROGRAMS ${CMAKE_SOURCE_DIR}/packaging/monitoring/frdpd-node-exporter-textfile.sh
+        DESTINATION ${FRDP_MONITORING_DIR}
+        COMPONENT server)
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/monitoring/frdpd-prometheus-alerts.yml
+        DESTINATION ${FRDP_MONITORING_DIR}
         COMPONENT server)
 
 if(BUILD_TESTING_INTERNAL OR BUILD_TESTING)

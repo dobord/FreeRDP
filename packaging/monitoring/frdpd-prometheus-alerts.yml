@@ -1,0 +1,29 @@
+groups:
+  - name: frdpd
+    rules:
+      - alert: FRDPSessionManagerDown
+        expr: frdp_sesmand_reachable == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "frdp-sesmand is unreachable"
+          description: "frdpctl cannot reach frdp-sesmand on {{ $labels.socket }}."
+
+      - alert: FRDPTextfileScrapeFailed
+        expr: frdp_exporter_scrape_success == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FRDP textfile scrape failed"
+          description: "The FRDP node_exporter textfile collector could not parse a healthy frdpctl status response for {{ $labels.socket }}."
+
+      - alert: FRDPSessionCapacityHigh
+        expr: frdp_sessions_max > 0 and (frdp_sessions_active / frdp_sessions_max) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FRDP session capacity is high"
+          description: "Active FRDP sessions are above 90% of the configured max_connections value for {{ $labels.socket }}."

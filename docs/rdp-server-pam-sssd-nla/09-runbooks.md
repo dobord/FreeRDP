@@ -33,18 +33,39 @@ Rotate the service key periodically:
 
 ## Dashboards and alert rules
 
-Export metrics such as:
+The package installs starter monitoring examples under
+`/usr/share/frdpd/monitoring`:
 
-- Number of active sessions.
-- Authentication failures per minute.
-- CPU and memory utilisation.
-- Average frame latency.
+- `frdpd-node-exporter-textfile.sh` calls `frdpctl status` and writes
+  Prometheus node_exporter textfile metrics for session-manager reachability,
+  scrape success and active sessions. Set `FRDP_MAX_CONNECTIONS` or pass
+  `--max-connections` to emit the optional capacity metric used by the alert
+  rules.
+- `frdpd-prometheus-alerts.yml` contains starter alerts for an unreachable
+  session manager, failed textfile scrapes and high session capacity.
+
+Example cron or systemd timer command:
+
+```bash
+FRDP_MAX_CONNECTIONS=64 \
+  /usr/share/frdpd/monitoring/frdpd-node-exporter-textfile.sh \
+    --socket /run/frdp-sesmand/sesmand.sock \
+    --output /var/lib/node_exporter/textfile_collector/frdpd.prom
+```
+
+These examples currently export:
+
+- Number of active sessions from `frdpctl status`.
+- Session-manager control-socket reachability.
+- Textfile scrape success or the last scrape error.
 
 Integrate with Prometheus and Grafana:
 
-1. Expose metrics via a `/metrics` endpoint or systemd cgroups.
-2. Create Grafana dashboards showing session counts, CPU/memory and authentication rates.
-3. Set alert thresholds (e.g. sessions > 90% of `max_connections`, authentication failures > 10/min).
+1. Enable node_exporter's textfile collector and schedule the FRDP collector.
+2. Import the Prometheus rules and tune severity/thresholds for the pilot.
+3. Create Grafana dashboards showing FRDP session counts, session-manager
+   reachability, host CPU/memory from node_exporter and authentication rates
+   from system logs or a future native metrics endpoint.
 
 ## Migration/fallback to xrdp
 

@@ -212,7 +212,7 @@ Deliverables:
 - [ ] full runtime config reload coverage for listener sockets, TLS material, channel policy, clipboard policy, and helper topology;
 - [x] configuration reference, example, and partial parser integration for implemented daemon fields, including `max_connections` and static/dynamic channel filter policy (`10-configuration-reference.md`, `server/frdp/config/frdpd.toml`);
 - [x] runbooks for AD join, keytab rotation, and troubleshooting (`09-runbooks.md`);
-- [ ] dashboards and alert rules;
+- [ ] dashboards and alert rules (partial: starter node_exporter textfile collector and Prometheus alert examples install under `/usr/share/frdpd/monitoring`; Grafana dashboards, native authentication/frame metrics, CI validation, and pilot threshold tuning remain open);
 - [x] migration/fallback plan to xrdp (basic documented fallback in `09-runbooks.md`; rollback testing remains part of exit criteria);
 - [ ] GA support matrix (draft support notes exist only in documentation).
 

@@ -63,6 +63,9 @@ a non-installed prototype in the current package.
 %dir %{_datadir}/frdpd/security/apparmor
 %{_datadir}/frdpd/security/selinux/frdpd.te
 %{_datadir}/frdpd/security/apparmor/frdpd
+%dir %{_datadir}/frdpd/monitoring
+%{_datadir}/frdpd/monitoring/frdpd-node-exporter-textfile.sh
+%{_datadir}/frdpd/monitoring/frdpd-prometheus-alerts.yml
 
 %changelog
 * Mon Jun 15 2026 Example Maintainer <maintainer@example.com> - 0.1.0-1
