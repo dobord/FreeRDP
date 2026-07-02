@@ -75,6 +75,7 @@ static int test_connect_secure_socket(void)
 	int server_fd = -1;
 	int client_fd = -1;
 	int accepted_fd = -1;
+	uint64_t peer_uid = UINT64_MAX;
 	int rc = -1;
 
 	if (make_runtime_dir(dir, sizeof(dir)) != 0)
@@ -84,6 +85,10 @@ static int test_connect_secure_socket(void)
 		goto cleanup;
 	client_fd = frdp_ipc_connect(socket_path);
 	if (client_fd < 0)
+		goto cleanup;
+	if (frdp_ipc_get_peer_uid(client_fd, &peer_uid) != 0)
+		goto cleanup;
+	if (peer_uid != (uint64_t)geteuid())
 		goto cleanup;
 	const int flags = fcntl(client_fd, F_GETFD);
 	if (flags < 0 || (flags & FD_CLOEXEC) == 0)
