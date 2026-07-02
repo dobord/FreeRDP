@@ -60,3 +60,19 @@ add_test(NAME TestFreeRDPFrdpd
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpd.cmake)
 
 set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "FreeRDP/Test")
+
+if(BUILD_FUZZERS)
+  set(FRDP_CONFIG_FUZZER TestFuzzFreeRDPFrdpConfig)
+  add_executable(${FRDP_CONFIG_FUZZER}
+      TestFuzzFreeRDPFrdpConfig.c
+      ../config/frdp-config.c
+      ../config/frdp-config.h
+      ../frdpd/channel_policy.c
+      ../frdpd/channel_policy.h)
+  target_include_directories(${FRDP_CONFIG_FUZZER} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+  target_link_libraries(${FRDP_CONFIG_FUZZER} PUBLIC fuzzer_config winpr)
+  set_target_properties(${FRDP_CONFIG_FUZZER}
+      PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${TESTING_OUTPUT_DIRECTORY}"
+                 FOLDER "FreeRDP/Test/Fuzzers")
+  add_dependencies(fuzzers ${FRDP_CONFIG_FUZZER})
+endif()

@@ -49,6 +49,91 @@ env:
   FRDP_E2E_ARTIFACTS: ${{ github.workspace }}/server/frdp/test/e2e/artifacts
 
 jobs:
+  fuzz:
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.profile == 'quick' || inputs.profile == 'component' || inputs.profile == 'all'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q -y
+          sudo apt-get install -q -y --no-install-recommends \
+            build-essential \
+            clang \
+            cmake \
+            libcjson-dev \
+            libicu-dev \
+            libkrb5-dev \
+            libpam0g-dev \
+            libssl-dev \
+            libx11-dev \
+            libxdamage-dev \
+            libxext-dev \
+            libxfixes-dev \
+            libxi-dev \
+            libxkbfile-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libxtst-dev \
+            ninja-build \
+            pkg-config \
+            uuid-dev \
+            xvfb \
+            zlib1g-dev
+
+      - name: Configure focused FRDP fuzzer build
+        run: |
+          cmake -S . -B build-frdp-fuzz -GNinja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DBUILD_FUZZERS=ON \
+            -DWITH_FRDPD=ON \
+            -DWITH_SERVER=ON \
+            -DWITH_SHADOW=OFF \
+            -DWITH_PROXY=OFF \
+            -DWITH_SAMPLE=OFF \
+            -DWITH_MANPAGES=OFF \
+            -DWITH_WAYLAND=OFF \
+            -DWITH_SDL=OFF \
+            -DWITH_PULSE=OFF \
+            -DWITH_ALSA=OFF \
+            -DWITH_CUPS=OFF \
+            -DWITH_PCSC=OFF \
+            -DWITH_FFMPEG=OFF \
+            -DWITH_SWSCALE=OFF \
+            -DWITH_FUSE=OFF \
+            -DWITH_OPENCL=OFF \
+            -DCHANNEL_URBDRC=OFF
+
+      - name: Build focused FRDP config fuzzer
+        run: cmake --build build-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig
+
+      - name: Run focused FRDP config fuzzer smoke
+        run: |
+          printf '[channels]\nstatic_mode = "allowlist"\nstatic_allow = "cliprdr,rdpsnd"\ndynamic_mode = "allowlist"\ndynamic_allow = "rdpgfx"\n[clipboard]\nmode = "text"\ndirection = "client-to-server"\nmax_text_bytes = 4096\n' > frdp-fuzz-seed.toml
+          build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpConfig frdp-fuzz-seed.toml -runs=1 -artifact_prefix=build-frdp-fuzz/
+          build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpConfig -runs=32 -max_len=1024 -artifact_prefix=build-frdp-fuzz/
+
+      - name: Upload fuzzer build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frdpd-fuzz-${{ github.run_id }}
+          path: |
+            build-frdp-fuzz/CMakeFiles/CMakeOutput.log
+            build-frdp-fuzz/CMakeFiles/CMakeError.log
+            build-frdp-fuzz/crash-*
+            build-frdp-fuzz/leak-*
+            build-frdp-fuzz/oom-*
+            build-frdp-fuzz/timeout-*
+            frdp-fuzz-seed.toml
+          if-no-files-found: ignore
+
   warnings:
     if: >-
       github.event_name != 'workflow_dispatch' ||

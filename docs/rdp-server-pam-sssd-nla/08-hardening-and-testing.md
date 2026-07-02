@@ -61,7 +61,7 @@ tracked separately from the PAM/SSSD/NLA prototype.
 
 Fuzz key protocol parsers and RDP channel handlers using LibFuzzer:
 
-- Build fuzz targets for individual message parsers in `server/frdp/frdpd` and channel modules. Use `-fsanitize=fuzzer,address` to link against LibFuzzer.
+- Build fuzz targets for individual message parsers in `server/frdp/frdpd` and channel modules. Use `BUILD_FUZZERS=ON` with Clang to link against LibFuzzer. The first focused target is `TestFuzzFreeRDPFrdpConfig`, which feeds arbitrary TOML into `frdp_config_load` and exercises static/dynamic channel policy checks from successfully parsed inputs.
 - Seed the corpus with captured protocol packets.
 - Run the fuzzers in CI to detect crashes.
 
