@@ -285,6 +285,77 @@ fail:
 	return -1;
 }
 
+static int run_frdpctl_capture(char** argv, const char* dir, frdpctlRunResult* result)
+{
+	int stdout_fd = -1;
+	int stderr_fd = -1;
+	pid_t pid = -1;
+	int status = 0;
+	int rc = -1;
+	char stdout_path[1024] = { 0 };
+	char stderr_path[1024] = { 0 };
+
+	if (!argv || !dir || !result)
+		return -1;
+	memset(result, 0, sizeof(*result));
+
+	const int stdout_rc = snprintf(stdout_path, sizeof(stdout_path), "%s/stdout", dir);
+	const int stderr_rc = snprintf(stderr_path, sizeof(stderr_path), "%s/stderr", dir);
+	if ((stdout_rc < 0) || ((size_t)stdout_rc >= sizeof(stdout_path)) || (stderr_rc < 0) ||
+	    ((size_t)stderr_rc >= sizeof(stderr_path)))
+		goto cleanup;
+	stdout_fd = open(stdout_path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+	stderr_fd = open(stderr_path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+	if ((stdout_fd < 0) || (stderr_fd < 0))
+		goto cleanup;
+
+	pid = fork();
+	if (pid < 0)
+		goto cleanup;
+	if (pid == 0)
+	{
+		dup2(stdout_fd, STDOUT_FILENO);
+		dup2(stderr_fd, STDERR_FILENO);
+		close(stdout_fd);
+		close(stderr_fd);
+		execv(FRDPCTL_BINARY, argv);
+		_exit(127);
+	}
+
+	close(stdout_fd);
+	stdout_fd = -1;
+	close(stderr_fd);
+	stderr_fd = -1;
+
+	if (waitpid(pid, &status, 0) != pid)
+		goto cleanup;
+	pid = -1;
+	if (!WIFEXITED(status))
+		goto cleanup;
+	result->status = WEXITSTATUS(status);
+	if (read_file_to_string(stdout_path, result->stdout_data, sizeof(result->stdout_data)) != 0)
+		goto cleanup;
+	if (read_file_to_string(stderr_path, result->stderr_data, sizeof(result->stderr_data)) != 0)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (pid > 0)
+	{
+		kill(pid, SIGTERM);
+		waitpid(pid, NULL, 0);
+	}
+	if (stdout_fd >= 0)
+		close(stdout_fd);
+	if (stderr_fd >= 0)
+		close(stderr_fd);
+	if (stdout_path[0] != '\0')
+		unlink(stdout_path);
+	if (stderr_path[0] != '\0')
+		unlink(stderr_path);
+	return rc;
+}
+
 static int run_with_server(char** argv, size_t socket_arg_index, frdpctlIpcHandler handler,
                            frdpctlRunResult* result)
 {
@@ -383,6 +454,84 @@ cleanup:
 		unlink(stdout_path);
 	if (stderr_path[0] != '\0')
 		unlink(stderr_path);
+	if (socket_path[0] != '\0')
+		unlink(socket_path);
+	if (dir[0] != '\0')
+		rmdir(dir);
+	return rc;
+}
+
+static int test_rejects_insecure_session_socket(void)
+{
+	frdpctlRunResult result = { 0 };
+	char dir[1024] = { 0 };
+	char socket_path[108] = { 0 };
+	int server_fd = -1;
+	int rc = -1;
+	char* argv[] = { FRDPCTL_BINARY, "status", "--socket", NULL, NULL };
+
+	server_fd = make_socket(dir, sizeof(dir), socket_path, sizeof(socket_path));
+	if (server_fd < 0)
+		goto cleanup;
+	argv[3] = socket_path;
+	if (chmod(socket_path, 0660) != 0)
+		goto cleanup;
+	if (run_frdpctl_capture(argv, dir, &result) != 0)
+		goto cleanup;
+	if (result.status != 3)
+		goto cleanup;
+	if (strcmp(result.stdout_data, "") != 0)
+		goto cleanup;
+	if (strncmp(result.stderr_data, "unable to connect to session manager socket ",
+	            strlen("unable to connect to session manager socket ")) != 0)
+		goto cleanup;
+	if (!strstr(result.stderr_data, ": Permission denied\n"))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (server_fd >= 0)
+		close(server_fd);
+	if (socket_path[0] != '\0')
+		unlink(socket_path);
+	if (dir[0] != '\0')
+		rmdir(dir);
+	return rc;
+}
+
+static int test_rejects_insecure_session_socket_parent(void)
+{
+	frdpctlRunResult result = { 0 };
+	char dir[1024] = { 0 };
+	char socket_path[108] = { 0 };
+	int server_fd = -1;
+	int rc = -1;
+	char* argv[] = { FRDPCTL_BINARY, "status", "--socket", NULL, NULL };
+
+	server_fd = make_socket(dir, sizeof(dir), socket_path, sizeof(socket_path));
+	if (server_fd < 0)
+		goto cleanup;
+	argv[3] = socket_path;
+	if (chmod(dir, 0770) != 0)
+		goto cleanup;
+	if (run_frdpctl_capture(argv, dir, &result) != 0)
+		goto cleanup;
+	if (result.status != 3)
+		goto cleanup;
+	if (strcmp(result.stdout_data, "") != 0)
+		goto cleanup;
+	if (strncmp(result.stderr_data, "unable to connect to session manager socket ",
+	            strlen("unable to connect to session manager socket ")) != 0)
+		goto cleanup;
+	if (!strstr(result.stderr_data, ": Permission denied\n"))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (dir[0] != '\0')
+		(void)chmod(dir, 0700);
+	if (server_fd >= 0)
+		close(server_fd);
 	if (socket_path[0] != '\0')
 		unlink(socket_path);
 	if (dir[0] != '\0')
@@ -550,6 +699,10 @@ int TestFreeRDPFrdpCtlIpc(int argc, char* argv[])
 	if (test_reload() != 0)
 		return -1;
 	if (test_reload_escapes_error() != 0)
+		return -1;
+	if (test_rejects_insecure_session_socket() != 0)
+		return -1;
+	if (test_rejects_insecure_session_socket_parent() != 0)
 		return -1;
 	return 0;
 }
