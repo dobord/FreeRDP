@@ -13,12 +13,12 @@
 
 #define TAG FREERDP_TAG("server.frdpd.peer")
 
-BOOL frdpd_peer_configure(freerdp_peer* peer, const frdpdPeerConfig* config)
+BOOL frdpd_peer_configure(freerdp_peer* peer, frdpdPeerConfig* config)
 {
 	if (!peer)
 		return FALSE;
 
-	peer->ContextExtra = (void*)config;
+	peer->ContextExtra = config;
 	peer->Logon = frdpd_peer_logon;
 	return TRUE;
 }

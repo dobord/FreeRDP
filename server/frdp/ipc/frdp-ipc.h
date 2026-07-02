@@ -8,6 +8,7 @@
 
 /* Message types for interprocess communication */
 typedef enum {
+    FRDP_IPC_INVALID = 0,
     FRDP_IPC_AUTH_REQUEST = 1,
     FRDP_IPC_AUTH_RESPONSE = 2,
     FRDP_IPC_SESSION_REQUEST = 3,

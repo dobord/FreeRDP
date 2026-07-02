@@ -39,6 +39,7 @@
 #include <freerdp/input.h>
 
 #include <winpr/input.h>
+#include <winpr/platform.h>
 
 #include "../ipc/frdp-ipc.h"
 
@@ -796,7 +797,8 @@ static int capture_frame_tile(frdpAgentFrameState *state, const frdpAgentFrameRe
     if (!state || !state->display || !request || !response || !pixels)
         return -1;
     *pixels = NULL;
-    if (request->flags & ~(FRDP_AGENT_FRAME_REQUEST_FORCE | FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
+    if (request->flags &
+        ~((uint32_t)FRDP_AGENT_FRAME_REQUEST_FORCE | (uint32_t)FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
         return -1;
     if ((request->flags & FRDP_AGENT_FRAME_REQUEST_FORCE) &&
         (request->flags & FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
@@ -1007,20 +1009,6 @@ static int verify_control_peer(int fd)
     (void)fd;
     return -1;
 #endif
-}
-
-static int recv_exact(int fd, void *buf, size_t len)
-{
-    char *p = (char *)buf;
-    size_t total = 0;
-
-    while (total < len) {
-        const ssize_t rc = recv(fd, p + total, len - total, 0);
-        if (rc <= 0)
-            return -1;
-        total += (size_t)rc;
-    }
-    return 0;
 }
 
 static int send_exact(int fd, const void *buf, size_t len)
@@ -1348,7 +1336,7 @@ static int terminate_backend(pid_t pid)
     return status;
 }
 
-static void backend_exec_failed(int fd)
+WINPR_NORETURN(static void backend_exec_failed(int fd))
 {
     const char marker = '!';
 

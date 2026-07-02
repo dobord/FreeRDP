@@ -27,6 +27,7 @@ add_dependencies(${MODULE_NAME} frdpd frdpctl frdp-authd frdp-sesmand frdp-sessi
 
 target_include_directories(${MODULE_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(${MODULE_NAME} PRIVATE winpr ${UUID_LIBRARY})
+frdp_apply_strict_warnings(${MODULE_NAME})
 target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
                                                    FRDPD_BINARY="$<TARGET_FILE:frdpd>"
                                                    FRDPCTL_BINARY="$<TARGET_FILE:frdpctl>"

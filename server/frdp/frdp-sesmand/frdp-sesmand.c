@@ -34,6 +34,8 @@
 #include <fcntl.h>
 #include <poll.h>
 
+#include <winpr/platform.h>
+
 #include "../config/frdp-config.h"
 #include "../ipc/frdp-auth-token.h"
 #include "../ipc/frdp-ipc.h"
@@ -202,7 +204,7 @@ static unsigned int normalize_color_depth(uint32_t value)
     }
 }
 
-static void child_exec_failed(int fd)
+WINPR_NORETURN(static void child_exec_failed(int fd))
 {
     const char marker = '!';
 

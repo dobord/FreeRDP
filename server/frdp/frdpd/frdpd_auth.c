@@ -72,6 +72,39 @@ static BOOL frdpd_auth_copy_ipc_string(char* dst, size_t dst_size, const char* s
 	return (rc >= 0) && ((size_t)rc < dst_size);
 }
 
+typedef struct
+{
+	char* secret;
+	size_t length;
+	BOOL locked;
+} frdpdLockedSecret;
+
+static BOOL frdpd_auth_lock_secret(char* secret, size_t length, frdpdLockedSecret* locked)
+{
+	if (!secret || !locked || (length == 0))
+		return FALSE;
+
+	memset(locked, 0, sizeof(*locked));
+	locked->secret = secret;
+	locked->length = length;
+	if (mlock(secret, length) != 0)
+		return FALSE;
+	locked->locked = TRUE;
+	return TRUE;
+}
+
+static void frdpd_auth_clear_locked_secret(frdpdLockedSecret* locked)
+{
+	if (!locked || !locked->secret)
+		return;
+
+	SecureZeroMemory(locked->secret, locked->length);
+	if (locked->locked)
+		(void)munlock(locked->secret, locked->length);
+	memset(locked, 0, sizeof(*locked));
+}
+
+#ifdef WITH_FRDPD_IN_PROCESS_PAM
 static BOOL frdpd_auth_lookup_posix_account(const char* user, uid_t* uid, gid_t* gid)
 {
 	struct passwd pwd = { 0 };
@@ -115,38 +148,7 @@ static BOOL frdpd_auth_lookup_posix_account(const char* user, uid_t* uid, gid_t*
 	free(buffer);
 	return ok;
 }
-
-typedef struct
-{
-	char* secret;
-	size_t length;
-	BOOL locked;
-} frdpdLockedSecret;
-
-static BOOL frdpd_auth_lock_secret(char* secret, size_t length, frdpdLockedSecret* locked)
-{
-	if (!secret || !locked || (length == 0))
-		return FALSE;
-
-	memset(locked, 0, sizeof(*locked));
-	locked->secret = secret;
-	locked->length = length;
-	if (mlock(secret, length) != 0)
-		return FALSE;
-	locked->locked = TRUE;
-	return TRUE;
-}
-
-static void frdpd_auth_clear_locked_secret(frdpdLockedSecret* locked)
-{
-	if (!locked || !locked->secret)
-		return;
-
-	SecureZeroMemory(locked->secret, locked->length);
-	if (locked->locked)
-		(void)munlock(locked->secret, locked->length);
-	memset(locked, 0, sizeof(*locked));
-}
+#endif
 
 static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
                                             const SEC_WINNT_AUTH_IDENTITY* identity,

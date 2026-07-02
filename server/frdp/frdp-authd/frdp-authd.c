@@ -92,7 +92,7 @@ static int pam_conversation(int num_msg, const struct pam_message **msg,
                             struct pam_response **resp, void *appdata_ptr)
 {
     const char *password = (const char *)appdata_ptr;
-    struct pam_response *aresp = calloc(num_msg, sizeof(struct pam_response));
+    struct pam_response *aresp = calloc((size_t)num_msg, sizeof(struct pam_response));
     if (!aresp)
         return PAM_BUF_ERR;
     for (int i = 0; i < num_msg; i++) {
@@ -316,8 +316,8 @@ static int set_client_timeouts(int fd)
 }
 
 /* Perform a PAM authentication for the given user and password. */
-int authenticate_user(const char *service, const char *rhost, const char *correlation_id,
-                      const char *user, const char *password)
+static int authenticate_user(const char *service, const char *rhost, const char *correlation_id,
+                             const char *user, const char *password)
 {
     if (!service || !service[0] || !user || !password)
         return -1;

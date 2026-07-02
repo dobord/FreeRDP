@@ -31,6 +31,9 @@ DEB_BUILD_OPTIONS='nocheck parallel=1' dpkg-buildpackage -uc -us -b -j1
 cmake -S . -B /tmp/opencode/freerdp-frdp-asan-ubsan -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SAMPLE=OFF -DBUILD_TESTING=ON -DWITH_SANITIZE_ADDRESS=ON -DWITH_SANITIZE_UNDEFINED=ON
 cmake --build /tmp/opencode/freerdp-frdp-asan-ubsan --target TestFreeRDPFrdp -j2
 ctest --test-dir /tmp/opencode/freerdp-frdp-asan-ubsan -R '^TestFreeRDPFrdp' --output-on-failure
+cmake -S . -B /tmp/opencode/freerdp-frdp-strict-warnings -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DBUILD_TESTING=ON -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SHADOW=OFF -DWITH_PROXY=OFF -DWITH_SAMPLE=OFF -DWITH_MANPAGES=OFF -DWITH_WAYLAND=OFF -DWITH_SDL=OFF -DWITH_PULSE=OFF -DWITH_ALSA=OFF -DWITH_CUPS=OFF -DWITH_PCSC=OFF -DWITH_FFMPEG=OFF -DWITH_SWSCALE=OFF -DWITH_FUSE=OFF -DWITH_OPENCL=OFF -DCHANNEL_URBDRC=OFF -DWITH_FRDPD_STRICT_WARNINGS=ON
+cmake --build /tmp/opencode/freerdp-frdp-strict-warnings --target TestFreeRDPFrdp
+ctest --test-dir /tmp/opencode/freerdp-frdp-strict-warnings -R '^TestFreeRDPFrdp' --output-on-failure
 ```
 
 Implemented in the integrated `server/frdp/frdpd` path:
@@ -156,7 +159,7 @@ Exit criteria: a domain-joined Windows client authenticates with Kerberos where 
 
 Deliverables:
 
-- [x] ASAN/UBSAN build and focused `server/frdp` CTest suite (`WITH_SANITIZE_ADDRESS=ON` plus `WITH_SANITIZE_UNDEFINED=ON`), including focused CI coverage in the FRDP workflow;
+- [x] ASAN/UBSAN build and focused `server/frdp` CTest suite (`WITH_SANITIZE_ADDRESS=ON` plus `WITH_SANITIZE_UNDEFINED=ON`), including focused sanitizer and strict-warning CI coverage in the FRDP workflow;
 - [x] focused unit/CTest coverage for implemented static/dynamic channel config parsing, filter modes, capability validation, `max_connections` parsing, `frdpctl` CLI/session-IPC behavior, legacy V1/V2 session-open rejection before body decode, invalid V3 auth-token rejection, auth-token uid/gid/group/account-state tamper rejection, POSIX group mismatch rejection with a valid V3 token, delimiter-collision-resistant token serialization, explicit little-endian IPC header encoding, explicit auth broker request/response payload encoding, explicit canonical session V3 request/session close/session response payload encoding, explicit session list/reload response payload encoding, explicit agent input/frame/resize metadata payload encoding, and live auth/session helper survival after truncated IPC clients close the connection;
 - [ ] fuzzing harnesses for channel parsers and selected RDP inputs;
 - [ ] protocol regression suite;

@@ -49,6 +49,84 @@ env:
   FRDP_E2E_ARTIFACTS: ${{ github.workspace }}/server/frdp/test/e2e/artifacts
 
 jobs:
+  warnings:
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.profile == 'quick' || inputs.profile == 'component' || inputs.profile == 'all'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q -y
+          sudo apt-get install -q -y --no-install-recommends \
+            build-essential \
+            clang \
+            cmake \
+            libcjson-dev \
+            libicu-dev \
+            libkrb5-dev \
+            libpam0g-dev \
+            libssl-dev \
+            libx11-dev \
+            libxdamage-dev \
+            libxext-dev \
+            libxfixes-dev \
+            libxi-dev \
+            libxkbfile-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libxtst-dev \
+            ninja-build \
+            pkg-config \
+            uuid-dev \
+            xvfb \
+            zlib1g-dev
+
+      - name: Configure strict-warning FRDP build
+        run: |
+          cmake -S . -B build-frdp-warnings -GNinja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang \
+            -DBUILD_TESTING=ON \
+            -DWITH_FRDPD=ON \
+            -DWITH_SERVER=ON \
+            -DWITH_SHADOW=OFF \
+            -DWITH_PROXY=OFF \
+            -DWITH_SAMPLE=OFF \
+            -DWITH_MANPAGES=OFF \
+            -DWITH_WAYLAND=OFF \
+            -DWITH_SDL=OFF \
+            -DWITH_PULSE=OFF \
+            -DWITH_ALSA=OFF \
+            -DWITH_CUPS=OFF \
+            -DWITH_PCSC=OFF \
+            -DWITH_FFMPEG=OFF \
+            -DWITH_SWSCALE=OFF \
+            -DWITH_FUSE=OFF \
+            -DWITH_OPENCL=OFF \
+            -DCHANNEL_URBDRC=OFF \
+            -DWITH_FRDPD_STRICT_WARNINGS=ON
+
+      - name: Build focused FRDP warning tests
+        run: cmake --build build-frdp-warnings --target TestFreeRDPFrdp
+
+      - name: Run focused FRDP warning tests
+        run: ctest --test-dir build-frdp-warnings -R '^TestFreeRDPFrdp' --output-on-failure
+
+      - name: Upload warning build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frdpd-warnings-${{ github.run_id }}
+          path: |
+            build-frdp-warnings/CMakeFiles/CMakeOutput.log
+            build-frdp-warnings/CMakeFiles/CMakeError.log
+            build-frdp-warnings/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+
   sanitizer:
     if: >-
       github.event_name != 'workflow_dispatch' ||

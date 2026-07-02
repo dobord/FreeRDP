@@ -541,7 +541,7 @@ static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT3
 	if (!context || !response || !data || !context->managed_session_open ||
 	    (context->agent_socket[0] == '\0'))
 		return FALSE;
-	if (flags & ~(FRDP_AGENT_FRAME_REQUEST_FORCE | FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
+	if (flags & ~((UINT32)FRDP_AGENT_FRAME_REQUEST_FORCE | (UINT32)FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
 		return FALSE;
 	if ((flags & FRDP_AGENT_FRAME_REQUEST_FORCE) &&
 	    (flags & FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
@@ -577,7 +577,7 @@ static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT3
 	if ((strcmp(response->session_id, context->session_id) != 0) ||
 	    (strcmp(response->correlation_id, context->correlation_id) != 0))
 		goto fail;
-	if (response->flags & ~FRDP_AGENT_FRAME_RESPONSE_UNCHANGED)
+	if (response->flags & ~((uint32_t)FRDP_AGENT_FRAME_RESPONSE_UNCHANGED))
 		goto fail;
 	if ((flags & FRDP_AGENT_FRAME_REQUEST_FORCE) &&
 	    (response->flags & FRDP_AGENT_FRAME_RESPONSE_UNCHANGED))
@@ -2300,7 +2300,7 @@ static int frdpd_run_server(frdpdOptions* options)
 	BOOL started = FALSE;
 	WSADATA wsaData = { 0 };
 	freerdp_listener* listener = NULL;
-	const frdpdServerConfig* config = &options->server;
+	frdpdServerConfig* config = &options->server;
 
 	if (!frdpd_validate_runtime_topology(options))
 		return -1;
@@ -2328,7 +2328,7 @@ static int frdpd_run_server(frdpdOptions* options)
 	if (!listener)
 		goto fail;
 
-	listener->info = (void*)config;
+	listener->info = config;
 	listener->PeerAccepted = frdpd_peer_accepted;
 
 	WINPR_ASSERT(listener->Open);

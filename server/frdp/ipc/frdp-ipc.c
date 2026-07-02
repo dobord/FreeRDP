@@ -352,7 +352,7 @@ int frdp_ipc_send(int fd, const void *buf, size_t len)
         }
         if (n == 0)
             return -1;
-        total += n;
+        total += (size_t)n;
     }
     return 0;
 }
@@ -376,7 +376,7 @@ int frdp_ipc_recv(int fd, void *buf, size_t len)
         }
         if (n == 0)
             return -1;
-        total += n;
+        total += (size_t)n;
     }
     return (int)total;
 }
@@ -437,7 +437,7 @@ int frdp_ipc_recv_header(int fd, frdpIpcHeader *header)
     }
     if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
         return -1;
-    header->type = (frdpIpcMessageType)frdp_ipc_read_u32_le(&wire[0]);
+    header->type = (frdpIpcMessageType)(uint32_t)frdp_ipc_read_u32_le(&wire[0]);
     header->payload_len = frdp_ipc_read_u32_le(&wire[4]);
     return (int)sizeof(wire);
 }
@@ -537,7 +537,7 @@ cleanup:
 
 int frdp_ipc_recv_auth_response(int fd, frdpAuthResponse *response)
 {
-    frdpIpcHeader header = {0};
+    frdpIpcHeader header = { .type = FRDP_IPC_INVALID, .payload_len = 0 };
     uint8_t wire[FRDP_IPC_AUTH_RESPONSE_WIRE_SIZE] = {0};
     size_t offset = 0;
     int rc = -1;
@@ -790,7 +790,7 @@ cleanup:
 
 int frdp_ipc_recv_session_response(int fd, frdpSessionResponse *response)
 {
-    frdpIpcHeader header = {0};
+    frdpIpcHeader header = { .type = FRDP_IPC_INVALID, .payload_len = 0 };
     uint8_t wire[FRDP_IPC_SESSION_RESPONSE_WIRE_SIZE] = {0};
     size_t offset = 0;
     int rc = -1;
@@ -867,7 +867,7 @@ cleanup:
 
 int frdp_ipc_recv_session_list_response(int fd, frdpSessionListResponse *response)
 {
-    frdpIpcHeader header = {0};
+    frdpIpcHeader header = { .type = FRDP_IPC_INVALID, .payload_len = 0 };
     uint8_t wire[FRDP_IPC_SESSION_LIST_RESPONSE_WIRE_SIZE] = {0};
     size_t offset = 0;
     int rc = -1;
@@ -945,7 +945,7 @@ cleanup:
 
 int frdp_ipc_recv_session_reload_response(int fd, frdpControlResponse *response)
 {
-    frdpIpcHeader header = {0};
+    frdpIpcHeader header = { .type = FRDP_IPC_INVALID, .payload_len = 0 };
     uint8_t wire[FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE] = {0};
     size_t offset = 0;
     int rc = -1;
@@ -1158,7 +1158,7 @@ cleanup:
 
 int frdp_ipc_recv_agent_frame_response(int fd, frdpAgentFrameResponse *response)
 {
-    frdpIpcHeader header = {0};
+    frdpIpcHeader header = { .type = FRDP_IPC_INVALID, .payload_len = 0 };
     uint8_t wire[FRDP_IPC_AGENT_FRAME_RESPONSE_WIRE_SIZE] = {0};
     size_t offset = 0;
     int rc = -1;
@@ -1302,7 +1302,7 @@ cleanup:
 
 int frdp_ipc_recv_agent_resize_response(int fd, frdpAgentResizeResponse *response)
 {
-    frdpIpcHeader header = {0};
+    frdpIpcHeader header = { .type = FRDP_IPC_INVALID, .payload_len = 0 };
     uint8_t wire[FRDP_IPC_AGENT_RESIZE_RESPONSE_WIRE_SIZE] = {0};
     size_t offset = 0;
     int rc = -1;

@@ -23,6 +23,40 @@ These flags add `-fsanitize=address` and `-fsanitize=undefined` and link against
 runtimes. Run the sanitised binaries in a dedicated environment; the sanitiser will abort on memory
 errors and print a report. Leave sanitizer options disabled in production builds.
 
+## Strict warning builds
+
+The focused FRDP daemon, helper and test targets can be built with warnings treated as errors:
+
+```bash
+cmake -S . -B /tmp/freerdp-frdp-warnings -GNinja \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_C_COMPILER=clang \
+  -DBUILD_TESTING=ON \
+  -DWITH_FRDPD=ON \
+  -DWITH_SERVER=ON \
+  -DWITH_SHADOW=OFF \
+  -DWITH_PROXY=OFF \
+  -DWITH_SAMPLE=OFF \
+  -DWITH_MANPAGES=OFF \
+  -DWITH_WAYLAND=OFF \
+  -DWITH_SDL=OFF \
+  -DWITH_PULSE=OFF \
+  -DWITH_ALSA=OFF \
+  -DWITH_CUPS=OFF \
+  -DWITH_PCSC=OFF \
+  -DWITH_FFMPEG=OFF \
+  -DWITH_SWSCALE=OFF \
+  -DWITH_FUSE=OFF \
+  -DWITH_OPENCL=OFF \
+  -DCHANNEL_URBDRC=OFF \
+  -DWITH_FRDPD_STRICT_WARNINGS=ON
+cmake --build /tmp/freerdp-frdp-warnings --target TestFreeRDPFrdp
+ctest --test-dir /tmp/freerdp-frdp-warnings -R '^TestFreeRDPFrdp' --output-on-failure
+```
+
+This opt-in gate applies to the FRDP build/test surface only; broader FreeRDP warning cleanup remains
+tracked separately from the PAM/SSSD/NLA prototype.
+
 ## Fuzzing harnesses
 
 Fuzz key protocol parsers and RDP channel handlers using LibFuzzer:

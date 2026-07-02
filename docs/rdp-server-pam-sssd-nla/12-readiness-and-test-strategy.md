@@ -25,7 +25,7 @@ making the current canonical helper topology repeatably green.
 | Virtual channels | 27% | Static-channel filtering, a DVC authorization hook, and disabled-by-default text clipboard policy fail closed; focused config and WTS deny-path coverage exists | No useful clipboard/audio handlers; `drdynvc` is deliberately guard-denied; no live-client channel tests |
 | Kerberos-first path | 10% | A build-only GSSAPI helper skeleton and architecture documentation exist | No CredSSP/SPNEGO token transport, configured keytab/SPN validation, SSSD principal mapping, account/session binding or security review |
 | Operations and packaging | 25% | Example systemd units, PAM file, configuration, install rules and draft MAC policy files exist | No completed DEB/RPM build, active SELinux/AppArmor validation, upgrade/rollback, socket activation, metrics or operational SLOs |
-| Automated verification | 54% | Unit tests, helper-process component tests, live helper-topology startup smoke coverage, truncated auth/session helper client coverage, invalid session-open authorization coverage, agent resize control-IPC smoke coverage, focused `server/frdp` ASan+UBSan build/CTest coverage in the FRDP workflow, and Docker Compose profiles for local PAM, Samba AD and FreeIPA are present | Compose profiles must become green and stable; no Windows `mstsc`, reconnect, load, fuzzing, Valgrind/LSan variant matrix, extended compiler-warning build or crash-recovery gates yet |
+| Automated verification | 56% | Unit tests, helper-process component tests, live helper-topology startup smoke coverage, truncated auth/session helper client coverage, invalid session-open authorization coverage, agent resize control-IPC smoke coverage, focused `server/frdp` ASan+UBSan and strict-warning build/CTest coverage in the FRDP workflow, and Docker Compose profiles for local PAM, Samba AD and FreeIPA are present | Compose profiles must become green and stable; no Windows `mstsc`, reconnect, load, fuzzing, Valgrind/LSan variant matrix or crash-recovery gates yet |
 | Overall production readiness | **25–30%** | A testable MVP skeleton with meaningful security boundaries | Several correctness, lifecycle, interoperability and operability gates remain open |
 
 ## Highest-value implementation order
@@ -37,7 +37,7 @@ Do not add another large subsystem until all of the following are true:
 1. The focused CTest suite builds and passes in a clean Ubuntu container.
 2. The local Compose profile proves valid NLA/PAM login, denied login, managed
    session creation and cleanup through a real `xfreerdp` client.
-3. Extend compiler-warning coverage for the focused `server/frdp` build/test
+3. Keep strict-warning coverage green for the focused `server/frdp` build/test
    surface.
 4. The branch is rebased or recreated on a pinned, supported FreeRDP revision;
    the current large divergence from `master` must not be allowed to hide API

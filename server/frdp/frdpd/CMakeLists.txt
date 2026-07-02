@@ -34,6 +34,7 @@ if(WITH_FRDPD_IN_PROCESS_PAM)
   target_compile_definitions(${MODULE_NAME} PRIVATE WITH_FRDPD_IN_PROCESS_PAM)
 endif()
 target_link_libraries(${MODULE_NAME} PRIVATE freerdp-server freerdp winpr ${PAM_LIBRARIES} ${UUID_LIBRARY})
+frdp_apply_strict_warnings(${MODULE_NAME})
 
 installwithrpath(TARGETS ${MODULE_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)
 
