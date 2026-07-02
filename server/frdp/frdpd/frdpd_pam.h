@@ -10,6 +10,12 @@
 
 #include <winpr/wtypes.h>
 
+#if defined(HAVE_PAM_PAM_APPL_H)
+#include <pam/pam_appl.h>
+#else
+#include <security/pam_appl.h>
+#endif
+
 typedef enum
 {
 	FRDPD_PAM_AUTH_OK = 0,
@@ -45,6 +51,8 @@ typedef struct
 BOOL frdpd_pam_build_user(const char* user, const char* domain, frdpdDomainMode mode,
                           char** normalized_user);
 void frdpd_pam_clear_secret(char* secret);
+int frdpd_pam_answer_conversation(int num_msg, const struct pam_message** msg,
+                                  struct pam_response** resp, const char* password);
 frdpdPamAuthStatus frdpd_pam_authenticate(frdpdPamAuthRequest* request);
 int frdpd_pam_close_session(void* pam_handle, const char* pam_user,
                             BOOL pam_credentials_established, BOOL pam_session_open);

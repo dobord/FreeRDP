@@ -6,7 +6,7 @@ disable_warnings_for_directory(${CMAKE_CURRENT_BINARY_DIR})
 set(${MODULE_PREFIX}_DRIVER ${MODULE_NAME}.c)
 set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFreeRDPFrdpCtlIpc.c
                          TestFreeRDPFrdpHelperStop.c TestFreeRDPFrdpServiceIpc.c
-                         TestFreeRDPFrdpFramePolicy.c)
+                         TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpPam.c)
 find_program(XVFB_EXECUTABLE Xvfb)
 if(XVFB_EXECUTABLE)
   list(APPEND ${MODULE_PREFIX}_TESTS TestFreeRDPFrdpAgentStop.c)
@@ -25,11 +25,17 @@ add_executable(${MODULE_NAME}
     ../frdpd/channel_policy.c
     ../frdpd/channel_policy.h
     ../frdpd/frame_policy.c
-    ../frdpd/frame_policy.h)
+    ../frdpd/frame_policy.h
+    ../frdpd/frdpd_pam.c
+    ../frdpd/frdpd_pam.h)
 add_dependencies(${MODULE_NAME} frdpd frdpctl frdp-authd frdp-sesmand frdp-session-agent)
 
 target_include_directories(${MODULE_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(${MODULE_NAME} PRIVATE winpr ${UUID_LIBRARY})
+target_include_directories(${MODULE_NAME} SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
+target_link_libraries(${MODULE_NAME} PRIVATE winpr ${PAM_LIBRARIES} ${UUID_LIBRARY})
+if(HAVE_PAM_PAM_APPL_H)
+  target_compile_definitions(${MODULE_NAME} PRIVATE HAVE_PAM_PAM_APPL_H)
+endif()
 frdp_apply_strict_warnings(${MODULE_NAME})
 target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
                                                    FRDPD_BINARY="$<TARGET_FILE:frdpd>"

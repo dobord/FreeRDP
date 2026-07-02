@@ -13,12 +13,6 @@
 #include <winpr/crt.h>
 #include <winpr/string.h>
 
-#if defined(HAVE_PAM_PAM_APPL_H)
-#include <pam/pam_appl.h>
-#else
-#include <security/pam_appl.h>
-#endif
-
 static BOOL frdpd_string_is_empty(const char* value)
 {
 	return !value || (value[0] == '\0');
@@ -51,11 +45,11 @@ void frdpd_pam_clear_secret(char* secret)
 		SecureZeroMemory(secret, strlen(secret));
 }
 
-static int frdpd_pam_conv(int num_msg, const struct pam_message** msg, struct pam_response** resp,
-                          void* appdata_ptr)
+int frdpd_pam_answer_conversation(int num_msg, const struct pam_message** msg,
+                                  struct pam_response** resp, const char* password)
 {
-	frdpdPamConvData* data = (frdpdPamConvData*)appdata_ptr;
-
+	if (resp)
+		*resp = NULL;
 	if ((num_msg <= 0) || !msg || !resp)
 		return PAM_CONV_ERR;
 
@@ -71,9 +65,8 @@ static int frdpd_pam_conv(int num_msg, const struct pam_message** msg, struct pa
 		switch (msg[x]->msg_style)
 		{
 			case PAM_PROMPT_ECHO_OFF:
-				reply[x].resp =
-				    frdpd_pam_strdup_len(data && data->password ? data->password : "",
-				                         data && data->password ? strlen(data->password) : 0);
+				reply[x].resp = frdpd_pam_strdup_len(password ? password : "",
+				                                     password ? strlen(password) : 0);
 				if (!reply[x].resp)
 					goto fail;
 				break;
@@ -106,6 +99,15 @@ fail:
 	return PAM_CONV_ERR;
 }
 
+static int frdpd_pam_conv(int num_msg, const struct pam_message** msg, struct pam_response** resp,
+                          void* appdata_ptr)
+{
+	frdpdPamConvData* data = (frdpdPamConvData*)appdata_ptr;
+
+	return frdpd_pam_answer_conversation(num_msg, msg, resp,
+	                                     data && data->password ? data->password : "");
+}
+
 BOOL frdpd_pam_build_user(const char* user, const char* domain, frdpdDomainMode mode,
                           char** normalized_user)
 {
@@ -126,9 +128,10 @@ BOOL frdpd_pam_build_user(const char* user, const char* domain, frdpdDomainMode 
 	if (mode == FRDPD_DOMAIN_AUTO)
 		mode = strchr(domain, '.') ? FRDPD_DOMAIN_UPN : FRDPD_DOMAIN_DOWNLEVEL;
 
+	size_t normalized_len = 0;
 	const int rc = (mode == FRDPD_DOMAIN_UPN)
-	                   ? winpr_asprintf(normalized_user, NULL, "%s@%s", user, domain)
-	                   : winpr_asprintf(normalized_user, NULL, "%s\\%s", domain, user);
+	                   ? winpr_asprintf(normalized_user, &normalized_len, "%s@%s", user, domain)
+	                   : winpr_asprintf(normalized_user, &normalized_len, "%s\\%s", domain, user);
 	return rc >= 0;
 }
 
