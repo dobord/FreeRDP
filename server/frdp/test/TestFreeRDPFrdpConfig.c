@@ -554,11 +554,28 @@ static int test_invalid_channel_config(void)
 	                        "[server]\nlisten = \"127.0.0.1:3389\"\nlisten = \"127.0.0.1:3390\"\n") !=
 	    0)
 		return -1;
+	if (expect_load_failure("frdp-duplicate-security.toml",
+	                        "[server]\nsecurity = \"nla\"\nsecurity = \"nla\"\n") != 0)
+		return -1;
 	if (expect_load_failure("frdp-unsupported-security.toml",
 	                        "[server]\nsecurity = \"tls\"\n") != 0)
 		return -1;
+	if (expect_load_failure("frdp-duplicate-tls-cert.toml",
+	                        "[server]\ntls_cert = \"/tmp/a.crt\"\ntls_cert = \"/tmp/b.crt\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-tls-key.toml",
+	                        "[server]\ntls_key = \"/tmp/a.key\"\ntls_key = \"/tmp/b.key\"\n") !=
+	    0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-auth-mode.toml",
+	                        "[auth]\nmode = \"pam-sssd\"\nmode = \"pam-sssd\"\n") != 0)
+		return -1;
 	if (expect_load_failure("frdp-unsupported-auth-mode.toml",
 	                        "[auth]\nmode = \"local\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-pam-service.toml",
+	                        "[auth]\npam_service = \"frdpd\"\npam_service = \"other\"\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-duplicate-auth-socket.toml",
 	                        "[auth]\nauth_socket = \"/tmp/a\"\nauth_socket = \"/tmp/b\"\n") !=
