@@ -1369,6 +1369,23 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	return TRUE;
 }
 
+static BOOL frdpd_peer_remote_credentials(freerdp_peer* client,
+                                          WINPR_ATTR_UNUSED KERB_TICKET_LOGON* logon_creds,
+                                          WINPR_ATTR_UNUSED
+                                          MSV1_0_REMOTE_SUPPLEMENTAL_CREDENTIAL* supp_creds)
+{
+	frdpdPeerContext* context = NULL;
+	char log_hostname[FRDPD_LOG_STRING_SIZE] = { 0 };
+
+	WINPR_ASSERT(client);
+	context = (frdpdPeerContext*)client->context;
+	WLog_WARN(TAG,
+	          "correlation_id=%s rejecting unsupported Remote Credential Guard login from %s",
+	          context ? context->correlation_id : "unknown",
+	          frdpd_client_log_name(client, log_hostname, sizeof(log_hostname)));
+	return FALSE;
+}
+
 static BOOL frdpd_peer_post_connect(freerdp_peer* client)
 {
 	rdpSettings* settings = NULL;
@@ -1691,6 +1708,7 @@ static void frdpd_register_callbacks(freerdp_peer* client)
 	WINPR_ASSERT(client->context);
 
 	client->Logon = frdpd_peer_logon;
+	client->RemoteCredentials = frdpd_peer_remote_credentials;
 	client->ClientCapabilities = frdpd_peer_client_capabilities;
 	client->PostConnect = frdpd_peer_post_connect;
 	client->Activate = frdpd_peer_activate;

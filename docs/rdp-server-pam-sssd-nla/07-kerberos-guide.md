@@ -39,7 +39,7 @@ The `frdp-krb-authd` component (see `server/frdp/frdp-krb-authd/frdp-krb-authd.c
   same group limit as the auth-token/session IPC path.
 - Optionally opens a PAM session for the user (reusing the logic from `frdp-authd`).
 
-In a production server, the RDP daemon must decode the SPNEGO token from the CredSSP handshake, invoke the GSSAPI acceptor to obtain the client’s principal, and use that identity for PAM/SSSD account checks. NTLM fallback must be disabled by an enforced daemon policy. The current parser rejects `ntlm_fallback` until that policy is implemented, so do not add it to `frdpd.toml` yet.
+In a production server, the RDP daemon must decode the SPNEGO token from the CredSSP handshake, invoke the GSSAPI acceptor to obtain the client's principal, and use that identity for PAM/SSSD account checks. NTLM fallback can be disabled with `[auth].ntlm_fallback = false`, which configures server-side CredSSP/Negotiate to skip NTLM; this does not by itself provide the missing Kerberos acceptor integration.
 
 ## Principal to POSIX mapping
 
@@ -63,4 +63,4 @@ If the Kerberos context is accepted, the server should open a PAM session withou
 
 ## Security review
 
-Kerberos credential delegation must be disabled unless explicit delegation is required. The standalone helper now rejects `GSS_C_DELEG_FLAG` contexts and releases any delegated credential handle; integrated `frdpd` CredSSP/Kerberos handling still needs the same policy enforced and reviewed before installation. Audit logs should record the client principal, target SPN, result of account checks, and correlation ID for each connection.
+Kerberos credential delegation must be disabled unless explicit delegation is required. The standalone helper now rejects `GSS_C_DELEG_FLAG` contexts and releases any delegated credential handle; integrated `frdpd` now rejects unsupported Remote Credential Guard ticket handoff, while the remaining CredSSP/Kerberos delegation policy still needs review before installation. Audit logs should record the client principal, target SPN, result of account checks, and correlation ID for each connection.

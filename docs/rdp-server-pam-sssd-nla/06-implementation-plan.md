@@ -180,7 +180,7 @@ Deliverables:
 - [ ] principal -> POSIX account mapping (partial: standalone skeleton now rejects service/instance principals, can normalize simple `user@REALM` names before POSIX lookup, and performs bounded supplementary-group lookup after mapping with focused CTest coverage, but SSSD-backed enterprise principal mapping is not integrated with the daemon/session handoff);
 - [ ] PAM account/session without a password where approved;
 - [x] NTLM fallback feature flag (`ntlm_fallback = false` feeds CredSSP/Negotiate package selection with NTLM disabled; full Kerberos identity/session integration remains separate);
-- [ ] security review of credential delegation assumptions (partial: standalone helper now rejects `GSS_C_DELEG_FLAG` contexts and releases any delegated credential handle, but integrated CredSSP/Kerberos delegation policy still needs review).
+- [ ] security review of credential delegation assumptions (partial: standalone helper now rejects `GSS_C_DELEG_FLAG` contexts and releases any delegated credential handle; integrated `frdpd` now rejects unsupported Remote Credential Guard ticket handoff, but the remaining CredSSP/Kerberos delegation policy still needs review).
 
 Exit criteria: a domain-joined Windows client authenticates with Kerberos where possible; the NTLM-disabled test passes; account restrictions are enforced by SSSD/PAM.
 
