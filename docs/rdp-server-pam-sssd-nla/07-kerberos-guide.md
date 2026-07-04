@@ -12,7 +12,7 @@ This document describes how to enable Kerberos-first authentication for the Free
    
    Use the host FQDN and ensure the short SPN alias is also mapped.
 2. Generate a Kerberos keytab containing the service principal’s credentials and install it on the server at `/etc/frdpd/frdpd.keytab`. Use `ktutil` or `ktpass` to export the keytab.
-3. Restrict file permissions on the keytab (`chmod 600`). The current `frdpd.toml` parser rejects `keytab` until the integrated daemon can enforce the Kerberos acceptor policy; keep keytab wiring in the Kerberos milestone implementation rather than in current production config.
+3. Restrict file permissions on the keytab (`chmod 600`). The current `frdpd.toml` parser validates `keytab` and `accepted_spn` only with `kerberos = true`, but `frdpd` still fails closed on that mode until the integrated CredSSP/SPNEGO acceptor path is implemented.
 
 ## GSSAPI acceptor path
 

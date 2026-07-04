@@ -75,6 +75,25 @@ run_frdpd_case_with_result(
   "Certificate or key file not found: cert=/missing key=/missing"
   --config "${ntlm_fallback_config}")
 
+set(kerberos_config "${test_dir}/kerberos-enabled.toml")
+file(WRITE "${kerberos_config}"
+     "[server]\n"
+     "tls_cert = \"/missing\"\n"
+     "tls_key = \"/missing\"\n"
+     "[auth]\n"
+     "auth_socket = \"/tmp/frdpd-test-auth.sock\"\n"
+     "ntlm_fallback = false\n"
+     "kerberos = true\n"
+     "keytab = \"/etc/frdpd/frdpd.keytab\"\n"
+     "accepted_spn = \"TERMSRV/rdp01.example.com\"\n"
+     "[session]\n"
+     "session_socket = \"/tmp/frdpd-test-session.sock\"\n")
+run_frdpd_case_with_result(
+  "kerberos-enabled-config"
+  1
+  "Kerberos acceptor configuration requires integrated CredSSP/SPNEGO support"
+  --config "${kerberos_config}")
+
 run_frdpd_case(
   "missing-helper-sockets"
   "frdpd normal startup requires --auth-socket and --session-socket"

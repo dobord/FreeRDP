@@ -52,6 +52,9 @@ typedef struct {
     char pam_service[64];
     char auth_socket[108];
     int ntlm_fallback;
+    int kerberos;
+    char keytab[256];
+    char accepted_spn[256];
     char session_socket[108];
     frdpChannelPolicy channels;
     frdpClipboardPolicy clipboard;

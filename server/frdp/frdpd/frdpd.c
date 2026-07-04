@@ -2031,6 +2031,12 @@ static BOOL frdpd_apply_file_config(frdpdOptions* options)
 	options->server.max_connections = config->max_connections;
 	if (_stricmp(config->auth_mode, "pam-sssd") != 0)
 		return FALSE;
+	if (config->kerberos)
+	{
+		WLog_ERR(TAG,
+		         "Kerberos acceptor configuration requires integrated CredSSP/SPNEGO support");
+		return FALSE;
+	}
 	if (!frdpd_string_is_empty(config->tls_cert))
 		options->server.cert_path = config->tls_cert;
 	if (!frdpd_string_is_empty(config->tls_key))

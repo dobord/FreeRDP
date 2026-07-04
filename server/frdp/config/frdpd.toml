@@ -13,8 +13,11 @@ pam_service = "frdpd"
 auth_socket = "/run/frdp-authd/authd.sock"
 # Set false to ask CredSSP/Negotiate to reject NTLM and use Kerberos mechanisms only.
 # ntlm_fallback = false
-# Kerberos identity fields are intentionally omitted until the daemon enforces them.
-# Do not configure kerberos, keytab, or accepted_spn in the current parser.
+# Kerberos identity fields are validated, but kerberos=true fails closed until the
+# integrated CredSSP/SPNEGO acceptor path is implemented.
+# kerberos = false
+# keytab = "/etc/frdpd/frdpd.keytab"
+# accepted_spn = "TERMSRV/rdp01.example.com"
 
 [session]
 session_socket = "/run/frdp-sesmand/sesmand.sock"

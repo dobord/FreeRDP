@@ -15,8 +15,12 @@ tls_key = "/etc/frdpd/tls.key"
 mode = "pam-sssd"
 pam_service = "frdpd"
 auth_socket = "/run/frdp-authd/authd.sock"
-# Kerberos-first fields are intentionally omitted until the daemon enforces them.
-# Do not configure kerberos, ntlm_fallback, keytab, or accepted_spn in the current parser.
+# Kerberos identity fields are validated, but kerberos=true fails closed until
+# the integrated CredSSP/SPNEGO acceptor path is implemented.
+# ntlm_fallback = false
+# kerberos = false
+# keytab = "/etc/frdpd/frdpd.keytab"
+# accepted_spn = "TERMSRV/rdp01.example.com"
 
 [session]
 session_socket = "/run/frdp-sesmand/sesmand.sock"

@@ -154,6 +154,12 @@ static int test_server_auth_session_fields(void)
 		return -1;
 	if (config.ntlm_fallback != 1)
 		return -1;
+	if (config.kerberos != 0)
+		return -1;
+	if (config.keytab[0] != '\0')
+		return -1;
+	if (config.accepted_spn[0] != '\0')
+		return -1;
 	if (strcmp(config.session_socket, "/run/frdp-sesmand/sesmand.sock") != 0)
 		return -1;
 	return 0;
@@ -409,16 +415,53 @@ static int test_clipboard_policy(void)
 	return 0;
 }
 
-static int test_rejects_planned_auth_policy(void)
+static int test_auth_kerberos_policy(void)
 {
-	if (expect_load_failure("frdp-auth-kerberos-planned.toml",
-	                        "[auth]\nkerberos = true\n") != 0)
+	frdpConfig config = { 0 };
+	const char* body = "[auth]\n"
+	                   "ntlm_fallback = false\n"
+	                   "kerberos = true\n"
+	                   "keytab = \"/etc/frdpd/frdpd.keytab\"\n"
+	                   "accepted_spn = \"TERMSRV/rdp01.example.com\"\n";
+
+	if (load_config_body("frdp-auth-kerberos-policy.toml", body, &config) != 0)
 		return -1;
-	if (expect_load_failure("frdp-auth-keytab-planned.toml",
+	if (config.ntlm_fallback != 0)
+		return -1;
+	if (config.kerberos != 1)
+		return -1;
+	if (strcmp(config.keytab, "/etc/frdpd/frdpd.keytab") != 0)
+		return -1;
+	if (strcmp(config.accepted_spn, "TERMSRV/rdp01.example.com") != 0)
+		return -1;
+	if (load_config_body("frdp-auth-kerberos-false.toml",
+	                     "[auth]\nkerberos = false\n", &config) != 0)
+		return -1;
+	if (config.kerberos != 0)
+		return -1;
+	if (expect_load_failure("frdp-auth-kerberos-needs-ntlm-disabled.toml",
+	                        "[auth]\nkerberos = true\nkeytab = \"/etc/frdpd/frdpd.keytab\"\naccepted_spn = \"TERMSRV/host.example.com\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-auth-kerberos-needs-keytab.toml",
+	                        "[auth]\nntlm_fallback = false\nkerberos = true\naccepted_spn = \"TERMSRV/host.example.com\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-auth-kerberos-needs-spn.toml",
+	                        "[auth]\nntlm_fallback = false\nkerberos = true\nkeytab = \"/etc/frdpd/frdpd.keytab\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-auth-keytab-without-kerberos.toml",
 	                        "[auth]\nkeytab = \"/etc/krb5.keytab\"\n") != 0)
 		return -1;
-	if (expect_load_failure("frdp-auth-spn-planned.toml",
+	if (expect_load_failure("frdp-auth-spn-without-kerberos.toml",
 	                        "[auth]\naccepted_spn = \"TERMSRV/host.example.com\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-auth-relative-keytab.toml",
+	                        "[auth]\nntlm_fallback = false\nkerberos = true\nkeytab = \"frdpd.keytab\"\naccepted_spn = \"TERMSRV/host.example.com\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-auth-invalid-spn.toml",
+	                        "[auth]\nntlm_fallback = false\nkerberos = true\nkeytab = \"/etc/frdpd/frdpd.keytab\"\naccepted_spn = \"host/rdp01.example.com\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-auth-short-spn.toml",
+	                        "[auth]\nntlm_fallback = false\nkerberos = true\nkeytab = \"/etc/frdpd/frdpd.keytab\"\naccepted_spn = \"TERMSRV/host\"\n") != 0)
 		return -1;
 	return 0;
 }
@@ -462,6 +505,18 @@ static int test_invalid_channel_config(void)
 		return -1;
 	if (expect_load_failure("frdp-invalid-ntlm-fallback.toml",
 	                        "[auth]\nntlm_fallback = maybe\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-kerberos.toml",
+	                        "[auth]\nkerberos = false\nkerberos = true\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-quoted-kerberos.toml",
+	                        "[auth]\nkerberos = \"true\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-keytab.toml",
+	                        "[auth]\nntlm_fallback = false\nkerberos = true\nkeytab = \"/a\"\nkeytab = \"/b\"\naccepted_spn = \"TERMSRV/host.example.com\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-accepted-spn.toml",
+	                        "[auth]\nntlm_fallback = false\nkerberos = true\nkeytab = \"/a\"\naccepted_spn = \"TERMSRV/host.example.com\"\naccepted_spn = \"TERMSRV/other.example.com\"\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-duplicate-session-socket.toml",
 	                        "[session]\nsession_socket = \"/tmp/a\"\nsession_socket = \"/tmp/b\"\n") !=
@@ -653,7 +708,7 @@ int TestFreeRDPFrdpConfig(int argc, char* argv[])
 		return -1;
 	if (test_clipboard_policy() != 0)
 		return -1;
-	if (test_rejects_planned_auth_policy() != 0)
+	if (test_auth_kerberos_policy() != 0)
 		return -1;
 	if (test_invalid_channel_config() != 0)
 		return -1;

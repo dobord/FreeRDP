@@ -137,6 +137,49 @@ static int parse_clipboard_direction(const char *value, frdpClipboardDirection *
     return -1;
 }
 
+static int is_absolute_path(const char *path)
+{
+    if (!path || path[0] != '/')
+        return 0;
+    for (size_t i = 0; path[i] != '\0'; i++) {
+        const unsigned char c = (unsigned char)path[i];
+        if (iscntrl(c))
+            return 0;
+    }
+    return 1;
+}
+
+static int is_accepted_spn_valid(const char *spn)
+{
+    const char prefix[] = "TERMSRV/";
+    const size_t prefix_len = sizeof(prefix) - 1U;
+    const char *host = NULL;
+    size_t host_len = 0;
+    char previous = '\0';
+    int has_dot = 0;
+
+    if (!spn || strncmp(spn, prefix, prefix_len) != 0)
+        return 0;
+    host = spn + prefix_len;
+    host_len = strlen(host);
+    if (host_len == 0 || host[0] == '.' || host[0] == '-' ||
+        host[host_len - 1U] == '.' || host[host_len - 1U] == '-')
+        return 0;
+    for (size_t i = 0; i < host_len; i++) {
+        const unsigned char c = (unsigned char)host[i];
+        if (!(isalnum(c) || c == '.' || c == '-'))
+            return 0;
+        if ((c == '.') && (previous == '.' || previous == '-'))
+            return 0;
+        if ((c == '-') && (previous == '.'))
+            return 0;
+        if (c == '.')
+            has_dot = 1;
+        previous = (char)c;
+    }
+    return has_dot;
+}
+
 static int is_channel_name_valid(const char *name)
 {
     size_t len = 0;
@@ -350,6 +393,9 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_pam_service = 0;
     int seen_auth_socket = 0;
     int seen_ntlm_fallback = 0;
+    int seen_kerberos = 0;
+    int seen_keytab = 0;
+    int seen_accepted_spn = 0;
     int seen_session_socket = 0;
     int seen_channel_static_mode = 0;
     int seen_channel_static_allow = 0;
@@ -463,11 +509,13 @@ int frdp_config_load(const char *path, frdpConfig *config)
         const int allow_bare_value = ((strcmp(current_section, "server") == 0) &&
                                       (strcmp(key, "max_connections") == 0)) ||
                                      ((strcmp(current_section, "auth") == 0) &&
-                                      (strcmp(key, "ntlm_fallback") == 0)) ||
+                                     (strcmp(key, "ntlm_fallback") == 0)) ||
+                                     ((strcmp(current_section, "auth") == 0) &&
+                                      (strcmp(key, "kerberos") == 0)) ||
                                      ((strcmp(current_section, "clipboard") == 0) &&
                                       (strcmp(key, "max_text_bytes") == 0));
         if (allow_bare_value) {
-            /* Bare numeric values are accepted for TOML-like integer fields. */
+            /* Bare values are accepted for TOML-like integer and boolean fields. */
         }
         else {
             if (unquote_value(val) != 0) {
@@ -583,8 +631,15 @@ int frdp_config_load(const char *path, frdpConfig *config)
             }
             else if (strcmp(key, "kerberos") == 0)
             {
-                fclose(f);
-                return -1;
+                if (seen_kerberos) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_kerberos = 1;
+                if (parse_bool_value(val, &config->kerberos) != 0) {
+                    fclose(f);
+                    return -1;
+                }
             }
             else if (strcmp(key, "ntlm_fallback") == 0)
             {
@@ -600,13 +655,29 @@ int frdp_config_load(const char *path, frdpConfig *config)
             }
             else if (strcmp(key, "keytab") == 0)
             {
-                fclose(f);
-                return -1;
+                if (seen_keytab) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_keytab = 1;
+                if (!is_absolute_path(val) ||
+                    copy_string(config->keytab, sizeof(config->keytab), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
             }
             else if (strcmp(key, "accepted_spn") == 0)
             {
-                fclose(f);
-                return -1;
+                if (seen_accepted_spn) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_accepted_spn = 1;
+                if (!is_accepted_spn_valid(val) ||
+                    copy_string(config->accepted_spn, sizeof(config->accepted_spn), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
             }
             else {
                 fclose(f);
@@ -755,6 +826,10 @@ int frdp_config_load(const char *path, frdpConfig *config)
                                       seen_channel_dynamic_deny) != 0)
         return -1;
     if (validate_clipboard_policy(config, seen_clipboard_direction) != 0)
+        return -1;
+    if (!config->kerberos && (seen_keytab || seen_accepted_spn))
+        return -1;
+    if (config->kerberos && (!seen_keytab || !seen_accepted_spn || config->ntlm_fallback))
         return -1;
     return 0;
 }
