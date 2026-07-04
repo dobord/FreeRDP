@@ -26,6 +26,8 @@ The `frdp-krb-authd` component (see `server/frdp/frdp-krb-authd/frdp-krb-authd.c
 - Base64-decodes the standalone token argument and calls `gss_accept_sec_context()`
   on the resulting token bytes. Production `frdpd` still needs to extract the
   SPNEGO token from the RDP CredSSP handshake and pass it to the acceptor path.
+- Rejects contexts that advertise `GSS_C_DELEG_FLAG` and releases any delegated
+  credential handle, because delegated ticket handling is not approved yet.
 - Extracts the authenticated principal using `gss_display_name()`.
 - Maps the principal to a POSIX account (`getpwnam()`). The build-only
   prototype first tries the displayed principal exactly, then fail-closed
@@ -57,4 +59,4 @@ If the Kerberos context is accepted, the server should open a PAM session withou
 
 ## Security review
 
-Kerberos credential delegation must be disabled unless explicit delegation is required. The RDP server should verify the `GSS_C_DELEG_FLAG` on the incoming context and ignore or wipe delegated tickets. Audit logs should record the client principal, target SPN, result of account checks, and correlation ID for each connection.
+Kerberos credential delegation must be disabled unless explicit delegation is required. The standalone helper now rejects `GSS_C_DELEG_FLAG` contexts and releases any delegated credential handle; integrated `frdpd` CredSSP/Kerberos handling still needs the same policy enforced and reviewed before installation. Audit logs should record the client principal, target SPN, result of account checks, and correlation ID for each connection.

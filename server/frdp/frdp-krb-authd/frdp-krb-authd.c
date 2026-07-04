@@ -8,6 +8,8 @@
 
 #include <gssapi/gssapi.h>
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -292,6 +294,34 @@ static int run_import_acceptor_name_test(const char *name)
     return 0;
 }
 
+static int context_flags_allowed(OM_uint32 ret_flags)
+{
+    return ((ret_flags & GSS_C_DELEG_FLAG) == 0) ? 1 : 0;
+}
+
+static int run_context_flags_test(const char *flags)
+{
+    char *end = NULL;
+    unsigned long parsed = 0;
+
+    if (!flags || (flags[0] == '\0') || (flags[0] == '-'))
+        return 2;
+
+    errno = 0;
+    parsed = strtoul(flags, &end, 0);
+    if ((errno != 0) || !end || (end[0] != '\0') || (parsed > UINT_MAX))
+        return 2;
+
+    if (!context_flags_allowed((OM_uint32)parsed))
+    {
+        fprintf(stderr, "delegated Kerberos credentials are not accepted\n");
+        return 3;
+    }
+
+    printf("ok\n");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     int rc = 0;
@@ -300,7 +330,8 @@ int main(int argc, char **argv)
     if (argc < 2) {
         fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
                         "--decode-token-test <base64-token> | --keytab-env-test | "
-                        "--acceptor-env-test | --import-acceptor-name-test <name>] "
+                        "--acceptor-env-test | --import-acceptor-name-test <name> | "
+                        "--context-flags-test <flags>] "
                         "<base64-token>\n",
                 argv[0]);
         return 1;
@@ -311,7 +342,8 @@ int main(int argc, char **argv)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
-                            "--acceptor-env-test | --import-acceptor-name-test <name>] "
+                            "--acceptor-env-test | --import-acceptor-name-test <name> | "
+                            "--context-flags-test <flags>] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
@@ -324,7 +356,8 @@ int main(int argc, char **argv)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
-                            "--acceptor-env-test | --import-acceptor-name-test <name>] "
+                            "--acceptor-env-test | --import-acceptor-name-test <name> | "
+                            "--context-flags-test <flags>] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
@@ -337,7 +370,8 @@ int main(int argc, char **argv)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
-                            "--acceptor-env-test | --import-acceptor-name-test <name>] "
+                            "--acceptor-env-test | --import-acceptor-name-test <name> | "
+                            "--context-flags-test <flags>] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
@@ -350,7 +384,8 @@ int main(int argc, char **argv)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
-                            "--acceptor-env-test | --import-acceptor-name-test <name>] "
+                            "--acceptor-env-test | --import-acceptor-name-test <name> | "
+                            "--context-flags-test <flags>] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
@@ -363,12 +398,27 @@ int main(int argc, char **argv)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
-                            "--acceptor-env-test | --import-acceptor-name-test <name>] "
+                            "--acceptor-env-test | --import-acceptor-name-test <name> | "
+                            "--context-flags-test <flags>] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
         }
         return run_import_acceptor_name_test(argv[2]);
+    }
+    if (strcmp(argv[1], "--context-flags-test") == 0)
+    {
+        if (argc != 3)
+        {
+            fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--decode-token-test <base64-token> | --keytab-env-test | "
+                            "--acceptor-env-test | --import-acceptor-name-test <name> | "
+                            "--context-flags-test <flags>] "
+                            "<base64-token>\n",
+                    argv[0]);
+            return 1;
+        }
+        return run_context_flags_test(argv[2]);
     }
     token_b64 = argv[1];
 
@@ -381,6 +431,8 @@ int main(int argc, char **argv)
     gss_name_t client_name = GSS_C_NO_NAME;
     gss_ctx_id_t context = GSS_C_NO_CONTEXT;
     gss_cred_id_t acceptor_cred = GSS_C_NO_CREDENTIAL;
+    gss_cred_id_t delegated_cred = GSS_C_NO_CREDENTIAL;
+    OM_uint32 ret_flags = 0;
     OM_uint32 maj_stat = 0, min_stat = 0;
 
     if (decode_input_token(token_b64, &input_token) != 0)
@@ -401,10 +453,16 @@ int main(int argc, char **argv)
     maj_stat = gss_accept_sec_context(&min_stat, &context, acceptor_cred,
                                       &input_token, GSS_C_NO_CHANNEL_BINDINGS,
                                       &client_name, NULL, &output_token,
-                                      NULL, NULL, NULL);
+                                      &ret_flags, NULL, &delegated_cred);
     if (maj_stat != GSS_S_COMPLETE && maj_stat != GSS_S_CONTINUE_NEEDED) {
         display_status("gss_accept_sec_context", maj_stat, GSS_C_GSS_CODE);
         display_status("gss_accept_sec_context", min_stat, GSS_C_MECH_CODE);
+        rc = 1;
+        goto cleanup;
+    }
+    if (!context_flags_allowed(ret_flags))
+    {
+        fprintf(stderr, "delegated Kerberos credentials are not accepted\n");
         rc = 1;
         goto cleanup;
     }
@@ -447,6 +505,8 @@ cleanup:
         gss_delete_sec_context(&min_stat, &context, GSS_C_NO_BUFFER);
     if (acceptor_cred != GSS_C_NO_CREDENTIAL)
         gss_release_cred(&min_stat, &acceptor_cred);
+    if (delegated_cred != GSS_C_NO_CREDENTIAL)
+        gss_release_cred(&min_stat, &delegated_cred);
     if (output_token.length > 0)
         gss_release_buffer(&min_stat, &output_token);
     free(input_token.value);

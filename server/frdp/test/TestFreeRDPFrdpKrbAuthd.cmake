@@ -128,6 +128,42 @@ function(expect_acceptor_imported name)
   endif()
 endfunction()
 
+function(expect_context_flags label flags)
+  execute_process(
+    COMMAND "${FRDP_KRB_AUTHD_BINARY}" --context-flags-test "${flags}"
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE stdout
+    ERROR_VARIABLE stderr)
+
+  if(NOT result EQUAL 0)
+    message(FATAL_ERROR "${label} flags '${flags}' returned ${result}, expected 0: ${stderr}")
+  endif()
+  if(NOT stdout STREQUAL "ok\n")
+    message(FATAL_ERROR "${label} flags '${flags}' stdout mismatch: ${stdout}")
+  endif()
+  if(NOT stderr STREQUAL "")
+    message(FATAL_ERROR "${label} flags '${flags}' wrote unexpected stderr: ${stderr}")
+  endif()
+endfunction()
+
+function(expect_context_flags_rejected label flags expected_result)
+  execute_process(
+    COMMAND "${FRDP_KRB_AUTHD_BINARY}" --context-flags-test "${flags}"
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE stdout
+    ERROR_VARIABLE stderr)
+
+  if(NOT result EQUAL expected_result)
+    message(FATAL_ERROR "${label} flags '${flags}' returned ${result}, expected ${expected_result}")
+  endif()
+  if(NOT stdout STREQUAL "")
+    message(FATAL_ERROR "${label} flags '${flags}' wrote unexpected stdout: ${stdout}")
+  endif()
+  if(expected_result EQUAL 3 AND NOT stderr MATCHES "delegated Kerberos credentials")
+    message(FATAL_ERROR "${label} flags '${flags}' stderr mismatch: ${stderr}")
+  endif()
+endfunction()
+
 expect_normalized("alice@EXAMPLE.COM" "alice")
 expect_normalized("alice.smith@EXAMPLE.COM" "alice.smith")
 expect_normalized("alice_smith-1@EXAMPLE.COM" "alice_smith-1")
@@ -165,3 +201,9 @@ expect_acceptor_env("empty acceptor name" "(default)"
 expect_acceptor_env("custom acceptor name" "TERMSRV@host.example.com"
                     FRDP_KRB_ACCEPTOR_NAME=TERMSRV@host.example.com)
 expect_acceptor_imported("TERMSRV@host.example.com")
+
+expect_context_flags("no context flags" "0")
+expect_context_flags("mutual and replay context flags" "6")
+expect_context_flags_rejected("delegation context flag" "1" 3)
+expect_context_flags_rejected("delegation plus replay context flags" "5" 3)
+expect_context_flags_rejected("invalid context flags" "not-a-number" 2)
