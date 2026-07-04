@@ -195,7 +195,15 @@ static int test_sample_config(void)
 		return -1;
 	if (config.max_connections != 0)
 		return -1;
+	if (config.channels.static_mode != FRDP_CHANNEL_FILTER_BLOCKLIST)
+		return -1;
+	if (config.channels.dynamic_mode != FRDP_CHANNEL_FILTER_BLOCKLIST)
+		return -1;
 	if (config.clipboard.mode != FRDP_CLIPBOARD_MODE_DISABLED)
+		return -1;
+	if (config.clipboard.direction != FRDP_CLIPBOARD_DIRECTION_DISABLED)
+		return -1;
+	if (config.clipboard.max_text_bytes != 65536)
 		return -1;
 	if (config.audit.enabled != 0)
 		return -1;
