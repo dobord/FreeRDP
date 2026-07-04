@@ -118,6 +118,24 @@ run_frdpd_case_with_result(
   "failed to load configuration from ${audit_enabled_config}"
   --config "${audit_enabled_config}")
 
+set(clipboard_text_config "${test_dir}/clipboard-text.toml")
+file(WRITE "${clipboard_text_config}"
+     "[server]\n"
+     "tls_cert = \"/missing\"\n"
+     "tls_key = \"/missing\"\n"
+     "[auth]\n"
+     "auth_socket = \"/tmp/frdpd-test-auth.sock\"\n"
+     "[session]\n"
+     "session_socket = \"/tmp/frdpd-test-session.sock\"\n"
+     "[clipboard]\n"
+     "mode = \"text\"\n"
+     "direction = \"client-to-server\"\n")
+run_frdpd_case_with_result(
+  "clipboard-text-config"
+  1
+  "Clipboard text mode requires an integrated runtime clipboard handler"
+  --config "${clipboard_text_config}")
+
 set(kerberos_config "${test_dir}/kerberos-enabled.toml")
 file(WRITE "${kerberos_config}"
      "[server]\n"

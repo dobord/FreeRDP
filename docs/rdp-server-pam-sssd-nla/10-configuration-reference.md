@@ -36,7 +36,7 @@ This document describes the configuration options available in `frdpd.toml` (see
 
 ## [clipboard]
 
-- `mode` (string): `disabled` or `text`. Default `disabled`. `text` is a policy contract for the upcoming text-only clipboard handler; it does not by itself start clipboard runtime exchange until the handler is wired.
+- `mode` (string): `disabled` or `text`. Default `disabled`. `text` is parsed as a policy contract for the upcoming text-only clipboard handler, but current `frdpd` startup fails closed for it until the runtime handler is wired.
 - `direction` (string): `disabled`, `client-to-server`, `server-to-client`, or `bidirectional`. Default `disabled`. `mode = "text"` requires an explicit non-disabled direction; any non-disabled direction is rejected while clipboard mode is disabled.
 - `max_text_bytes` (integer): Maximum UTF/text payload size accepted by the text clipboard policy. Default `65536`; valid range is `1..1048576`. The value must be an unquoted integer.
 - File clipboard, paths, images, and arbitrary formats remain unsupported and must stay denied until separate policy and runtime tests exist.

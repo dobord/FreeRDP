@@ -2079,6 +2079,12 @@ static BOOL frdpd_apply_file_config(frdpdOptions* options)
 		         "Kerberos acceptor configuration requires integrated CredSSP/SPNEGO support");
 		return FALSE;
 	}
+	if (config->clipboard.mode != FRDP_CLIPBOARD_MODE_DISABLED)
+	{
+		WLog_ERR(TAG,
+		         "Clipboard text mode requires an integrated runtime clipboard handler");
+		return FALSE;
+	}
 	if (!frdpd_string_is_empty(config->tls_cert))
 		options->server.cert_path = config->tls_cert;
 	if (!frdpd_string_is_empty(config->tls_key))
