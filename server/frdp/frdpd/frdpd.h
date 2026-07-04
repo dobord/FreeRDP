@@ -64,7 +64,6 @@ extern "C"
 		wStream* framebuffer_nsc_stream;
 		BOOL framebuffer_nsc_warned;
 		HANDLE vcm;
-		void* pam_handle;
 		char* pam_user;
 		char authorization_id[192];
 		uid_t uid;
@@ -72,8 +71,6 @@ extern "C"
 		UINT32 group_count;
 		UINT64 groups[FRDP_IPC_MAX_AUTH_GROUPS];
 		BOOL has_posix_account;
-		BOOL pam_credentials_established;
-		BOOL pam_session_open;
 		frdpdPamAuthStatus auth_status;
 		int pam_status;
 	} frdpdPeerContext;

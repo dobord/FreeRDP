@@ -1073,20 +1073,14 @@ static void frdpd_auth_result_cleanup(frdpdAuthResult* result)
 {
 	if (!result)
 		return;
-	(void)frdpd_pam_close_session(result->pam_handle, result->pam_user,
-	                              result->pam_credentials_established,
-	                              result->pam_session_open);
 	free(result->pam_user);
 	result->pam_user = NULL;
-	result->pam_handle = NULL;
 	result->uid = (uid_t)-1;
 	result->gid = (gid_t)-1;
 	result->group_count = 0;
 	memset(result->groups, 0, sizeof(result->groups));
 	result->has_posix_account = FALSE;
 	memset(result->authorization_id, 0, sizeof(result->authorization_id));
-	result->pam_credentials_established = FALSE;
-	result->pam_session_open = FALSE;
 }
 
 static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPeerContext* context,
@@ -1173,18 +1167,12 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 
 	(void)frdpd_close_managed_session(config, context, TRUE);
 	frdpd_reset_framebuffer_state(context);
-	(void)frdpd_pam_close_session(context->pam_handle, context->pam_user,
-	                              context->pam_credentials_established,
-	                              context->pam_session_open);
-	context->pam_handle = NULL;
 	context->uid = (uid_t)-1;
 	context->gid = (gid_t)-1;
 	context->group_count = 0;
 	memset(context->groups, 0, sizeof(context->groups));
 	context->has_posix_account = FALSE;
 	memset(context->authorization_id, 0, sizeof(context->authorization_id));
-	context->pam_credentials_established = FALSE;
-	context->pam_session_open = FALSE;
 	free(context->pam_user);
 	context->pam_user = NULL;
 }
@@ -1411,25 +1399,15 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 		frdpd_auth_result_cleanup(&result);
 		return FALSE;
 	}
-	(void)frdpd_pam_close_session(context->pam_handle, context->pam_user,
-	                              context->pam_credentials_established,
-	                              context->pam_session_open);
-	context->pam_handle = NULL;
-	context->pam_credentials_established = FALSE;
-	context->pam_session_open = FALSE;
 	free(context->pam_user);
 	context->pam_user = result.pam_user;
-	context->pam_handle = result.pam_handle;
 	context->uid = result.uid;
 	context->gid = result.gid;
 	context->group_count = result.group_count;
 	memcpy(context->groups, result.groups, result.group_count * sizeof(result.groups[0]));
 	context->has_posix_account = result.has_posix_account;
 	memcpy(context->authorization_id, result.authorization_id, sizeof(context->authorization_id));
-	context->pam_credentials_established = result.pam_credentials_established;
-	context->pam_session_open = result.pam_session_open;
 	result.pam_user = NULL;
-	result.pam_handle = NULL;
 
 	WLog_INFO(TAG, "correlation_id=%s PAM accepted RDP login for %s from %s",
 	          context->correlation_id,

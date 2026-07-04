@@ -25,9 +25,6 @@ static void frdpd_auth_result_set(frdpdAuthResult* result, frdpdPamAuthStatus st
 	result->status = status;
 	result->pam_status = pam_status;
 	result->pam_user = NULL;
-	result->pam_handle = NULL;
-	result->pam_credentials_established = FALSE;
-	result->pam_session_open = FALSE;
 	result->uid = (uid_t)-1;
 	result->gid = (gid_t)-1;
 	result->group_count = 0;

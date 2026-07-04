@@ -29,9 +29,6 @@ typedef struct
 	frdpdPamAuthStatus status;
 	int pam_status;
 	char* pam_user;
-	void* pam_handle;
-	BOOL pam_credentials_established;
-	BOOL pam_session_open;
 	uid_t uid;
 	gid_t gid;
 	uint32_t group_count;
