@@ -772,6 +772,12 @@ static int test_invalid_channel_config(void)
 	if (expect_load_failure("frdp-clipboard-duplicate-mode.toml",
 	                        "[clipboard]\nmode = \"disabled\"\nmode = \"text\"\n") != 0)
 		return -1;
+	if (expect_load_failure("frdp-clipboard-duplicate-direction.toml",
+	                        "[clipboard]\nmode = \"text\"\ndirection = \"client-to-server\"\ndirection = \"server-to-client\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-clipboard-duplicate-limit.toml",
+	                        "[clipboard]\nmode = \"text\"\ndirection = \"client-to-server\"\nmax_text_bytes = 1024\nmax_text_bytes = 2048\n") != 0)
+		return -1;
 	if (expect_load_failure("frdp-duplicate-clipboard-section.toml",
 	                        "[clipboard]\nmode = \"disabled\"\n[clipboard]\nmode = \"disabled\"\n") !=
 	    0)
