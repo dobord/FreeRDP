@@ -1281,6 +1281,39 @@ static void frdpd_peer_clear_owned_auth_identity(freerdp_peer* client,
 	sspi_FreeAuthIdentity(&client->identity);
 }
 
+static void frdpd_peer_log_nla_package(freerdp_peer* client, const char* correlation_id,
+                                       const char* log_hostname)
+{
+	SecPkgContext_PackageInfo package = { 0 };
+	char log_package[FRDPD_LOG_STRING_SIZE] = { 0 };
+
+	WINPR_ASSERT(client);
+	WINPR_ASSERT(client->context);
+	WINPR_ASSERT(correlation_id);
+	WINPR_ASSERT(log_hostname);
+
+	if (freerdp_nla_QueryContextAttributes(client->context, SECPKG_ATTR_PACKAGE_INFO, &package) !=
+	    SEC_E_OK)
+	{
+		WLog_WARN(TAG, "correlation_id=%s unable to query NLA SSPI package for %s",
+		          correlation_id, log_hostname);
+		return;
+	}
+
+	WLog_INFO(TAG, "correlation_id=%s NLA SSPI package=%s for %s", correlation_id,
+	          frdpd_log_value(package.PackageInfo ? package.PackageInfo->Name : NULL, log_package,
+	                          sizeof(log_package), "unknown"),
+	          log_hostname);
+	if (package.PackageInfo)
+	{
+		const SECURITY_STATUS status =
+		    freerdp_nla_FreeContextBuffer(client->context, package.PackageInfo);
+		if (status != SEC_E_OK)
+			WLog_WARN(TAG, "correlation_id=%s unable to release NLA SSPI package info for %s",
+			          correlation_id, log_hostname);
+	}
+}
+
 static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY* identity,
                              BOOL automatic)
 {
@@ -1313,6 +1346,9 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 		          context->correlation_id, log_hostname);
 		return FALSE;
 	}
+
+	if (automatic)
+		frdpd_peer_log_nla_package(client, context->correlation_id, log_hostname);
 
 	const frdpdAuthConfig auth = {
 		.pam_service = config->pam_service,
