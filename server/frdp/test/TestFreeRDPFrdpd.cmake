@@ -1,6 +1,9 @@
 if(NOT DEFINED FRDPD_BINARY)
   message(FATAL_ERROR "FRDPD_BINARY is not set")
 endif()
+if(NOT DEFINED FRDP_SAMPLE_CONFIG_PATH)
+  message(FATAL_ERROR "FRDP_SAMPLE_CONFIG_PATH is not set")
+endif()
 
 set(test_dir "${CMAKE_CURRENT_BINARY_DIR}/TestFreeRDPFrdpd")
 file(REMOVE_RECURSE "${test_dir}")
@@ -74,6 +77,12 @@ run_frdpd_case_with_result(
   255
   "Certificate or key file not found: cert=/missing key=/missing"
   --config "${ntlm_fallback_config}")
+
+run_frdpd_case_with_result(
+  "sample-config"
+  255
+  "Certificate or key file not found: cert=/etc/frdpd/tls.crt key=/etc/frdpd/tls.key"
+  --config "${FRDP_SAMPLE_CONFIG_PATH}")
 
 set(audit_disabled_config "${test_dir}/audit-disabled.toml")
 file(WRITE "${audit_disabled_config}"

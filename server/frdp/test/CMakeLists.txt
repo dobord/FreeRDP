@@ -80,6 +80,7 @@ add_test(NAME TestFreeRDPFrdpSesmand
 
 add_test(NAME TestFreeRDPFrdpd
          COMMAND ${CMAKE_COMMAND} -DFRDPD_BINARY=$<TARGET_FILE:frdpd>
+                 -DFRDP_SAMPLE_CONFIG_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../config/frdpd.toml
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpd.cmake)
 
 if(TARGET frdp-krb-authd)
