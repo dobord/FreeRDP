@@ -101,31 +101,44 @@ Write mandatory access control profiles to confine the RDP daemons:
 
 ## Systemd hardening
 
-Supply hardened unit files similar to:
+The package ships focused systemd units under `packaging/systemd` and installs
+them with the server component. `frdpd.service` requires the auth and session
+helper units, and `TestFreeRDPFrdpSystemd` validates both `systemd-analyze
+verify` and the expected sandboxing contract.
+
+The listener unit keeps the bind-capable strict baseline:
 
 ```
-[Unit]
-Description=FreeRDP PAM/SSSD/NLA Server
-After=network.target
-
-[Service]
-ExecStart=/usr/bin/frdpd
-User=root
-Group=root
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
 NoNewPrivileges=true
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_BIND_SERVICE
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+LockPersonality=true
+MemoryDenyWriteExecute=true
+UMask=0077
 LimitNOFILE=1024
-TimeoutStopSec=30s
-
-[Install]
-WantedBy=multi-user.target
 ```
 
-These directives drop unnecessary privileges and isolate the process.
+The auth broker uses the same strict sandboxing baseline without bind-service
+capabilities, and adds `RuntimeDirectory=frdp-authd` with write access limited
+to `/run/frdp-authd` and `/run/frdp-auth-token`.
+
+`frdp-sesmand.service` uses a narrower baseline that still accounts for PAM,
+logind, user session startup, and runtime-directory responsibilities:
+`PrivateTmp=true`, `ProtectSystem=full`, kernel/log/realtime/personality
+restrictions, `SystemCallArchitectures=native`, and explicit write access only
+to `/run/frdp-sesmand` plus `/run/frdp-auth-token`.
 
 ## Package signing and reproducible builds
 

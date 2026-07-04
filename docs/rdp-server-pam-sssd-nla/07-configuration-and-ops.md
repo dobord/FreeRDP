@@ -127,20 +127,39 @@ The helper units are required for normal listener startup. The shipped `frdpd.se
 orders `frdp-authd.service` and `frdp-sesmand.service`; the shipped `frdpd.toml` points at their default
 sockets, and `FRDPD_ARGS` can stay empty for the canonical helper topology.
 
-Hardening:
+The shipped unit hardening baseline is enforced by `TestFreeRDPFrdpSystemd`.
+The listener unit includes:
 
 ```ini
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
 LockPersonality=true
 MemoryDenyWriteExecute=true
+UMask=0077
+LimitNOFILE=1024
 ```
 
-For `sesmand`, restrictions must account for the need to create user sessions, cgroups, and runtime directories.
+The auth broker shares that strict baseline without bind-service capabilities,
+and additionally declares `RuntimeDirectory=frdp-authd` plus explicit write
+access to `/run/frdp-authd` and `/run/frdp-auth-token`.
+
+For `sesmand`, restrictions intentionally account for PAM, logind, user session startup, cgroups, and runtime
+directories. The shipped unit keeps `PrivateTmp=true`, `ProtectSystem=full`, kernel/log/realtime/personality
+restrictions, `SystemCallArchitectures=native`, and explicit write access only to `/run/frdp-sesmand` plus
+`/run/frdp-auth-token`.
 
 SELinux and AppArmor draft profiles install as inactive examples under `/usr/share/frdpd/security`. They are
 not loaded automatically and must be reviewed, adapted, and validated for the target distribution before use.

@@ -19,6 +19,82 @@ foreach(unit frdpd.service frdp-authd.service frdp-sesmand.service)
   file(COPY "${FRDP_SYSTEMD_UNIT_DIR}/${unit}" DESTINATION "${systemd_dir}")
 endforeach()
 
+function(require_unit_line unit expected_line)
+  file(READ "${FRDP_SYSTEMD_UNIT_DIR}/${unit}" unit_contents)
+  string(FIND "${unit_contents}" "\n${expected_line}\n" line_index)
+  if(line_index EQUAL -1)
+    string(FIND "${unit_contents}" "${expected_line}\n" line_index)
+  endif()
+  if(line_index EQUAL -1)
+    message(FATAL_ERROR "${unit} is missing required line: ${expected_line}")
+  endif()
+endfunction()
+
+foreach(line
+        "PrivateTmp=true"
+        "PrivateDevices=true"
+        "ProtectSystem=strict"
+        "ProtectHome=true"
+        "NoNewPrivileges=true"
+        "CapabilityBoundingSet=CAP_NET_BIND_SERVICE"
+        "AmbientCapabilities=CAP_NET_BIND_SERVICE"
+        "RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX"
+        "ProtectKernelTunables=true"
+        "ProtectKernelModules=true"
+        "ProtectKernelLogs=true"
+        "ProtectControlGroups=true"
+        "RestrictRealtime=true"
+        "RestrictSUIDSGID=true"
+        "SystemCallArchitectures=native"
+        "LockPersonality=true"
+        "MemoryDenyWriteExecute=true"
+        "UMask=0077"
+        "LimitNOFILE=1024")
+  require_unit_line(frdpd.service "${line}")
+endforeach()
+
+foreach(line
+        "RuntimeDirectory=frdp-authd"
+        "RuntimeDirectoryMode=0755"
+        "PrivateTmp=true"
+        "PrivateDevices=true"
+        "ProtectSystem=strict"
+        "ProtectHome=true"
+        "ReadWritePaths=/run/frdp-authd /run/frdp-auth-token"
+        "NoNewPrivileges=true"
+        "RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX"
+        "ProtectKernelTunables=true"
+        "ProtectKernelModules=true"
+        "ProtectKernelLogs=true"
+        "ProtectControlGroups=true"
+        "RestrictRealtime=true"
+        "RestrictSUIDSGID=true"
+        "SystemCallArchitectures=native"
+        "LockPersonality=true"
+        "MemoryDenyWriteExecute=true"
+        "UMask=0077"
+        "LimitNOFILE=1024")
+  require_unit_line(frdp-authd.service "${line}")
+endforeach()
+
+foreach(line
+        "RuntimeDirectory=frdp-sesmand"
+        "RuntimeDirectoryMode=0755"
+        "PrivateTmp=true"
+        "ProtectSystem=full"
+        "ReadWritePaths=/run/frdp-sesmand /run/frdp-auth-token"
+        "RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX"
+        "ProtectKernelTunables=true"
+        "ProtectKernelModules=true"
+        "ProtectKernelLogs=true"
+        "RestrictRealtime=true"
+        "SystemCallArchitectures=native"
+        "LockPersonality=true"
+        "UMask=0077"
+        "LimitNOFILE=1024")
+  require_unit_line(frdp-sesmand.service "${line}")
+endforeach()
+
 foreach(target sysinit.target basic.target network.target multi-user.target)
   file(WRITE "${systemd_dir}/${target}" "[Unit]\nDescription=${target}\n")
 endforeach()
