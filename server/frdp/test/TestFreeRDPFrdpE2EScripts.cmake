@@ -86,6 +86,17 @@ foreach(expected
   expect_contains("${runner}" "${expected}" "E2E runner")
 endforeach()
 
+file(READ "${FRDP_E2E_DIR}/scripts/rdp-probe.sh" rdp_probe)
+foreach(expected
+        "FRDP_E2E_TIMEOUT"
+        "FRDP_AUTH_TIMEOUT"
+        "positive_integer \"$FRDP_E2E_TIMEOUT\""
+        "positive_integer \"$FRDP_AUTH_TIMEOUT\""
+        "timeout \"\${FRDP_AUTH_TIMEOUT}s\""
+        "frdpctl list-sessions --socket")
+  expect_contains("${rdp_probe}" "${expected}" "E2E RDP probe script")
+endforeach()
+
 file(READ "${FRDP_E2E_DIR}/scripts/rdp-session-smoke.sh" session_smoke)
 foreach(expected
         "FRDP_SESSION_TIMEOUT"

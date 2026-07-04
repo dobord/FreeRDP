@@ -53,6 +53,10 @@ default is 1800 seconds, and a timeout leaves the usual `compose-up.log`,
 `compose.log`, `compose-ps.txt`, container logs, inspect JSON, and exit-code
 artifact for diagnosis.
 
+Set `FRDP_AUTH_TIMEOUT=<seconds>` or `FRDP_E2E_TIMEOUT=<seconds>` to tune the
+per-auth-only client timeout or managed-session wait loops used by
+`rdp-probe.sh`.
+
 ## FreeIPA host requirements
 
 The official FreeIPA image runs systemd. The Compose profile uses a read-only root filesystem, a `/data` volume, host cgroup namespace and a writable cgroup mount; it does not use `privileged`. A cgroups-v2 Docker host is strongly recommended. The profile is heavier than the local and Samba profiles and should have at least 4 CPUs and roughly 6–8 GiB of available memory.

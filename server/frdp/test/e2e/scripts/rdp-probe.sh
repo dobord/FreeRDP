@@ -9,6 +9,7 @@ FRDP_DENY_PASSWORD=${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
 FRDP_RDP_DOMAIN=${FRDP_RDP_DOMAIN:-}
 FRDP_SESSION_SOCKET=${FRDP_SESSION_SOCKET:-/run/frdp-sesmand/sesmand.sock}
 FRDP_E2E_TIMEOUT=${FRDP_E2E_TIMEOUT:-60}
+FRDP_AUTH_TIMEOUT=${FRDP_AUTH_TIMEOUT:-45}
 FRDP_ARTIFACT_DIR=${FRDP_ARTIFACT_DIR:-/artifacts}
 
 mkdir -p "$FRDP_ARTIFACT_DIR"
@@ -34,6 +35,11 @@ find_xfreerdp()
 		fi
 	done
 	return 1
+}
+
+positive_integer()
+{
+	[[ $1 =~ ^[1-9][0-9]*$ ]]
 }
 
 wait_tcp()
@@ -80,7 +86,8 @@ run_auth_only()
 
 	build_args "$user" "$password"
 	set +e
-	timeout 45s xvfb-run -a "$XFREERDP" "${RDP_ARGS[@]}" "$AUTH_ONLY_ARG" >"$logfile" 2>&1
+	timeout "${FRDP_AUTH_TIMEOUT}s" xvfb-run -a "$XFREERDP" "${RDP_ARGS[@]}" \
+		"$AUTH_ONLY_ARG" >"$logfile" 2>&1
 	status=$?
 	set -e
 
@@ -110,6 +117,9 @@ stop_process()
 	kill -KILL "$pid" 2>/dev/null || true
 	wait "$pid" 2>/dev/null || true
 }
+
+positive_integer "$FRDP_E2E_TIMEOUT" || fail "FRDP_E2E_TIMEOUT must be positive"
+positive_integer "$FRDP_AUTH_TIMEOUT" || fail "FRDP_AUTH_TIMEOUT must be positive"
 
 XFREERDP=$(find_xfreerdp) || fail "xfreerdp executable was not found"
 help_output=$("$XFREERDP" /help 2>&1 || true)
