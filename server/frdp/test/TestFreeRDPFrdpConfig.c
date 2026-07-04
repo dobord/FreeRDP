@@ -518,6 +518,9 @@ static int test_auth_kerberos_policy(void)
 	if (expect_load_failure("frdp-auth-relative-keytab.toml",
 	                        "[auth]\nntlm_fallback = false\nkerberos = true\nkeytab = \"frdpd.keytab\"\naccepted_spn = \"TERMSRV/host.example.com\"\n") != 0)
 		return -1;
+	if (expect_load_failure("frdp-auth-control-keytab.toml",
+	                        "[auth]\nntlm_fallback = false\nkerberos = true\nkeytab = \"/etc/frdpd/\001.keytab\"\naccepted_spn = \"TERMSRV/host.example.com\"\n") != 0)
+		return -1;
 	if (expect_load_failure("frdp-auth-invalid-spn.toml",
 	                        "[auth]\nntlm_fallback = false\nkerberos = true\nkeytab = \"/etc/frdpd/frdpd.keytab\"\naccepted_spn = \"host/rdp01.example.com\"\n") != 0)
 		return -1;

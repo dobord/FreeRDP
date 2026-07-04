@@ -16,7 +16,7 @@ This document describes the configuration options available in `frdpd.toml` (see
 - `auth_socket` (path): Absolute Unix socket path for the `frdp-authd` IPC broker in normal server startup. Relative paths and unsafe socket locations are rejected. The installed helper unit listens on `/run/frdp-authd/authd.sock`. Pair it with `[session].session_socket`; configuring only one helper socket is rejected. When omitted, normal builds reject server startup.
 - `ntlm_fallback` (boolean): Default `true`. Set `false` to configure server-side CredSSP/Negotiate with package list `kerberos,u2u,!ntlm`, causing NTLM mechanisms to be skipped, and to reject the NLA login before PAM if the selected SSPI package cannot be confirmed as Kerberos. This requires a working Kerberos path in the deployment; it does not by itself provision a keytab, accepted SPN, SSSD mapping, or PAM account/session policy.
 - `kerberos` (boolean): Default `false`. When set to `true`, the config must also set `ntlm_fallback = false`, `keytab`, and `accepted_spn`. Current `frdpd` startup still fails closed because the integrated CredSSP/SPNEGO acceptor path is not implemented.
-- `keytab` (path): Absolute path to the Kerberos service keytab. Accepted only together with `kerberos = true`.
+- `keytab` (path): Absolute path to the Kerberos service keytab; relative paths and control characters are rejected. Accepted only together with `kerberos = true`.
 - `accepted_spn` (string): Accepted RDP service principal in `TERMSRV/fqdn` form. Accepted only together with `kerberos = true`.
 
 ## [session]
