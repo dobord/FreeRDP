@@ -1561,6 +1561,23 @@ static BOOL nla_write_KERB_TICKET_LOGON(wStream* s, const KERB_TICKET_LOGON* tic
 	return TRUE;
 }
 
+static void nla_free_KERB_TICKET_LOGON(KERB_TICKET_LOGON* ticket)
+{
+	if (!ticket)
+		return;
+	if (ticket->ServiceTicket)
+	{
+		SecureZeroMemory(ticket->ServiceTicket, ticket->ServiceTicketLength);
+		free(ticket->ServiceTicket);
+	}
+	if (ticket->TicketGrantingTicket)
+	{
+		SecureZeroMemory(ticket->TicketGrantingTicket, ticket->TicketGrantingTicketLength);
+		free(ticket->TicketGrantingTicket);
+	}
+	ZeroMemory(ticket, sizeof(*ticket));
+}
+
 static BOOL nla_get_KERB_TICKET_LOGON(rdpNla* nla, KERB_TICKET_LOGON* logonTicket)
 {
 	WINPR_ASSERT(nla);
@@ -1606,8 +1623,9 @@ static BOOL nla_write_TSRemoteGuardKerbCred(rdpNla* nla, WinPrAsn1Encoder* enc)
 	ret = WinPrAsn1EncContextualOctetString(enc, 1, &credBuffer) != 0;
 
 out:
-	free(logonTicket.ServiceTicket);
-	free(logonTicket.TicketGrantingTicket);
+	nla_free_KERB_TICKET_LOGON(&logonTicket);
+	if (s && Stream_Buffer(s))
+		SecureZeroMemory(Stream_Buffer(s), Stream_GetPosition(s));
 	Stream_Free(s, TRUE);
 	return ret;
 }

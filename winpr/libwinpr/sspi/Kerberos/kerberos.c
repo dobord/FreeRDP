@@ -1912,12 +1912,25 @@ again:
 		if (!copy_krb5_data(&hostCred->ticket, &ticketLogon->ServiceTicket,
 		                    &ticketLogon->ServiceTicketLength))
 		{
-			krb5_free_data(credentials->ctx, &derOut);
+			SecureZeroMemory(derOut.data, derOut.length);
+			krb5glue_free_data_contents(credentials->ctx, &derOut);
 			goto out;
 		}
 
-		ticketLogon->TicketGrantingTicketLength = derOut.length;
-		ticketLogon->TicketGrantingTicket = (PUCHAR)derOut.data;
+		if (!copy_krb5_data(&derOut, &ticketLogon->TicketGrantingTicket,
+		                    &ticketLogon->TicketGrantingTicketLength))
+		{
+			SecureZeroMemory(derOut.data, derOut.length);
+			krb5glue_free_data_contents(credentials->ctx, &derOut);
+			SecureZeroMemory(ticketLogon->ServiceTicket, ticketLogon->ServiceTicketLength);
+			free(ticketLogon->ServiceTicket);
+			ticketLogon->ServiceTicket = nullptr;
+			ticketLogon->ServiceTicketLength = 0;
+			goto out;
+		}
+
+		SecureZeroMemory(derOut.data, derOut.length);
+		krb5glue_free_data_contents(credentials->ctx, &derOut);
 	}
 
 	ret = SEC_E_OK;
