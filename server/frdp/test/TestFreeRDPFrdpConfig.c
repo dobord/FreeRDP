@@ -167,6 +167,41 @@ static int test_server_auth_session_fields(void)
 	return 0;
 }
 
+static int test_sample_config(void)
+{
+	frdpConfig config = { 0 };
+
+	if (frdp_config_load(FRDP_SAMPLE_CONFIG_PATH, &config) != 0)
+		return -1;
+	if (strcmp(config.listen, "0.0.0.0:3389") != 0)
+		return -1;
+	if (strcmp(config.security, "nla") != 0)
+		return -1;
+	if (strcmp(config.tls_cert, "/etc/frdpd/tls.crt") != 0)
+		return -1;
+	if (strcmp(config.tls_key, "/etc/frdpd/tls.key") != 0)
+		return -1;
+	if (strcmp(config.auth_mode, "pam-sssd") != 0)
+		return -1;
+	if (strcmp(config.pam_service, "frdpd") != 0)
+		return -1;
+	if (strcmp(config.auth_socket, "/run/frdp-authd/authd.sock") != 0)
+		return -1;
+	if (strcmp(config.session_socket, "/run/frdp-sesmand/sesmand.sock") != 0)
+		return -1;
+	if (config.ntlm_fallback != 1)
+		return -1;
+	if (config.kerberos != 0)
+		return -1;
+	if (config.max_connections != 0)
+		return -1;
+	if (config.clipboard.mode != FRDP_CLIPBOARD_MODE_DISABLED)
+		return -1;
+	if (config.audit.enabled != 0)
+		return -1;
+	return 0;
+}
+
 static int test_auth_ntlm_fallback_policy(void)
 {
 	frdpConfig config = { 0 };
@@ -731,6 +766,8 @@ int TestFreeRDPFrdpConfig(int argc, char* argv[])
 	if (test_server_max_connections() != 0)
 		return -1;
 	if (test_server_auth_session_fields() != 0)
+		return -1;
+	if (test_sample_config() != 0)
 		return -1;
 	if (test_auth_ntlm_fallback_policy() != 0)
 		return -1;
