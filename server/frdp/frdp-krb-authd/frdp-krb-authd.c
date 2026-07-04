@@ -9,12 +9,16 @@
 #include <gssapi/gssapi.h>
 #include <ctype.h>
 #include <errno.h>
+#include <grp.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pwd.h>
 #include <unistd.h>
+
+#include "../ipc/frdp-ipc.h"
 
 extern void crypto_base64_decode(const char *enc_data, size_t length, unsigned char **dec_data,
                                  size_t *res_length);
@@ -82,6 +86,34 @@ static int normalize_user_principal(const char *principal, char *user, size_t us
     return 0;
 }
 
+static int compare_uint64(const void *a, const void *b)
+{
+    const uint64_t left = *(const uint64_t *)a;
+    const uint64_t right = *(const uint64_t *)b;
+
+    return (left > right) - (left < right);
+}
+
+static int lookup_posix_groups(const char *user, gid_t primary_gid, uint64_t *groups,
+                               uint32_t *group_count)
+{
+    gid_t native_groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+    int count = (int)FRDP_IPC_MAX_AUTH_GROUPS;
+
+    if (!user || !groups || !group_count)
+        return -1;
+    *group_count = 0;
+    if (getgrouplist(user, primary_gid, native_groups, &count) < 0)
+        return -1;
+    if ((count < 0) || ((uint32_t)count > FRDP_IPC_MAX_AUTH_GROUPS))
+        return -1;
+    for (int x = 0; x < count; x++)
+        groups[x] = (uint64_t)native_groups[x];
+    qsort(groups, (size_t)count, sizeof(groups[0]), compare_uint64);
+    *group_count = (uint32_t)count;
+    return 0;
+}
+
 static struct passwd *lookup_principal_account(const char *principal, char *normalized,
                                                size_t normalized_size, const char **mapping)
 {
@@ -121,6 +153,32 @@ static int run_normalize_principal_test(const char *principal)
         return 2;
     }
     printf("%s\n", user);
+    return 0;
+}
+
+static int run_account_groups_test(const char *user)
+{
+    struct passwd *pwd = NULL;
+    uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+    uint32_t group_count = 0;
+
+    if (!user || (user[0] == '\0'))
+        return 2;
+
+    pwd = getpwnam(user);
+    if (!pwd)
+    {
+        fprintf(stderr, "POSIX account not found\n");
+        return 2;
+    }
+    if (lookup_posix_groups(pwd->pw_name, pwd->pw_gid, groups, &group_count) != 0)
+    {
+        fprintf(stderr, "POSIX group lookup failed\n");
+        return 3;
+    }
+
+    printf("%s uid=%d gid=%d group_count=%u\n", pwd->pw_name, (int)pwd->pw_uid,
+           (int)pwd->pw_gid, (unsigned int)group_count);
     return 0;
 }
 
@@ -329,6 +387,7 @@ int main(int argc, char **argv)
 
     if (argc < 2) {
         fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                        "--account-groups-test <user> | "
                         "--decode-token-test <base64-token> | --keytab-env-test | "
                         "--acceptor-env-test | --import-acceptor-name-test <name> | "
                         "--context-flags-test <flags>] "
@@ -341,6 +400,7 @@ int main(int argc, char **argv)
         if (argc != 3)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--account-groups-test <user> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
                             "--acceptor-env-test | --import-acceptor-name-test <name> | "
                             "--context-flags-test <flags>] "
@@ -350,11 +410,27 @@ int main(int argc, char **argv)
         }
         return run_normalize_principal_test(argv[2]);
     }
+    if (strcmp(argv[1], "--account-groups-test") == 0)
+    {
+        if (argc != 3)
+        {
+            fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--account-groups-test <user> | "
+                            "--decode-token-test <base64-token> | --keytab-env-test | "
+                            "--acceptor-env-test | --import-acceptor-name-test <name> | "
+                            "--context-flags-test <flags>] "
+                            "<base64-token>\n",
+                    argv[0]);
+            return 1;
+        }
+        return run_account_groups_test(argv[2]);
+    }
     if (strcmp(argv[1], "--decode-token-test") == 0)
     {
         if (argc != 3)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--account-groups-test <user> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
                             "--acceptor-env-test | --import-acceptor-name-test <name> | "
                             "--context-flags-test <flags>] "
@@ -369,6 +445,7 @@ int main(int argc, char **argv)
         if (argc != 2)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--account-groups-test <user> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
                             "--acceptor-env-test | --import-acceptor-name-test <name> | "
                             "--context-flags-test <flags>] "
@@ -383,6 +460,7 @@ int main(int argc, char **argv)
         if (argc != 2)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--account-groups-test <user> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
                             "--acceptor-env-test | --import-acceptor-name-test <name> | "
                             "--context-flags-test <flags>] "
@@ -397,6 +475,7 @@ int main(int argc, char **argv)
         if (argc != 3)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--account-groups-test <user> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
                             "--acceptor-env-test | --import-acceptor-name-test <name> | "
                             "--context-flags-test <flags>] "
@@ -411,6 +490,7 @@ int main(int argc, char **argv)
         if (argc != 3)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--account-groups-test <user> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
                             "--acceptor-env-test | --import-acceptor-name-test <name> | "
                             "--context-flags-test <flags>] "
@@ -487,8 +567,19 @@ int main(int argc, char **argv)
         struct passwd *pwd = lookup_principal_account(principal, normalized_user,
                                                       sizeof(normalized_user), &mapping);
         if (pwd) {
-            printf("Mapped user: %s uid=%d gid=%d mapping=%s\n",
+            uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+            uint32_t group_count = 0;
+
+            if (lookup_posix_groups(pwd->pw_name, pwd->pw_gid, groups, &group_count) != 0)
+            {
+                printf("POSIX group lookup failed for mapped user: %s\n", pwd->pw_name);
+                rc = 1;
+                gss_release_buffer(&min_stat, &name_buf);
+                goto cleanup;
+            }
+            printf("Mapped user: %s uid=%d gid=%d group_count=%u mapping=%s\n",
                    pwd->pw_name, (int)pwd->pw_uid, (int)pwd->pw_gid,
+                   (unsigned int)group_count,
                    mapping ? mapping : "unknown");
         } else if (normalized_user[0] != '\0') {
             printf("No POSIX account found for normalized user: %s\n", normalized_user);

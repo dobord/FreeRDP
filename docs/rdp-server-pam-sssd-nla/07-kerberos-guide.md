@@ -33,6 +33,8 @@ The `frdp-krb-authd` component (see `server/frdp/frdp-krb-authd/frdp-krb-authd.c
   prototype first tries the displayed principal exactly, then fail-closed
   normalizes simple `user@REALM` names to a local account candidate and rejects
   service/instance principals such as `host/server@REALM`.
+- Looks up bounded supplementary groups for the mapped POSIX account using the
+  same group limit as the auth-token/session IPC path.
 - Optionally opens a PAM session for the user (reusing the logic from `frdp-authd`).
 
 In a production server, the RDP daemon must decode the SPNEGO token from the CredSSP handshake, invoke the GSSAPI acceptor to obtain the client’s principal, and use that identity for PAM/SSSD account checks. NTLM fallback must be disabled by an enforced daemon policy. The current parser rejects `ntlm_fallback` until that policy is implemented, so do not add it to `frdpd.toml` yet.
@@ -51,7 +53,7 @@ id_provider = ad
 override_homedir = /home/%u
 ```
 
-This maps UPN or down-level logon names to UNIX users. The service should call `getpwnam()` on the normalized username to validate that the account exists before launching a session.
+This maps UPN or down-level logon names to UNIX users. The service should call `getpwnam()` on the normalized username and retrieve bounded supplementary groups before launching a session.
 
 ## Passwordless PAM session
 

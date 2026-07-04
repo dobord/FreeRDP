@@ -38,6 +38,24 @@ function(expect_rejected principal)
   endif()
 endfunction()
 
+function(expect_account_groups user)
+  execute_process(
+    COMMAND "${FRDP_KRB_AUTHD_BINARY}" --account-groups-test "${user}"
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE stdout
+    ERROR_VARIABLE stderr)
+
+  if(NOT result EQUAL 0)
+    message(FATAL_ERROR "account groups for '${user}' returned ${result}, expected 0: ${stderr}")
+  endif()
+  if(NOT stdout MATCHES "^[^ ]+ uid=[0-9]+ gid=[0-9]+ group_count=[1-9][0-9]*\n$")
+    message(FATAL_ERROR "account groups for '${user}' stdout mismatch: ${stdout}")
+  endif()
+  if(NOT stderr STREQUAL "")
+    message(FATAL_ERROR "account groups for '${user}' wrote unexpected stderr: ${stderr}")
+  endif()
+endfunction()
+
 function(expect_decoded token expected)
   execute_process(
     COMMAND "${FRDP_KRB_AUTHD_BINARY}" --decode-token-test "${token}"
@@ -176,6 +194,16 @@ expect_rejected("alice@example.com@EXAMPLE.COM")
 expect_rejected("alice smith@EXAMPLE.COM")
 expect_rejected("alice:admin@EXAMPLE.COM")
 expect_rejected("alice@BAD REALM")
+
+execute_process(
+  COMMAND whoami
+  RESULT_VARIABLE whoami_result
+  OUTPUT_VARIABLE current_user
+  ERROR_QUIET)
+string(STRIP "${current_user}" current_user)
+if(whoami_result EQUAL 0 AND NOT current_user STREQUAL "")
+  expect_account_groups("${current_user}")
+endif()
 
 expect_decoded("AQIDBA==" "4 01020304")
 expect_decoded("YQ==" "1 61")
