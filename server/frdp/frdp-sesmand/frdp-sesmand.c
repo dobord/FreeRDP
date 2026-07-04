@@ -1380,7 +1380,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                 char error[sizeof(((frdpControlResponse *)0)->error)] = {0};
 
                 if (reload_configured_pam_service(error, sizeof(error)) == 0)
-                    (void)send_reload_response(cfd, 1, "applied", NULL);
+                    (void)send_reload_response(cfd, 1, "pam-service applied", NULL);
                 else
                     (void)send_reload_response(cfd, 0, NULL, error);
             } else {
