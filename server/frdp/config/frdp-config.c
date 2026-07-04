@@ -650,7 +650,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
                     return -1;
                 }
                 seen_auth_socket = 1;
-                if (copy_string(config->auth_socket, sizeof(config->auth_socket), val) != 0) {
+                if (!is_absolute_path(val) ||
+                    copy_string(config->auth_socket, sizeof(config->auth_socket), val) != 0) {
                     fclose(f);
                     return -1;
                 }
@@ -717,7 +718,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
                     return -1;
                 }
                 seen_session_socket = 1;
-                if (copy_string(config->session_socket, sizeof(config->session_socket), val) != 0) {
+                if (!is_absolute_path(val) ||
+                    copy_string(config->session_socket, sizeof(config->session_socket), val) != 0) {
                     fclose(f);
                     return -1;
                 }

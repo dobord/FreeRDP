@@ -564,6 +564,12 @@ static int test_invalid_channel_config(void)
 	                        "[auth]\nauth_socket = \"/tmp/a\"\nauth_socket = \"/tmp/b\"\n") !=
 	    0)
 		return -1;
+	if (expect_load_failure("frdp-relative-auth-socket.toml",
+	                        "[auth]\nauth_socket = \"relative/authd.sock\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-relative-session-socket.toml",
+	                        "[session]\nsession_socket = \"relative/sesmand.sock\"\n") != 0)
+		return -1;
 	if (expect_load_failure("frdp-duplicate-ntlm-fallback.toml",
 	                        "[auth]\nntlm_fallback = false\nntlm_fallback = true\n") != 0)
 		return -1;
