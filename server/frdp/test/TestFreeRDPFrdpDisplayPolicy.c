@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static int make_test_dir(char *dir, size_t dir_size)
@@ -119,6 +120,92 @@ cleanup:
     return rc;
 }
 
+static int write_pid_file(const char *path, long pid)
+{
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+
+    if (fd < 0)
+        return -1;
+    if (dprintf(fd, "%ld\n", pid) < 0) {
+        close(fd);
+        return -1;
+    }
+    return close(fd);
+}
+
+static int test_reconcile_removes_stale_reservation(void)
+{
+    char dir[128] = { 0 };
+    char path[128] = { 0 };
+    pid_t child = -1;
+    pid_t dead_pid = -1;
+    int status = 0;
+    int fd = -1;
+    int rc = -1;
+
+    if (make_test_dir(dir, sizeof(dir)) != 0)
+        return -1;
+    if (frdp_sesmand_display_reservation_path(path, sizeof(path), dir,
+                                              FRDP_SESMAND_DISPLAY_MIN) != 0)
+        goto cleanup;
+    child = fork();
+    if (child < 0)
+        goto cleanup;
+    if (child == 0)
+        _exit(0);
+    if (waitpid(child, &status, 0) != child)
+        goto cleanup;
+    dead_pid = child;
+    child = -1;
+    if (write_pid_file(path, (long)dead_pid) != 0)
+        goto cleanup;
+    if (frdp_sesmand_display_reservation_reconcile_stale(dir, FRDP_SESMAND_DISPLAY_MIN) != 1)
+        goto cleanup;
+    if (access(path, F_OK) == 0 || errno != ENOENT)
+        goto cleanup;
+    if (frdp_sesmand_display_reservation_create(FRDP_SESMAND_DISPLAY_MIN, dir, &fd, path,
+                                                sizeof(path)) != 0)
+        goto cleanup;
+    rc = 0;
+
+cleanup:
+    if (child > 0)
+        waitpid(child, &status, 0);
+    frdp_sesmand_display_reservation_release(&fd, path);
+    if (path[0] != '\0')
+        unlink(path);
+    if (dir[0] != '\0')
+        rmdir(dir);
+    return rc;
+}
+
+static int test_reconcile_keeps_live_reservation(void)
+{
+    char dir[128] = { 0 };
+    char path[128] = { 0 };
+    int rc = -1;
+
+    if (make_test_dir(dir, sizeof(dir)) != 0)
+        return -1;
+    if (frdp_sesmand_display_reservation_path(path, sizeof(path), dir,
+                                              FRDP_SESMAND_DISPLAY_MIN) != 0)
+        goto cleanup;
+    if (write_pid_file(path, (long)getpid()) != 0)
+        goto cleanup;
+    if (frdp_sesmand_display_reservation_reconcile_stale(dir, FRDP_SESMAND_DISPLAY_MIN) != 0)
+        goto cleanup;
+    if (access(path, F_OK) != 0)
+        goto cleanup;
+    rc = 0;
+
+cleanup:
+    if (path[0] != '\0')
+        unlink(path);
+    if (dir[0] != '\0')
+        rmdir(dir);
+    return rc;
+}
+
 int TestFreeRDPFrdpDisplayPolicy(int argc, char *argv[])
 {
     (void)argc;
@@ -134,6 +221,14 @@ int TestFreeRDPFrdpDisplayPolicy(int argc, char *argv[])
     }
     if (test_reservation_release_keeps_replaced_path() != 0) {
         fprintf(stderr, "display reservation release unlinked a replacement path\n");
+        return -1;
+    }
+    if (test_reconcile_removes_stale_reservation() != 0) {
+        fprintf(stderr, "display reservation stale reconciliation failed\n");
+        return -1;
+    }
+    if (test_reconcile_keeps_live_reservation() != 0) {
+        fprintf(stderr, "display reservation live reconciliation failed\n");
         return -1;
     }
     return 0;

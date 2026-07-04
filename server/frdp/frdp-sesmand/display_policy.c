@@ -2,7 +2,10 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -72,6 +75,67 @@ int frdp_sesmand_display_reservation_create(int display, const char *dir, int *r
     }
     *reservation_fd = fd;
     return 0;
+}
+
+int frdp_sesmand_display_reservation_reconcile_stale(const char *dir, int display)
+{
+    char path[sizeof(((struct sockaddr_un *)0)->sun_path)] = { 0 };
+    char pid_text[64] = { 0 };
+    char *end = NULL;
+    struct stat fd_stat;
+    struct stat path_stat;
+    ssize_t bytes = 0;
+    long pid = 0;
+    int fd = -1;
+
+    if (frdp_sesmand_display_reservation_path(path, sizeof(path), dir, display) != 0)
+        return -1;
+
+#ifdef O_NOFOLLOW
+    fd = open(path, O_RDONLY | O_NOFOLLOW);
+#else
+    fd = open(path, O_RDONLY);
+#endif
+    if (fd < 0)
+        return (errno == ENOENT) ? 0 : -1;
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+        close(fd);
+        return -1;
+    }
+    if (fstat(fd, &fd_stat) != 0 || !S_ISREG(fd_stat.st_mode)) {
+        close(fd);
+        return -1;
+    }
+    bytes = read(fd, pid_text, sizeof(pid_text) - 1);
+    if (bytes <= 0) {
+        close(fd);
+        return -1;
+    }
+    pid_text[bytes] = '\0';
+    errno = 0;
+    pid = strtol(pid_text, &end, 10);
+    while (end && (*end == '\n' || *end == '\r' || *end == ' ' || *end == '\t'))
+        end++;
+    if ((errno != 0) || !end || (*end != '\0') || (pid <= 1) ||
+        ((long)(pid_t)pid != pid)) {
+        close(fd);
+        return -1;
+    }
+    if (kill((pid_t)pid, 0) == 0 || errno == EPERM) {
+        close(fd);
+        return 0;
+    }
+    if (errno != ESRCH) {
+        close(fd);
+        return -1;
+    }
+    if ((lstat(path, &path_stat) != 0) || (fd_stat.st_dev != path_stat.st_dev) ||
+        (fd_stat.st_ino != path_stat.st_ino)) {
+        close(fd);
+        return 0;
+    }
+    close(fd);
+    return (unlink(path) == 0) ? 1 : -1;
 }
 
 void frdp_sesmand_display_reservation_release(int *reservation_fd, const char *reservation_path)

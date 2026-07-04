@@ -425,8 +425,17 @@ static int allocate_display_number(int *display, int *reservation_fd, char *rese
             continue;
         if (frdp_sesmand_display_reservation_create(candidate, dir, &fd, reservation_path,
                                                     reservation_path_size) != 0) {
-            if (errno == EEXIST)
+            if (errno == EEXIST) {
+                if (frdp_sesmand_display_reservation_reconcile_stale(dir, candidate) > 0 &&
+                    frdp_sesmand_display_reservation_create(candidate, dir, &fd,
+                                                            reservation_path,
+                                                            reservation_path_size) == 0) {
+                    *display = candidate;
+                    *reservation_fd = fd;
+                    return 0;
+                }
                 continue;
+            }
             return -1;
         }
         *display = candidate;

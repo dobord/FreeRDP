@@ -12,6 +12,7 @@ int frdp_sesmand_display_reservation_path(char *dst, size_t dst_size, const char
 int frdp_sesmand_display_reservation_create(int display, const char *dir, int *reservation_fd,
                                             char *reservation_path,
                                             size_t reservation_path_size);
+int frdp_sesmand_display_reservation_reconcile_stale(const char *dir, int display);
 void frdp_sesmand_display_reservation_release(int *reservation_fd, const char *reservation_path);
 
 #endif

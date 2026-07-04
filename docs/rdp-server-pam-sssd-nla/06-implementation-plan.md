@@ -146,7 +146,7 @@ Deliverables:
 - [ ] logind/cgroup integration;
 - [x] headless Xvfb launch integrated with `frdpd -> frdp-sesmand -> frdp-session-agent` session requests, including fail-closed backend `exec()`, X display, and XTest readiness checks;
 - [ ] simple reconnect by user/session id (partial: reconnect-selection policy for matching authenticated users to an explicit session id or the newest disconnected session now has focused CTest coverage; runtime attach/reuse behavior is still not implemented);
-- [x] cleanup on disconnect across `frdp-sesmand` agent process groups and PAM sessions (`session_socket` close requests use covered cleanup-decision policy to terminate the agent process group, close PAM state, unlink runtime sockets, release display reservations, and mark the in-memory session state through the `ACTIVE` -> `STOPPING` -> `DEAD` path; durable cleanup after prolonged `frdp-sesmand` outage remains tracked separately).
+- [x] cleanup on disconnect across `frdp-sesmand` agent process groups and PAM sessions (`session_socket` close requests use covered cleanup-decision policy to terminate the agent process group, close PAM state, unlink runtime sockets, release display reservations, and mark the in-memory session state through the `ACTIVE` -> `STOPPING` -> `DEAD` path; display allocation can safely reconcile stale FRDP-owned reservation files whose recorded PID is gone, while durable cleanup after prolonged `frdp-sesmand` outage remains tracked separately).
 
 Exit criteria: the user receives a desktop session after successful authentication; reconnect works in a controlled scenario; logout cleans processes and runtime state.
 
