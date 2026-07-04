@@ -26,6 +26,7 @@ foreach(script
         scripts/rdp-load-probe.sh
         scripts/rdp-probe.sh
         scripts/rdp-protocol-regression.sh
+        scripts/rdp-session-smoke.sh
         scripts/samba-entrypoint.sh)
   set(script_path "${FRDP_E2E_DIR}/${script}")
   expect_file("${script_path}")
@@ -79,4 +80,19 @@ foreach(expected
         "compose-config.yaml"
         "container-inspect")
   expect_contains("${runner}" "${expected}" "E2E runner")
+endforeach()
+
+file(READ "${FRDP_E2E_DIR}/scripts/rdp-session-smoke.sh" session_smoke)
+foreach(expected
+        "FRDP_SESSION_TIMEOUT"
+        "FRDP_SESSION_HOLD_SECONDS"
+        "allocate_display"
+        "xdpyinfo -display \"$display_name\""
+        "frdpctl status --socket"
+        "frdpctl list-sessions --socket"
+        "list_status=$?"
+        "awk -v id=\"$session_id\""
+        "xwd -display \"$display_name\" -root"
+        "managed RDP session was cleaned after client disconnect")
+  expect_contains("${session_smoke}" "${expected}" "E2E session smoke script")
 endforeach()

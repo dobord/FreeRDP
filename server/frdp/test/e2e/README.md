@@ -98,6 +98,14 @@ settings while preserving per-case logs:
 bash /opt/frdp-e2e/scripts/rdp-protocol-regression.sh
 ```
 
+Run a retained-client graphical session smoke probe, which opens a normal RDP
+session, waits for it to appear in `frdpctl list-sessions`, captures the client
+Xvfb root window, terminates the client, and verifies session cleanup:
+
+```bash
+bash /opt/frdp-e2e/scripts/rdp-session-smoke.sh
+```
+
 Clean all test state, including the FreeIPA data volume:
 
 ```bash
@@ -106,6 +114,6 @@ docker compose -f server/frdp/test/e2e/compose.yaml down --volumes --remove-orph
 
 ## Coverage still required
 
-This harness does not yet prove Kerberos-only CredSSP, reconnect semantics, RDPGFX/RFX policy, clipboard/audio channels, logind/cgroups, durable session reconciliation, a joined FreeIPA host with HBAC, full graphical session load/soak behavior, broad protocol regression coverage, or Windows `mstsc` interoperability. Those should be added as separate profiles or an external lab matrix rather than weakening the deterministic baseline tests.
+This harness does not yet prove Kerberos-only CredSSP, reconnect semantics, RDPGFX/RFX policy, clipboard/audio channels, logind/cgroups, durable session reconciliation, a joined FreeIPA host with HBAC, graphical session soak behavior, broad protocol regression coverage, or Windows `mstsc` interoperability. Those should be added as separate profiles or an external lab matrix rather than weakening the deterministic baseline tests.
 
 All committed passwords are test-only defaults for an isolated Compose network. Do not expose provider ports or reuse these credentials outside the testbed.
