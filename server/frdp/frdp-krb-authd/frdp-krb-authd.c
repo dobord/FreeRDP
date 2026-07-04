@@ -16,6 +16,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pwd.h>
+#include <sys/resource.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <unistd.h>
 
 #include "../ipc/frdp-ipc.h"
@@ -40,6 +44,49 @@ static void display_status(const char *msg, OM_uint32 code, int type)
                 (char *)status_string.value);
         gss_release_buffer(&min_stat, &status_string);
     } while (msg_ctx != 0);
+}
+
+static int disable_core_dumps(void)
+{
+    struct rlimit rl = { 0 };
+
+    if (setrlimit(RLIMIT_CORE, &rl) != 0)
+        return -1;
+#ifdef __linux__
+    if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0)
+        return -1;
+#endif
+    return 0;
+}
+
+static int run_no_core_test(void)
+{
+    struct rlimit rl = { 0 };
+
+    if (disable_core_dumps() != 0)
+    {
+        perror("disable_core_dumps");
+        return 2;
+    }
+    if (getrlimit(RLIMIT_CORE, &rl) != 0)
+    {
+        perror("getrlimit(RLIMIT_CORE)");
+        return 2;
+    }
+    if ((rl.rlim_cur != 0) || (rl.rlim_max != 0))
+    {
+        fprintf(stderr, "core dump limit is not disabled\n");
+        return 2;
+    }
+#ifdef __linux__
+    if (prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) != 0)
+    {
+        fprintf(stderr, "process remains dumpable\n");
+        return 2;
+    }
+#endif
+    printf("ok\n");
+    return 0;
 }
 
 static int normalize_user_principal(const char *principal, char *user, size_t user_size)
@@ -390,7 +437,7 @@ int main(int argc, char **argv)
                         "--account-groups-test <user> | "
                         "--decode-token-test <base64-token> | --keytab-env-test | "
                         "--acceptor-env-test | --import-acceptor-name-test <name> | "
-                        "--context-flags-test <flags>] "
+                        "--context-flags-test <flags> | --no-core-test] "
                         "<base64-token>\n",
                 argv[0]);
         return 1;
@@ -403,7 +450,7 @@ int main(int argc, char **argv)
                             "--account-groups-test <user> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
                             "--acceptor-env-test | --import-acceptor-name-test <name> | "
-                            "--context-flags-test <flags>] "
+                            "--context-flags-test <flags> | --no-core-test] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
@@ -418,7 +465,7 @@ int main(int argc, char **argv)
                             "--account-groups-test <user> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
                             "--acceptor-env-test | --import-acceptor-name-test <name> | "
-                            "--context-flags-test <flags>] "
+                            "--context-flags-test <flags> | --no-core-test] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
@@ -433,7 +480,7 @@ int main(int argc, char **argv)
                             "--account-groups-test <user> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
                             "--acceptor-env-test | --import-acceptor-name-test <name> | "
-                            "--context-flags-test <flags>] "
+                            "--context-flags-test <flags> | --no-core-test] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
@@ -448,7 +495,7 @@ int main(int argc, char **argv)
                             "--account-groups-test <user> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
                             "--acceptor-env-test | --import-acceptor-name-test <name> | "
-                            "--context-flags-test <flags>] "
+                            "--context-flags-test <flags> | --no-core-test] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
@@ -463,7 +510,7 @@ int main(int argc, char **argv)
                             "--account-groups-test <user> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
                             "--acceptor-env-test | --import-acceptor-name-test <name> | "
-                            "--context-flags-test <flags>] "
+                            "--context-flags-test <flags> | --no-core-test] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
@@ -478,7 +525,7 @@ int main(int argc, char **argv)
                             "--account-groups-test <user> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
                             "--acceptor-env-test | --import-acceptor-name-test <name> | "
-                            "--context-flags-test <flags>] "
+                            "--context-flags-test <flags> | --no-core-test] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
@@ -493,14 +540,35 @@ int main(int argc, char **argv)
                             "--account-groups-test <user> | "
                             "--decode-token-test <base64-token> | --keytab-env-test | "
                             "--acceptor-env-test | --import-acceptor-name-test <name> | "
-                            "--context-flags-test <flags>] "
+                            "--context-flags-test <flags> | --no-core-test] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
         }
         return run_context_flags_test(argv[2]);
     }
+    if (strcmp(argv[1], "--no-core-test") == 0)
+    {
+        if (argc != 2)
+        {
+            fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--account-groups-test <user> | "
+                            "--decode-token-test <base64-token> | --keytab-env-test | "
+                            "--acceptor-env-test | --import-acceptor-name-test <name> | "
+                            "--context-flags-test <flags> | --no-core-test] "
+                            "<base64-token>\n",
+                    argv[0]);
+            return 1;
+        }
+        return run_no_core_test();
+    }
     token_b64 = argv[1];
+
+    if (disable_core_dumps() != 0)
+    {
+        perror("disable_core_dumps");
+        return 1;
+    }
 
     /* Set keytab via environment. Adjust the path as needed. */
     if (configure_keytab_env() != 0)

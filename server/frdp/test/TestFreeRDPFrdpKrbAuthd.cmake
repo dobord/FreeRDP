@@ -182,6 +182,24 @@ function(expect_context_flags_rejected label flags expected_result)
   endif()
 endfunction()
 
+function(expect_no_core)
+  execute_process(
+    COMMAND "${FRDP_KRB_AUTHD_BINARY}" --no-core-test
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE stdout
+    ERROR_VARIABLE stderr)
+
+  if(NOT result EQUAL 0)
+    message(FATAL_ERROR "no-core test returned ${result}, expected 0: ${stderr}")
+  endif()
+  if(NOT stdout STREQUAL "ok\n")
+    message(FATAL_ERROR "no-core stdout mismatch: ${stdout}")
+  endif()
+  if(NOT stderr STREQUAL "")
+    message(FATAL_ERROR "no-core wrote unexpected stderr: ${stderr}")
+  endif()
+endfunction()
+
 expect_normalized("alice@EXAMPLE.COM" "alice")
 expect_normalized("alice.smith@EXAMPLE.COM" "alice.smith")
 expect_normalized("alice_smith-1@EXAMPLE.COM" "alice_smith-1")
@@ -235,3 +253,5 @@ expect_context_flags("mutual and replay context flags" "6")
 expect_context_flags_rejected("delegation context flag" "1" 3)
 expect_context_flags_rejected("delegation plus replay context flags" "5" 3)
 expect_context_flags_rejected("invalid context flags" "not-a-number" 2)
+
+expect_no_core()

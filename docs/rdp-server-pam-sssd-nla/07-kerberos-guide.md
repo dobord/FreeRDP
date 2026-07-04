@@ -18,6 +18,8 @@ This document describes how to enable Kerberos-first authentication for the Free
 
 The `frdp-krb-authd` component (see `server/frdp/frdp-krb-authd/frdp-krb-authd.c`) demonstrates how to accept a GSSAPI security context. It:
 
+- Disables core dumps/non-dumpable process state before touching keytab and GSS
+  acceptor credential material.
 - Sets the keytab through `KRB5_KTNAME`, preserving an existing non-empty value,
   otherwise using `FRDP_KRB_KEYTAB` or `/etc/frdpd/frdpd.keytab`.
 - Optionally imports `FRDP_KRB_ACCEPTOR_NAME` as a GSS host-based service name
