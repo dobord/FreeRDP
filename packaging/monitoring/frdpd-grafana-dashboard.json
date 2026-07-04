@@ -140,7 +140,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "frdp_sessions_active / frdp_sessions_max",
+          "expr": "frdp_sessions_utilization_ratio",
           "legendFormat": "{{socket}}",
           "refId": "A"
         }

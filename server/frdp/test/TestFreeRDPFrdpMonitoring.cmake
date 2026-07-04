@@ -67,7 +67,8 @@ foreach(expected
         "frdp_sesmand_reachable{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 1"
         "frdp_exporter_scrape_success{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 1"
         "frdp_sessions_active{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 7"
-        "frdp_sessions_max{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 10")
+        "frdp_sessions_max{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 10"
+        "frdp_sessions_utilization_ratio{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 0.700000")
   expect_contains("${metrics}" "${expected}" "successful scrape metrics")
 endforeach()
 
@@ -117,7 +118,7 @@ foreach(expected
         "alert: FRDPTextfileScrapeFailed"
         "expr: frdp_exporter_scrape_success == 0"
         "alert: FRDPSessionCapacityHigh"
-        "expr: frdp_sessions_max > 0 and (frdp_sessions_active / frdp_sessions_max) > 0.9")
+        "expr: frdp_sessions_utilization_ratio > 0.9")
   expect_contains("${alerts}" "${expected}" "Prometheus alerts")
 endforeach()
 
@@ -129,7 +130,7 @@ foreach(expected
         "\"expr\": \"frdp_exporter_scrape_success\""
         "\"expr\": \"frdp_sessions_active\""
         "\"expr\": \"frdp_sessions_max\""
-        "\"expr\": \"frdp_sessions_active / frdp_sessions_max\""
+        "\"expr\": \"frdp_sessions_utilization_ratio\""
         "\"type\": \"prometheus\"")
   expect_contains("${dashboard}" "${expected}" "Grafana dashboard")
 endforeach()

@@ -20,7 +20,7 @@ groups:
           description: "The FRDP node_exporter textfile collector could not parse a healthy frdpctl status response for {{ $labels.socket }}."
 
       - alert: FRDPSessionCapacityHigh
-        expr: frdp_sessions_max > 0 and (frdp_sessions_active / frdp_sessions_max) > 0.9
+        expr: frdp_sessions_utilization_ratio > 0.9
         for: 10m
         labels:
           severity: warning

@@ -113,6 +113,14 @@ fi
 		printf '# HELP frdp_sessions_max Configured maximum concurrent frdpd sessions.\n'
 		printf '# TYPE frdp_sessions_max gauge\n'
 		printf 'frdp_sessions_max{socket="%s"} %d\n' "$(escape_label "$socket")" "$max_connections"
+		if [[ $scrape_success -eq 1 ]]; then
+			utilization=$(awk -v active="$active_sessions" -v max="$max_connections" \
+				'BEGIN { printf "%.6f", active / max }')
+			printf '# HELP frdp_sessions_utilization_ratio Active sessions divided by configured maximum sessions.\n'
+			printf '# TYPE frdp_sessions_utilization_ratio gauge\n'
+			printf 'frdp_sessions_utilization_ratio{socket="%s"} %s\n' \
+				"$(escape_label "$socket")" "$utilization"
+		fi
 	fi
 	if [[ -n $error ]]; then
 		printf '# Last frdpctl scrape error: %s\n' "$(escape_comment "$error")"
