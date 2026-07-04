@@ -9,7 +9,7 @@ The root `debian/` directory contains minimal preview packaging for the server-o
 - Build depends list the toolchain and libraries required at build time, including debhelper compat 13, CMake/Ninja, PAM, Kerberos/GSSAPI, OpenSSL, systemd, JSON, FFmpeg codec libraries, Cairo, and the X11/XTest/XDamage/XRandR headers used by the server prototype.
 - The resulting binary package declares runtime dependencies through `${shlibs:Depends}` / `${misc:Depends}` plus `libpam0g`, `sssd`, and `xvfb` for the PAM/SSSD session-agent prototype.
 - Run `SOURCE_DATE_EPOCH=<commit-time> DEB_BUILD_OPTIONS='nocheck parallel=1' dpkg-buildpackage -uc -us -b -j1` from the project root for a local binary package smoke build. The serial build option avoids noisy local resource races while this preview package is still being hardened. `packaging/scripts/create_deb.sh -uc -us -b -j1` is a wrapper around the same root `debian/control` metadata.
-- The local smoke build has been verified to produce `frdpd_0.1.0-1_amd64.deb` with the `frdpd`, `frdp-authd`, `frdp-sesmand`, `frdp-session-agent`, and `frdpctl` binaries, FreeRDP/WinPR shared libraries, `/etc/frdpd` configuration, `/etc/pam.d/frdpd`, service unit examples under `/lib/systemd/system`, and inactive SELinux/AppArmor examples under `/usr/share/frdpd/security`. The current CMake `server` component install emits baseline-hardened versions of those service unit examples, and the focused CTest suite verifies the generated units with `systemd-analyze`, the tmpfiles rule with `systemd-tmpfiles`, monitoring textfile/alert examples with `bash`, SELinux draft packaging with `checkmodule`/`semodule_package`, and AppArmor parsing with `apparmor_parser` when those tools are available.
+- The local smoke build has been verified to produce `frdpd_0.1.0-1_amd64.deb` with the `frdpd`, `frdp-authd`, `frdp-sesmand`, `frdp-session-agent`, and `frdpctl` binaries, FreeRDP/WinPR shared libraries, `/etc/frdpd` configuration, `/etc/pam.d/frdpd`, service unit examples under `/lib/systemd/system`, monitoring examples under `/usr/share/frdpd/monitoring`, and inactive SELinux/AppArmor examples under `/usr/share/frdpd/security`. The current CMake `server` component install emits baseline-hardened versions of those service unit examples, and the focused CTest suite verifies the generated units with `systemd-analyze`, the tmpfiles rule with `systemd-tmpfiles`, monitoring textfile/alert/dashboard examples with `bash`, SELinux draft packaging with `checkmodule`/`semodule_package`, and AppArmor parsing with `apparmor_parser` when those tools are available.
 - This preview package currently installs its bundled FreeRDP/WinPR shared libraries into the public multiarch library directory. Production packaging must either split those libraries into policy-compliant packages or add appropriate conflict/replacement/private-libdir handling before coexisting with distro FreeRDP packages.
 - Sign the resulting packages with the project’s GPG key and publish them to an APT repository.
 - Remaining Debian work includes copyright metadata, maintainer script policy checks, systemd enablement policy, lintian/distro CI, package signing, upgrade/rollback tests, and validation of installed SELinux/AppArmor draft examples.
@@ -92,6 +92,10 @@ packaging/
     frdpd.fc     # SELinux file contexts (draft)
   apparmor/
     frdpd        # AppArmor profile (draft)
+  monitoring/
+    frdpd-node-exporter-textfile.sh
+    frdpd-prometheus-alerts.yml
+    frdpd-grafana-dashboard.json
 debian/
   control        # Debian package metadata
   rules          # server-only CMake/Ninja package build

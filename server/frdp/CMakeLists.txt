@@ -155,7 +155,9 @@ install(FILES ${CMAKE_SOURCE_DIR}/packaging/apparmor/frdpd
 install(PROGRAMS ${CMAKE_SOURCE_DIR}/packaging/monitoring/frdpd-node-exporter-textfile.sh
         DESTINATION ${FRDP_MONITORING_DIR}
         COMPONENT server)
-install(FILES ${CMAKE_SOURCE_DIR}/packaging/monitoring/frdpd-prometheus-alerts.yml
+install(FILES
+        ${CMAKE_SOURCE_DIR}/packaging/monitoring/frdpd-prometheus-alerts.yml
+        ${CMAKE_SOURCE_DIR}/packaging/monitoring/frdpd-grafana-dashboard.json
         DESTINATION ${FRDP_MONITORING_DIR}
         COMPONENT server)
 

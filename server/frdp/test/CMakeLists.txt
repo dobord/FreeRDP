@@ -135,6 +135,7 @@ if(BASH_EXECUTABLE)
                    -DBASH_EXECUTABLE=${BASH_EXECUTABLE}
                    -DFRDP_MONITORING_SCRIPT=${CMAKE_SOURCE_DIR}/packaging/monitoring/frdpd-node-exporter-textfile.sh
                    -DFRDP_PROMETHEUS_ALERTS=${CMAKE_SOURCE_DIR}/packaging/monitoring/frdpd-prometheus-alerts.yml
+                   -DFRDP_GRAFANA_DASHBOARD=${CMAKE_SOURCE_DIR}/packaging/monitoring/frdpd-grafana-dashboard.json
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpMonitoring.cmake)
   add_test(NAME TestFreeRDPFrdpE2EScripts
            COMMAND ${CMAKE_COMMAND}

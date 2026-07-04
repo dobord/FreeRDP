@@ -7,6 +7,9 @@ endif()
 if(NOT DEFINED FRDP_PROMETHEUS_ALERTS)
   message(FATAL_ERROR "FRDP_PROMETHEUS_ALERTS is not set")
 endif()
+if(NOT DEFINED FRDP_GRAFANA_DASHBOARD)
+  message(FATAL_ERROR "FRDP_GRAFANA_DASHBOARD is not set")
+endif()
 
 set(test_root "${CMAKE_CURRENT_BINARY_DIR}/TestFreeRDPFrdpMonitoring")
 set(fake_bin_dir "${test_root}/bin")
@@ -116,4 +119,17 @@ foreach(expected
         "alert: FRDPSessionCapacityHigh"
         "expr: frdp_sessions_max > 0 and (frdp_sessions_active / frdp_sessions_max) > 0.9")
   expect_contains("${alerts}" "${expected}" "Prometheus alerts")
+endforeach()
+
+file(READ "${FRDP_GRAFANA_DASHBOARD}" dashboard)
+foreach(expected
+        "\"title\": \"FRDP Server Preview\""
+        "\"uid\": \"frdp-server-preview\""
+        "\"expr\": \"frdp_sesmand_reachable\""
+        "\"expr\": \"frdp_exporter_scrape_success\""
+        "\"expr\": \"frdp_sessions_active\""
+        "\"expr\": \"frdp_sessions_max\""
+        "\"expr\": \"frdp_sessions_active / frdp_sessions_max\""
+        "\"type\": \"prometheus\"")
+  expect_contains("${dashboard}" "${expected}" "Grafana dashboard")
 endforeach()
