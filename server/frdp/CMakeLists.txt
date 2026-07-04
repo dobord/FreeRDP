@@ -19,7 +19,6 @@ if(NOT UUID_LIBRARY)
   message(FATAL_ERROR "libuuid is required for WITH_FRDPD helper components")
 endif()
 
-option(WITH_FRDPD_IN_PROCESS_PAM "Enable insecure legacy in-process frdpd PAM fallback for local development" OFF)
 option(WITH_FRDPD_STRICT_WARNINGS "Build FRDP daemon targets with strict compiler warnings as errors" OFF)
 
 function(frdp_apply_strict_warnings target)

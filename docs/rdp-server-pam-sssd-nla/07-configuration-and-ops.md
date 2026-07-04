@@ -77,10 +77,9 @@ password  sufficient pam_sss.so use_authtok
 
 Normal startup requires both helper sockets: `frdp-authd` owns PAM authentication/account checks and
 `frdp-sesmand` owns PAM sessions plus desktop agent launch. The packaged helper units listen on
-`/run/frdp-authd/authd.sock` and `/run/frdp-sesmand/sesmand.sock`. The old direct PAM path is not
-available in normal builds; local legacy testing requires configuring CMake with
-`-DWITH_FRDPD_IN_PROCESS_PAM=ON`, using a config without helper socket entries, and then starting
-`frdpd --allow-in-process-pam`.
+`/run/frdp-authd/authd.sock` and `/run/frdp-sesmand/sesmand.sock`. The old peer-worker direct PAM
+fallback has been removed; use `frdpd --pam-auth-test` for local PAM smoke checks without starting the
+full helper topology.
 
 ## SSSD operations
 

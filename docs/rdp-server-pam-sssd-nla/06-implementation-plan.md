@@ -73,7 +73,6 @@ Implemented in the integrated `server/frdp/frdpd` path:
 - TLS certificate/key loading, NLA enabled by default, and opt-in TLS fallback;
 - FreeRDP `Logon` callback bridged to password-backed PAM authentication/account checks;
 - username/domain normalization for plain, downlevel, UPN, and auto modes;
-- legacy/dev-only PAM session open/close tied to the integrated peer lifecycle only in builds configured with `-DWITH_FRDPD_IN_PROCESS_PAM=ON`;
 - PAM credential establish/delete tied to the integrated authentication/session lifecycle;
 - partial `--config` support for implemented `frdpd.toml` fields (`listen`, `security=nla`, `tls_cert`, `tls_key`, `pam_service`), with CLI overrides;
 - canonical `auth_socket` configuration and `--auth-socket=<path>` CLI override for routing password-backed auth/account checks through `frdp-authd` IPC;
@@ -121,7 +120,7 @@ Deliverables:
 
 - [x] `frdp-authd` helper target and local IPC server build under `WITH_FRDPD`;
 - [x] integrated `server/frdp/frdpd` authentication/account check through `frdp-authd` IPC via absolute `auth_socket` in the normal helper topology;
-- [x] remove in-process PAM auth/session ownership from normal peer-worker runtime; normal startup requires `frdp-authd`/`frdp-sesmand`, and the remaining direct PAM path is available only when built with the explicit development option `-DWITH_FRDPD_IN_PROCESS_PAM=ON`;
+- [x] remove in-process PAM auth/session ownership from the peer-worker runtime; normal startup requires `frdp-authd`/`frdp-sesmand`, and the old direct PAM fallback build option/CLI path has been removed;
 - [x] PAM service `frdpd` installable example;
 - [x] password-backed CredSSP -> PAM flow in `server/frdp/frdpd`;
 - [x] PAM auth/account smoke-test CLI in `server/frdp/frdpd` (`--pam-auth-test`);
@@ -131,7 +130,7 @@ Deliverables:
 - [x] audit events with correlation id integrated with the authenticated auth/session/agent path (channels and structured audit config are tracked separately);
 - [x] `frdpd` peer/channel/session logs escape client-supplied hostnames, authenticated usernames, static channel names, and IPC-supplied session ids, display names, agent socket paths, and session-manager error strings;
 - [x] fail-closed core dump/non-dumpable hardening in `server/frdp/frdpd`, `server/frdp/frdp-authd`, and `server/frdp/frdp-sesmand`;
-- [ ] locked secret buffers and brokerized credential handling across the integrated auth/session path (normal startup now uses the auth broker, temporary password copies are locked/wiped, the peer-owned FreeRDP auth identity is cleared after authentication, and Remote Credential Guard ticket-logon buffers are wiped before release; remaining CredSSP internals and the explicit development fallback remain tracked).
+- [ ] locked secret buffers and brokerized credential handling across the integrated auth/session path (normal startup now uses the auth broker, temporary password copies are locked/wiped, the peer-owned FreeRDP auth identity is cleared after authentication, Remote Credential Guard ticket-logon buffers are wiped before release, and the old direct PAM fallback has been removed; remaining CredSSP internals remain tracked).
 
 Exit criteria: a domain user can authenticate through NLA/PAM; a denied user receives a clean failure; no desktop resources are allocated before authentication succeeds.
 

@@ -64,7 +64,7 @@ working checklist for design, implementation, and test gates.
 
 | Threat | Current controls | Open work |
 |---|---|---|
-| Credential theft from peer memory or crash dumps | Non-dumpable hardening, locked temporary password copies, explicit request wiping, auth broker required for normal startup, peer-owned auth identity cleared after auth callback | Audit lower-level CredSSP/SSPI/PAM ownership, remove development fallback, complete Kerberos credential isolation |
+| Credential theft from peer memory or crash dumps | Non-dumpable hardening, locked temporary password copies, explicit request wiping, auth broker required for normal startup, peer-owned auth identity cleared after auth callback, peer-worker PAM fallback removed | Audit lower-level CredSSP/SSPI/PAM ownership and complete Kerberos credential isolation |
 | Forged or replayed session-open IPC | HMAC-signed short-lived V3 token, nonce consumption, uid/gid/group/account-state binding, legacy V1/V2 rejection before body decode | Richer account-policy payload and end-to-end login/reconnect tests |
 | Helper socket spoofing or live-socket replacement | Absolute socket path validation, peer credential checks, live-socket collision guard, stale same-owner cleanup checks | Package/user ownership validation across distros and restart reconciliation |
 | Pre-auth resource allocation | Normal helper topology opens sessions after auth and static channel policy checks | Real client E2E proof that denied logins and denied channels allocate no desktop resources |

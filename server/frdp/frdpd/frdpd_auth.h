@@ -22,7 +22,6 @@ typedef struct
 	const char* correlation_id;
 	const char* rhost;
 	frdpdDomainMode domain_mode;
-	BOOL open_pam_session;
 } frdpdAuthConfig;
 
 typedef struct

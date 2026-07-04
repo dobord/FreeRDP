@@ -107,24 +107,13 @@ run_frdpd_case(
   --cert=/missing
   --key=/missing)
 
-if(FRDPD_IN_PROCESS_PAM)
-  run_frdpd_case(
-    "legacy-with-helper-sockets"
-    "--allow-in-process-pam cannot be combined with helper sockets"
-    --auth-socket=/tmp/frdpd-test-auth.sock
-    --session-socket=/tmp/frdpd-test-session.sock
-    --allow-in-process-pam
-    --cert=/missing
-    --key=/missing)
-else()
-  run_frdpd_case_with_result(
-    "legacy-option-disabled"
-    2
-    "Usage:"
-    --allow-in-process-pam
-    --cert=/missing
-    --key=/missing)
-endif()
+run_frdpd_case_with_result(
+  "legacy-option-removed"
+  2
+  "Usage:"
+  --allow-in-process-pam
+  --cert=/missing
+  --key=/missing)
 
 run_frdpd_case(
   "helper-sockets-before-cert-check"
@@ -133,12 +122,3 @@ run_frdpd_case(
   --session-socket=/tmp/frdpd-test-session.sock
   --cert=/missing
   --key=/missing)
-
-if(FRDPD_IN_PROCESS_PAM)
-  run_frdpd_case(
-    "legacy-opt-in-before-cert-check"
-    "running legacy in-process PAM path"
-    --allow-in-process-pam
-    --cert=/missing
-    --key=/missing)
-endif()
