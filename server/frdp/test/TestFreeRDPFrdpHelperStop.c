@@ -19,6 +19,9 @@
 #ifndef FRDP_SESMAND_BINARY
 #error "FRDP_SESMAND_BINARY is not defined"
 #endif
+#ifndef FRDP_SAMPLE_CONFIG_PATH
+#error "FRDP_SAMPLE_CONFIG_PATH is not defined"
+#endif
 
 static int make_runtime_dir(char* dir, size_t dir_size)
 {
@@ -142,7 +145,14 @@ static int accept_pending_connections(int fd)
 	}
 }
 
+static int run_config_stop_test(const char* binary, const char* name, const char* config_path);
+
 static int run_stop_test(const char* binary, const char* name)
+{
+	return run_config_stop_test(binary, name, NULL);
+}
+
+static int run_config_stop_test(const char* binary, const char* name, const char* config_path)
 {
 	char dir[1024] = { 0 };
 	char socket_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
@@ -161,7 +171,10 @@ static int run_stop_test(const char* binary, const char* name)
 		goto cleanup;
 	if (pid == 0)
 	{
-		execl(binary, binary, "--socket", socket_path, (char*)NULL);
+		if (config_path)
+			execl(binary, binary, "--config", config_path, "--socket", socket_path, (char*)NULL);
+		else
+			execl(binary, binary, "--socket", socket_path, (char*)NULL);
 		_exit(127);
 	}
 
@@ -286,6 +299,16 @@ int TestFreeRDPFrdpHelperStop(int argc, char* argv[])
 	if (run_stop_test(FRDP_SESMAND_BINARY, "sesmand") != 0)
 	{
 		printf("frdp-sesmand stop cleanup failed\n");
+		return -1;
+	}
+	if (run_config_stop_test(FRDP_AUTHD_BINARY, "authd-config", FRDP_SAMPLE_CONFIG_PATH) != 0)
+	{
+		printf("frdp-authd sample config startup cleanup failed\n");
+		return -1;
+	}
+	if (run_config_stop_test(FRDP_SESMAND_BINARY, "sesmand-config", FRDP_SAMPLE_CONFIG_PATH) != 0)
+	{
+		printf("frdp-sesmand sample config startup cleanup failed\n");
 		return -1;
 	}
 	if (run_live_socket_protection_test(FRDP_AUTHD_BINARY, "authd", 8, 0) != 0)
