@@ -37,6 +37,7 @@ extern "C"
 		UINT32 max_connections;
 		volatile LONG active_connections;
 		BOOL allow_tls_fallback;
+		BOOL ntlm_fallback;
 		BOOL open_pam_session;
 		frdpdDomainMode domain_mode;
 		frdpChannelPolicy channels;

@@ -62,6 +62,7 @@
 #define FRDPD_MAX_DESKTOP_SIZE 8192U
 #define FRDPD_MAX_MONITORS 16U
 #define FRDPD_NSC_COLOR_LOSS_LEVEL 1U
+#define FRDPD_KERBEROS_ONLY_PACKAGE_LIST "kerberos,u2u,!ntlm"
 #define FRDPD_PEER_ACTIVE_WAIT_TIMEOUT_MS 50
 #define FRDPD_PEER_IDLE_WAIT_TIMEOUT_MS 250
 #define FRDPD_LOG_STRING_SIZE 1024U
@@ -1641,6 +1642,10 @@ static BOOL frdpd_configure_security(freerdp_peer* client, const frdpdServerConf
 		return FALSE;
 	if (!freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, TRUE))
 		return FALSE;
+	if (!config->ntlm_fallback &&
+	    !freerdp_settings_set_string(settings, FreeRDP_AuthenticationPackageList,
+	                                 FRDPD_KERBEROS_ONLY_PACKAGE_LIST))
+		return FALSE;
 	if (!freerdp_settings_set_uint32(settings, FreeRDP_EncryptionLevel,
 	                                 ENCRYPTION_LEVEL_CLIENT_COMPATIBLE))
 		return FALSE;
@@ -2020,6 +2025,7 @@ static BOOL frdpd_apply_file_config(frdpdOptions* options)
 			return FALSE;
 		options->server.auth_socket = config->auth_socket;
 	}
+	options->server.ntlm_fallback = config->ntlm_fallback ? TRUE : FALSE;
 	if (!frdpd_string_is_empty(config->session_socket))
 	{
 		if (!frdpd_socket_path_is_valid(config->session_socket))
@@ -2344,6 +2350,7 @@ int main(int argc, char* argv[])
 	options.server.key_path = "server.key";
 	options.server.pam_service = "frdpd";
 	options.server.allow_tls_fallback = FALSE;
+	options.server.ntlm_fallback = TRUE;
 	options.server.open_pam_session = FALSE;
 	options.server.domain_mode = FRDPD_DOMAIN_PLAIN;
 	if (frdpd_args_have_help(argc, argv))

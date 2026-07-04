@@ -51,6 +51,7 @@ typedef struct {
     char auth_mode[32];
     char pam_service[64];
     char auth_socket[108];
+    int ntlm_fallback;
     char session_socket[108];
     frdpChannelPolicy channels;
     frdpClipboardPolicy clipboard;

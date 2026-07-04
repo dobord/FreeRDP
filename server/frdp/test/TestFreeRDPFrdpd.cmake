@@ -59,6 +59,22 @@ run_frdpd_case_with_result(
   "failed to load configuration from ${relative_session_config}"
   --config "${relative_session_config}")
 
+set(ntlm_fallback_config "${test_dir}/ntlm-fallback-disabled.toml")
+file(WRITE "${ntlm_fallback_config}"
+     "[server]\n"
+     "tls_cert = \"/missing\"\n"
+     "tls_key = \"/missing\"\n"
+     "[auth]\n"
+     "auth_socket = \"/tmp/frdpd-test-auth.sock\"\n"
+     "ntlm_fallback = false\n"
+     "[session]\n"
+     "session_socket = \"/tmp/frdpd-test-session.sock\"\n")
+run_frdpd_case_with_result(
+  "ntlm-fallback-disabled-config"
+  255
+  "Certificate or key file not found: cert=/missing key=/missing"
+  --config "${ntlm_fallback_config}")
+
 run_frdpd_case(
   "missing-helper-sockets"
   "frdpd normal startup requires --auth-socket and --session-socket"

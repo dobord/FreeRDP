@@ -69,6 +69,21 @@ static int parse_uint32_limit(const char *value, uint32_t *out)
     return 0;
 }
 
+static int parse_bool_value(const char *value, int *out)
+{
+    if (!value || !out)
+        return -1;
+    if (strcmp(value, "true") == 0) {
+        *out = 1;
+        return 0;
+    }
+    if (strcmp(value, "false") == 0) {
+        *out = 0;
+        return 0;
+    }
+    return -1;
+}
+
 static int parse_channel_filter_mode(const char *value, frdpChannelFilterMode *mode)
 {
     if (!value || !mode)
@@ -334,6 +349,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_auth_mode = 0;
     int seen_pam_service = 0;
     int seen_auth_socket = 0;
+    int seen_ntlm_fallback = 0;
     int seen_session_socket = 0;
     int seen_channel_static_mode = 0;
     int seen_channel_static_allow = 0;
@@ -346,6 +362,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_clipboard_max_text_bytes = 0;
     /* Set defaults */
     memset(config, 0, sizeof(*config));
+    config->ntlm_fallback = 1;
     config->clipboard.max_text_bytes = FRDP_CLIPBOARD_DEFAULT_MAX_TEXT_BYTES;
     if (copy_string(config->listen, sizeof(config->listen), "0.0.0.0:3389") != 0 ||
         copy_string(config->security, sizeof(config->security), "nla") != 0 ||
@@ -445,6 +462,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
                                        (strcmp(key, "dynamic_deny") == 0));
         const int allow_bare_value = ((strcmp(current_section, "server") == 0) &&
                                       (strcmp(key, "max_connections") == 0)) ||
+                                     ((strcmp(current_section, "auth") == 0) &&
+                                      (strcmp(key, "ntlm_fallback") == 0)) ||
                                      ((strcmp(current_section, "clipboard") == 0) &&
                                       (strcmp(key, "max_text_bytes") == 0));
         if (allow_bare_value) {
@@ -569,8 +588,15 @@ int frdp_config_load(const char *path, frdpConfig *config)
             }
             else if (strcmp(key, "ntlm_fallback") == 0)
             {
-                fclose(f);
-                return -1;
+                if (seen_ntlm_fallback) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_ntlm_fallback = 1;
+                if (parse_bool_value(val, &config->ntlm_fallback) != 0) {
+                    fclose(f);
+                    return -1;
+                }
             }
             else if (strcmp(key, "keytab") == 0)
             {

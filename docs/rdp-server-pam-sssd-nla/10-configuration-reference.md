@@ -14,7 +14,8 @@ This document describes the configuration options available in `frdpd.toml` (see
 - `mode` (string): Authentication backend. Currently implemented value: `pam-sssd`. Default `pam-sssd`.
 - `pam_service` (string): Name of PAM service file. Default `frdpd`. The tree installs a non-interactive example as `/etc/pam.d/frdpd` through the `server` component. `frdp-authd --config <path>` reads this field for broker-side authentication in the normal `auth_socket` path, while `--pam-service` remains a direct CLI override for standalone helper launches. `frdp-sesmand --config <path>` reads the same field for future PAM session opens, and `frdpctl reload` asks `frdp-sesmand` to reread it without changing existing PAM handles. The field is also used by the PAM auth smoke test and by legacy in-process PAM only when `frdpd` is built with `-DWITH_FRDPD_IN_PROCESS_PAM=ON`.
 - `auth_socket` (path): Absolute Unix socket path for the `frdp-authd` IPC broker in normal server startup. Relative paths and unsafe socket locations are rejected. The installed helper unit listens on `/run/frdp-authd/authd.sock`. Pair it with `[session].session_socket`; configuring only one helper socket is rejected. When omitted, normal builds reject server startup.
-- `kerberos`, `ntlm_fallback`, `keytab`, `accepted_spn`: planned Kerberos-first production fields. The current parser rejects them until the daemon can enforce the corresponding policy.
+- `ntlm_fallback` (boolean): Default `true`. Set `false` to configure server-side CredSSP/Negotiate with package list `kerberos,u2u,!ntlm`, causing NTLM mechanisms to be skipped. This requires a working Kerberos path in the deployment; it does not by itself provision a keytab, accepted SPN, SSSD mapping, or PAM account/session policy.
+- `kerberos`, `keytab`, `accepted_spn`: planned Kerberos identity fields. The current parser rejects them until the daemon can enforce the corresponding policy.
 
 ## [session]
 

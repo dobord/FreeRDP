@@ -11,8 +11,10 @@ tls_key = "/etc/frdpd/tls.key"
 mode = "pam-sssd"
 pam_service = "frdpd"
 auth_socket = "/run/frdp-authd/authd.sock"
-# Kerberos-first fields are intentionally omitted until the daemon enforces them.
-# Do not configure kerberos, ntlm_fallback, keytab, or accepted_spn in the current parser.
+# Set false to ask CredSSP/Negotiate to reject NTLM and use Kerberos mechanisms only.
+# ntlm_fallback = false
+# Kerberos identity fields are intentionally omitted until the daemon enforces them.
+# Do not configure kerberos, keytab, or accepted_spn in the current parser.
 
 [session]
 session_socket = "/run/frdp-sesmand/sesmand.sock"
