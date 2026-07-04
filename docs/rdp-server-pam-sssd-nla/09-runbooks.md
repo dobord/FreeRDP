@@ -63,8 +63,8 @@ Integrate with Prometheus and Grafana:
 
 1. Enable node_exporter's textfile collector and schedule the FRDP collector.
 2. Import the Prometheus rules and tune severity/thresholds for the pilot.
-3. Create Grafana dashboards showing FRDP session counts, session-manager
-   reachability, host CPU/memory from node_exporter and authentication rates
+3. Import the shipped starter Grafana dashboard, then extend it for pilot
+   host CPU/memory panels from node_exporter and authentication-rate panels
    from system logs or a future native metrics endpoint.
 
 ## Migration/fallback to xrdp
