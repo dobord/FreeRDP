@@ -1387,10 +1387,12 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
         } else if ((hdr.type == FRDP_IPC_SESSION_RELOAD_REQUEST) && (hdr.payload_len == 0)) {
             if (g_config_path[0] != '\0') {
                 char error[sizeof(((frdpControlResponse *)0)->error)] = {0};
+                char message[sizeof(((frdpControlResponse *)0)->message)] = {0};
 
-                if (reload_configured_pam_service(error, sizeof(error)) == 0)
-                    (void)send_reload_response(cfd, 1, "pam-service applied", NULL);
-                else
+                if (reload_configured_pam_service(error, sizeof(error)) == 0) {
+                    snprintf(message, sizeof(message), "pam-service applied: %s", g_pam_service);
+                    (void)send_reload_response(cfd, 1, message, NULL);
+                } else
                     (void)send_reload_response(cfd, 0, NULL, error);
             } else {
                 (void)send_reload_response(cfd, 1, "accepted", NULL);

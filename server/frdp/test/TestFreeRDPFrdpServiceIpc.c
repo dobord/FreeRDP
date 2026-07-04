@@ -1068,11 +1068,11 @@ static int test_sesmand_reload_config(void)
 	if (start_helper_with_config(FRDP_SESMAND_BINARY, "frdp-sesmand-reload", config_path,
 	                             &helper) != 0)
 		goto cleanup_dir;
-	if (test_sesmand_reload(helper.socket_path, 1, "pam-service applied", NULL) != 0)
+	if (test_sesmand_reload(helper.socket_path, 1, "pam-service applied: frdpd", NULL) != 0)
 		goto cleanup;
 	if (write_sesmand_config(config_path, "frdpd_reload") != 0)
 		goto cleanup;
-	if (test_sesmand_reload(helper.socket_path, 1, "pam-service applied", NULL) != 0)
+	if (test_sesmand_reload(helper.socket_path, 1, "pam-service applied: frdpd_reload", NULL) != 0)
 		goto cleanup;
 	if (write_sesmand_config(config_path, "bad/service") != 0)
 		goto cleanup;
