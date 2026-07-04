@@ -227,6 +227,23 @@ static int handle_reload_request(int fd)
 	return frdp_ipc_send_session_reload_response(fd, &response);
 }
 
+static int handle_reload_pam_service_request(int fd)
+{
+	frdpIpcHeader header = { 0 };
+	frdpControlResponse response = { 0 };
+
+	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
+		return -1;
+	if (header.type != FRDP_IPC_SESSION_RELOAD_REQUEST)
+		return -1;
+	if (header.payload_len != 0)
+		return -1;
+
+	response.success = 1;
+	snprintf(response.message, sizeof(response.message), "pam-service applied");
+	return frdp_ipc_send_session_reload_response(fd, &response);
+}
+
 static int handle_reload_failure_request(int fd)
 {
 	frdpIpcHeader header = { 0 };
@@ -663,6 +680,22 @@ static int test_reload(void)
 	return 0;
 }
 
+static int test_reload_pam_service_message(void)
+{
+	frdpctlRunResult result = { 0 };
+	char* argv[] = { FRDPCTL_BINARY, "reload", "--socket", NULL, NULL };
+
+	if (run_with_server(argv, 3, handle_reload_pam_service_request, &result) != 0)
+		return -1;
+	if (result.status != 0)
+		return -1;
+	if (strcmp(result.stdout_data, "Reload pam-service applied\n") != 0)
+		return -1;
+	if (strcmp(result.stderr_data, "") != 0)
+		return -1;
+	return 0;
+}
+
 static int test_reload_escapes_error(void)
 {
 	frdpctlRunResult result = { 0 };
@@ -697,6 +730,8 @@ int TestFreeRDPFrdpCtlIpc(int argc, char* argv[])
 	if (test_kill_session_escapes_error() != 0)
 		return -1;
 	if (test_reload() != 0)
+		return -1;
+	if (test_reload_pam_service_message() != 0)
 		return -1;
 	if (test_reload_escapes_error() != 0)
 		return -1;
