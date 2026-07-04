@@ -77,6 +77,10 @@ foreach(expected
         "freeipa)"
         "all)"
         "FRDP_E2E_ARTIFACTS"
+        "FRDP_E2E_PROFILE_TIMEOUT"
+        "profile_timeout"
+        "timeout \"\${profile_timeout}s\""
+        "exceeded FRDP_E2E_PROFILE_TIMEOUT"
         "compose-config.yaml"
         "container-inspect")
   expect_contains("${runner}" "${expected}" "E2E runner")

@@ -48,6 +48,11 @@ Set `FRDP_E2E_KEEP=1` to keep containers and volumes after a failure:
 FRDP_E2E_KEEP=1 bash server/frdp/test/e2e/run.sh samba
 ```
 
+Set `FRDP_E2E_PROFILE_TIMEOUT=<seconds>` to cap each Compose profile run. The
+default is 1800 seconds, and a timeout leaves the usual `compose-up.log`,
+`compose.log`, `compose-ps.txt`, container logs, inspect JSON, and exit-code
+artifact for diagnosis.
+
 ## FreeIPA host requirements
 
 The official FreeIPA image runs systemd. The Compose profile uses a read-only root filesystem, a `/data` volume, host cgroup namespace and a writable cgroup mount; it does not use `privileged`. A cgroups-v2 Docker host is strongly recommended. The profile is heavier than the local and Samba profiles and should have at least 4 CPUs and roughly 6–8 GiB of available memory.

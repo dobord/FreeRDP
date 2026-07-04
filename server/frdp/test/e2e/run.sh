@@ -6,9 +6,15 @@ repo_root=$(cd "$root/../../../.." && pwd)
 compose_file="$root/compose.yaml"
 artifacts=${FRDP_E2E_ARTIFACTS:-$root/artifacts}
 keep=${FRDP_E2E_KEEP:-0}
+profile_timeout=${FRDP_E2E_PROFILE_TIMEOUT:-1800}
 
 export FRDP_E2E_ARTIFACTS="$artifacts"
 mkdir -p "$artifacts"
+
+positive_integer()
+{
+	[[ $1 =~ ^[1-9][0-9]*$ ]]
+}
 
 git -C "$repo_root" rev-parse 'HEAD^{tree}' >"$artifacts/base-tree-sha.txt"
 tar -C "$repo_root" -czf "$artifacts/frdp-source.tar.gz" \
@@ -16,8 +22,10 @@ tar -C "$repo_root" -czf "$artifacts/frdp-source.tar.gz" \
 	libfreerdp/core/server.c libfreerdp/core/server.h \
 	.github/workflows/frdpd-compose.yml
 
+positive_integer "$profile_timeout" || { echo "FRDP_E2E_PROFILE_TIMEOUT must be positive" >&2; exit 2; }
 command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 2; }
 docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required" >&2; exit 2; }
+command -v timeout >/dev/null 2>&1 || { echo "timeout is required" >&2; exit 2; }
 
 compose=(docker compose -f "$compose_file")
 
@@ -42,12 +50,16 @@ run_profile()
 	"${compose[@]}" --profile "$profile" config >"$artifacts/$profile/compose-config.yaml" 2>&1 || true
 
 	set +e
-	"${compose[@]}" --profile "$profile" up --build \
+	timeout "${profile_timeout}s" "${compose[@]}" --profile "$profile" up --build \
 		--abort-on-container-exit \
 		--exit-code-from "$exit_service" \
 		"$exit_service" 2>&1 | tee "$output"
 	status=${PIPESTATUS[0]}
 	set -e
+	if [[ $status -eq 124 ]]; then
+		printf 'profile %s exceeded FRDP_E2E_PROFILE_TIMEOUT=%s seconds\n' \
+			"$profile" "$profile_timeout" | tee -a "$output" >&2
+	fi
 
 	"${compose[@]}" --profile "$profile" logs --no-color --timestamps >"$artifacts/$profile/compose.log" 2>&1 || true
 	"${compose[@]}" --profile "$profile" ps -a >"$artifacts/$profile/compose-ps.txt" 2>&1 || true
@@ -82,6 +94,7 @@ Usage: bash $0 component|local|samba|freeipa|all
   all        Run all profiles sequentially.
 
 Set FRDP_E2E_KEEP=1 to leave failed containers and volumes running for diagnosis.
+Set FRDP_E2E_PROFILE_TIMEOUT=<seconds> to bound each Compose profile run.
 EOF
 }
 
