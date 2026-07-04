@@ -565,6 +565,10 @@ int frdp_config_load(const char *path, frdpConfig *config)
                     return -1;
                 }
                 seen_security = 1;
+                if (strcmp(val, "nla") != 0) {
+                    fclose(f);
+                    return -1;
+                }
                 if (copy_string(config->security, sizeof(config->security), val) != 0) {
                     fclose(f);
                     return -1;

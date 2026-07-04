@@ -554,6 +554,9 @@ static int test_invalid_channel_config(void)
 	                        "[server]\nlisten = \"127.0.0.1:3389\"\nlisten = \"127.0.0.1:3390\"\n") !=
 	    0)
 		return -1;
+	if (expect_load_failure("frdp-unsupported-security.toml",
+	                        "[server]\nsecurity = \"tls\"\n") != 0)
+		return -1;
 	if (expect_load_failure("frdp-duplicate-auth-socket.toml",
 	                        "[auth]\nauth_socket = \"/tmp/a\"\nauth_socket = \"/tmp/b\"\n") !=
 	    0)
