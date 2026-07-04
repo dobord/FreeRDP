@@ -587,6 +587,12 @@ static int test_invalid_channel_config(void)
 	if (expect_load_failure("frdp-relative-session-socket.toml",
 	                        "[session]\nsession_socket = \"relative/sesmand.sock\"\n") != 0)
 		return -1;
+	if (expect_load_failure("frdp-control-auth-socket.toml",
+	                        "[auth]\nauth_socket = \"/tmp/frdp-\001-auth.sock\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-control-session-socket.toml",
+	                        "[session]\nsession_socket = \"/tmp/frdp-\001-session.sock\"\n") != 0)
+		return -1;
 	if (expect_load_failure("frdp-duplicate-ntlm-fallback.toml",
 	                        "[auth]\nntlm_fallback = false\nntlm_fallback = true\n") != 0)
 		return -1;
