@@ -92,15 +92,40 @@ foreach(expected
         "FRDP_AUTH_TIMEOUT"
         "positive_integer \"$FRDP_E2E_TIMEOUT\""
         "positive_integer \"$FRDP_AUTH_TIMEOUT\""
+        "command -v timeout"
+        "command -v xvfb-run"
+        "command -v Xvfb"
         "timeout \"\${FRDP_AUTH_TIMEOUT}s\""
         "frdpctl list-sessions --socket")
   expect_contains("${rdp_probe}" "${expected}" "E2E RDP probe script")
+endforeach()
+
+file(READ "${FRDP_E2E_DIR}/scripts/rdp-load-probe.sh" load_probe)
+foreach(expected
+        "FRDP_LOAD_CONCURRENCY"
+        "FRDP_LOAD_ITERATIONS"
+        "FRDP_LOAD_TIMEOUT"
+        "command -v timeout"
+        "command -v xvfb-run"
+        "timeout \"\${FRDP_LOAD_TIMEOUT}s\"")
+  expect_contains("${load_probe}" "${expected}" "E2E load probe script")
+endforeach()
+
+file(READ "${FRDP_E2E_DIR}/scripts/rdp-protocol-regression.sh" protocol_probe)
+foreach(expected
+        "FRDP_PROTOCOL_TIMEOUT"
+        "command -v timeout"
+        "command -v xvfb-run"
+        "timeout \"\${FRDP_PROTOCOL_TIMEOUT}s\"")
+  expect_contains("${protocol_probe}" "${expected}" "E2E protocol regression script")
 endforeach()
 
 file(READ "${FRDP_E2E_DIR}/scripts/rdp-session-smoke.sh" session_smoke)
 foreach(expected
         "FRDP_SESSION_TIMEOUT"
         "FRDP_SESSION_HOLD_SECONDS"
+        "command -v Xvfb"
+        "command -v xdpyinfo"
         "allocate_display"
         "xdpyinfo -display \"$display_name\""
         "frdpctl status --socket"

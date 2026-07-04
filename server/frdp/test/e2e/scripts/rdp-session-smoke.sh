@@ -107,6 +107,8 @@ build_args()
 
 positive_integer "$FRDP_SESSION_TIMEOUT" || fail "FRDP_SESSION_TIMEOUT must be positive"
 positive_integer "$FRDP_SESSION_HOLD_SECONDS" || fail "FRDP_SESSION_HOLD_SECONDS must be positive"
+command -v Xvfb >/dev/null 2>&1 || fail "Xvfb executable was not found"
+command -v xdpyinfo >/dev/null 2>&1 || fail "xdpyinfo executable was not found"
 
 XFREERDP=$(find_xfreerdp) || fail "xfreerdp executable was not found"
 wait_tcp || fail "RDP endpoint $FRDP_RDP_TARGET did not become reachable"

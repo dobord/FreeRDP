@@ -91,6 +91,8 @@ run_case()
 }
 
 positive_integer "$FRDP_PROTOCOL_TIMEOUT" || fail "FRDP_PROTOCOL_TIMEOUT must be positive"
+command -v timeout >/dev/null 2>&1 || fail "timeout executable was not found"
+command -v xvfb-run >/dev/null 2>&1 || fail "xvfb-run executable was not found"
 
 XFREERDP=$(find_xfreerdp) || fail "xfreerdp executable was not found"
 help_output=$("$XFREERDP" /help 2>&1 || true)
