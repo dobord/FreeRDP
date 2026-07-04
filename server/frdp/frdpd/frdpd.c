@@ -1281,29 +1281,33 @@ static void frdpd_peer_clear_owned_auth_identity(freerdp_peer* client,
 	sspi_FreeAuthIdentity(&client->identity);
 }
 
-static void frdpd_peer_log_nla_package(freerdp_peer* client, const char* correlation_id,
-                                       const char* log_hostname)
+static BOOL frdpd_peer_query_nla_package(freerdp_peer* client, const char* correlation_id,
+                                         const char* log_hostname, char* package_name,
+                                         size_t package_name_size)
 {
 	SecPkgContext_PackageInfo package = { 0 };
-	char log_package[FRDPD_LOG_STRING_SIZE] = { 0 };
+	BOOL rc = FALSE;
 
 	WINPR_ASSERT(client);
 	WINPR_ASSERT(client->context);
 	WINPR_ASSERT(correlation_id);
 	WINPR_ASSERT(log_hostname);
+	WINPR_ASSERT(package_name);
+	WINPR_ASSERT(package_name_size > 0);
 
 	if (freerdp_nla_QueryContextAttributes(client->context, SECPKG_ATTR_PACKAGE_INFO, &package) !=
 	    SEC_E_OK)
-	{
-		WLog_WARN(TAG, "correlation_id=%s unable to query NLA SSPI package for %s",
-		          correlation_id, log_hostname);
-		return;
-	}
+		goto out;
 
-	WLog_INFO(TAG, "correlation_id=%s NLA SSPI package=%s for %s", correlation_id,
-	          frdpd_log_value(package.PackageInfo ? package.PackageInfo->Name : NULL, log_package,
-	                          sizeof(log_package), "unknown"),
-	          log_hostname);
+	if (!package.PackageInfo || !package.PackageInfo->Name ||
+	    (package.PackageInfo->Name[0] == '\0') ||
+	    (snprintf(package_name, package_name_size, "%s", package.PackageInfo->Name) < 0) ||
+	    (strlen(package.PackageInfo->Name) >= package_name_size))
+		goto out;
+
+	rc = TRUE;
+
+out:
 	if (package.PackageInfo)
 	{
 		const SECURITY_STATUS status =
@@ -1312,6 +1316,19 @@ static void frdpd_peer_log_nla_package(freerdp_peer* client, const char* correla
 			WLog_WARN(TAG, "correlation_id=%s unable to release NLA SSPI package info for %s",
 			          correlation_id, log_hostname);
 	}
+	return rc;
+}
+
+static void frdpd_peer_log_nla_package(const char* correlation_id, const char* log_hostname,
+                                       const char* package_name)
+{
+	char log_package[FRDPD_LOG_STRING_SIZE] = { 0 };
+
+	WINPR_ASSERT(correlation_id);
+	WINPR_ASSERT(log_hostname);
+	WINPR_ASSERT(package_name);
+	WLog_INFO(TAG, "correlation_id=%s NLA SSPI package=%s for %s", correlation_id,
+	          frdpd_log_value(package_name, log_package, sizeof(log_package), "unknown"), log_hostname);
 }
 
 static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY* identity,
@@ -1321,6 +1338,7 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	frdpdPeerContext* context = NULL;
 	frdpdAuthResult result = { 0 };
 	char log_hostname[FRDPD_LOG_STRING_SIZE] = { 0 };
+	char nla_package[FRDPD_LOG_STRING_SIZE] = { 0 };
 	char log_user[FRDPD_LOG_STRING_SIZE] = { 0 };
 
 	WINPR_ASSERT(client);
@@ -1348,7 +1366,25 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	}
 
 	if (automatic)
-		frdpd_peer_log_nla_package(client, context->correlation_id, log_hostname);
+	{
+		const BOOL package_known = frdpd_peer_query_nla_package(
+		    client, context->correlation_id, log_hostname, nla_package, sizeof(nla_package));
+		if (package_known)
+			frdpd_peer_log_nla_package(context->correlation_id, log_hostname, nla_package);
+		else
+			WLog_WARN(TAG, "correlation_id=%s unable to query NLA SSPI package for %s",
+			          context->correlation_id, log_hostname);
+
+		if (!config->ntlm_fallback &&
+		    (!package_known || (_stricmp(nla_package, "Kerberos") != 0)))
+		{
+			WLog_WARN(TAG,
+			          "correlation_id=%s rejecting NLA login from %s because selected SSPI "
+			          "package is not Kerberos",
+			          context->correlation_id, log_hostname);
+			return FALSE;
+		}
+	}
 
 	const frdpdAuthConfig auth = {
 		.pam_service = config->pam_service,

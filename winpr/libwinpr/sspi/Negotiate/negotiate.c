@@ -35,6 +35,7 @@
 #include "../NTLM/ntlm_export.h"
 #include "../Kerberos/kerberos.h"
 #include "../sspi.h"
+#include "../sspi_winpr.h"
 #include "../../utils.h"
 #include "../../log.h"
 #define TAG WINPR_TAG("negotiate")
@@ -1314,6 +1315,15 @@ negotiate_RevertSecurityContext(WINPR_ATTR_UNUSED PCtxtHandle phContext)
 	return SEC_E_OK;
 }
 
+static SECURITY_STATUS SEC_ENTRY negotiate_FreeContextBuffer(void* pBuffer)
+{
+	if (!pBuffer)
+		return SEC_E_INVALID_HANDLE;
+
+	sspi_ContextBufferFree(pBuffer);
+	return SEC_E_OK;
+}
+
 static SECURITY_STATUS SEC_ENTRY negotiate_QueryContextAttributesW(PCtxtHandle phContext,
                                                                    ULONG ulAttribute, void* pBuffer)
 {
@@ -1716,7 +1726,7 @@ const SecurityFunctionTableA NEGOTIATE_SecurityFunctionTableA = {
 	negotiate_RevertSecurityContext,       /* RevertSecurityContext */
 	negotiate_MakeSignature,               /* MakeSignature */
 	negotiate_VerifySignature,             /* VerifySignature */
-	nullptr,                               /* FreeContextBuffer */
+	negotiate_FreeContextBuffer,           /* FreeContextBuffer */
 	nullptr,                               /* QuerySecurityPackageInfo */
 	nullptr,                               /* Reserved3 */
 	nullptr,                               /* Reserved4 */
@@ -1748,7 +1758,7 @@ const SecurityFunctionTableW NEGOTIATE_SecurityFunctionTableW = {
 	negotiate_RevertSecurityContext,       /* RevertSecurityContext */
 	negotiate_MakeSignature,               /* MakeSignature */
 	negotiate_VerifySignature,             /* VerifySignature */
-	nullptr,                               /* FreeContextBuffer */
+	negotiate_FreeContextBuffer,           /* FreeContextBuffer */
 	nullptr,                               /* QuerySecurityPackageInfo */
 	nullptr,                               /* Reserved3 */
 	nullptr,                               /* Reserved4 */
