@@ -78,6 +78,8 @@ static int test_default_blocklist(void)
 		return -1;
 	if (config.clipboard.max_text_bytes != 65536)
 		return -1;
+	if (config.audit.enabled != 0)
+		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "drdynvc") != 0)
@@ -415,6 +417,22 @@ static int test_clipboard_policy(void)
 	return 0;
 }
 
+static int test_audit_policy(void)
+{
+	frdpConfig config = { 0 };
+
+	if (load_config_body("frdp-audit-empty.toml", "[audit]\n", &config) != 0)
+		return -1;
+	if (config.audit.enabled != 0)
+		return -1;
+	if (load_config_body("frdp-audit-disabled.toml", "[audit]\nenabled = false\n", &config) !=
+	    0)
+		return -1;
+	if (config.audit.enabled != 0)
+		return -1;
+	return 0;
+}
+
 static int test_auth_kerberos_policy(void)
 {
 	frdpConfig config = { 0 };
@@ -680,6 +698,24 @@ static int test_invalid_channel_config(void)
 	if (expect_load_failure("frdp-unknown-clipboard-key.toml",
 	                        "[clipboard]\nfiles = \"true\"\n") != 0)
 		return -1;
+	if (expect_load_failure("frdp-audit-enabled.toml",
+	                        "[audit]\nenabled = true\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-audit-quoted-enabled.toml",
+	                        "[audit]\nenabled = \"false\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-audit-invalid-enabled.toml",
+	                        "[audit]\nenabled = maybe\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-audit-duplicate-enabled.toml",
+	                        "[audit]\nenabled = false\nenabled = false\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-audit-section.toml",
+	                        "[audit]\nenabled = false\n[audit]\nenabled = false\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-unknown-audit-key.toml",
+	                        "[audit]\nsink = \"journald\"\n") != 0)
+		return -1;
 	return 0;
 }
 
@@ -707,6 +743,8 @@ int TestFreeRDPFrdpConfig(int argc, char* argv[])
 	if (test_dynamic_blocklist() != 0)
 		return -1;
 	if (test_clipboard_policy() != 0)
+		return -1;
+	if (test_audit_policy() != 0)
 		return -1;
 	if (test_auth_kerberos_policy() != 0)
 		return -1;

@@ -42,4 +42,7 @@ session_socket = "/run/frdp-sesmand/sesmand.sock"
 # direction = "disabled"
 # max_text_bytes = 65536
 
-# The current parser still rejects [audit] instead of silently ignoring policy.
+# [audit]
+# Structured audit sinks are not implemented yet, so only explicit disabled
+# policy is accepted. enabled = true fails closed until runtime enforcement exists.
+# enabled = false

@@ -43,4 +43,5 @@ This document describes the configuration options available in `frdpd.toml` (see
 
 ## [audit]
 
-Planned audit fields. The current parser rejects `[audit]` until structured audit configuration and channel correlation are implemented; auth/session/agent correlation ids already exist on the optional IPC paths.
+- `enabled` (boolean): Default `false`. The parser accepts omitted or explicit `false` so deployments can carry a disabled audit stanza, but rejects `true` until structured audit sinks and runtime enforcement are implemented. Unknown `[audit]` keys are rejected.
+- Auth/session/agent correlation ids already exist on the optional IPC paths; structured audit configuration and useful channel correlation remain planned.

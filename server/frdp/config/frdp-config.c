@@ -368,6 +368,13 @@ static int validate_clipboard_policy(const frdpConfig *config, int seen_directio
     return -1;
 }
 
+static int validate_audit_policy(const frdpConfig *config)
+{
+    if (!config)
+        return -1;
+    return (config->audit.enabled == 0) ? 0 : -1;
+}
+
 /* Load key/value pairs from a small fail-closed TOML subset. */
 int frdp_config_load(const char *path, frdpConfig *config)
 {
@@ -384,6 +391,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_session_section = 0;
     int seen_channels_section = 0;
     int seen_clipboard_section = 0;
+    int seen_audit_section = 0;
     int seen_listen = 0;
     int seen_max_connections = 0;
     int seen_security = 0;
@@ -406,6 +414,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_clipboard_mode = 0;
     int seen_clipboard_direction = 0;
     int seen_clipboard_max_text_bytes = 0;
+    int seen_audit_enabled = 0;
     /* Set defaults */
     memset(config, 0, sizeof(*config));
     config->ntlm_fallback = 1;
@@ -449,7 +458,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 (strcmp(current_section, "auth") != 0) &&
                 (strcmp(current_section, "session") != 0) &&
                 (strcmp(current_section, "channels") != 0) &&
-                (strcmp(current_section, "clipboard") != 0)) {
+                (strcmp(current_section, "clipboard") != 0) &&
+                (strcmp(current_section, "audit") != 0)) {
                 fclose(f);
                 return -1;
             }
@@ -483,6 +493,12 @@ int frdp_config_load(const char *path, frdpConfig *config)
                     return -1;
                 }
                 seen_clipboard_section = 1;
+            } else if (strcmp(current_section, "audit") == 0) {
+                if (seen_audit_section) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_audit_section = 1;
             }
             continue;
         }
@@ -513,7 +529,9 @@ int frdp_config_load(const char *path, frdpConfig *config)
                                      ((strcmp(current_section, "auth") == 0) &&
                                       (strcmp(key, "kerberos") == 0)) ||
                                      ((strcmp(current_section, "clipboard") == 0) &&
-                                      (strcmp(key, "max_text_bytes") == 0));
+                                      (strcmp(key, "max_text_bytes") == 0)) ||
+                                     ((strcmp(current_section, "audit") == 0) &&
+                                      (strcmp(key, "enabled") == 0));
         if (allow_bare_value) {
             /* Bare values are accepted for TOML-like integer and boolean fields. */
         }
@@ -810,8 +828,21 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 return -1;
             }
         } else if (strcmp(current_section, "audit") == 0) {
-            fclose(f);
-            return -1;
+            if (strcmp(key, "enabled") == 0) {
+                if (seen_audit_enabled) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_audit_enabled = 1;
+                if (parse_bool_value(val, &config->audit.enabled) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else {
+                fclose(f);
+                return -1;
+            }
         } else if (current_section[0] != '\0') {
             fclose(f);
             return -1;
@@ -826,6 +857,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
                                       seen_channel_dynamic_deny) != 0)
         return -1;
     if (validate_clipboard_policy(config, seen_clipboard_direction) != 0)
+        return -1;
+    if (validate_audit_policy(config) != 0)
         return -1;
     if (!config->kerberos && (seen_keytab || seen_accepted_spn))
         return -1;

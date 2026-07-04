@@ -41,6 +41,10 @@ typedef struct {
     uint32_t max_text_bytes;
 } frdpClipboardPolicy;
 
+typedef struct {
+    int enabled;
+} frdpAuditPolicy;
+
 /* Structure representing configuration parsed from frdpd.toml */
 typedef struct {
     char listen[64];
@@ -58,6 +62,7 @@ typedef struct {
     char session_socket[108];
     frdpChannelPolicy channels;
     frdpClipboardPolicy clipboard;
+    frdpAuditPolicy audit;
 } frdpConfig;
 
 /* Load configuration from a TOML file into the provided struct. Returns 0 on success. */
