@@ -1,16 +1,21 @@
 # 05. System requirements
 
-## Supported operating systems
+## Operating system candidates
 
-Minimum production target:
+These are target candidates for pilot validation, not GA support claims. The
+authoritative status and required evidence are tracked in
+`14-support-matrix.md`.
 
-- Debian 12/13 or Ubuntu Server 24.04 LTS/26.04 LTS;
-- RHEL 9/10 compatible distributions;
+- Debian 12 and Ubuntu Server 24.04 LTS;
+- Ubuntu Server 22.04 LTS after separate dependency review;
+- RHEL 9 compatible distributions;
 - systemd, journald, logind;
 - PAM, SSSD, MIT Kerberos or Heimdal according to the build matrix;
-- SELinux or AppArmor profile.
+- SELinux or AppArmor profile review before enforcement.
 
-Fedora, Arch, openSUSE Tumbleweed, and containerized lab environments are acceptable for development, but the production baseline should be limited to a small set of LTS platforms.
+Fedora, Arch, openSUSE Tumbleweed, and containerized lab environments are
+acceptable for development, but the production baseline should be limited to a
+small set of validated LTS platforms.
 
 ## Build requirements
 

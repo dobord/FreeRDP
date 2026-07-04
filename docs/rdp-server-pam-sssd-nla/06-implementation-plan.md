@@ -213,7 +213,7 @@ Deliverables:
 - [x] runbooks for AD join, keytab rotation, and troubleshooting (`09-runbooks.md`);
 - [ ] dashboards and alert rules (partial: starter node_exporter textfile collector, Prometheus alert examples, and a Grafana dashboard install under `/usr/share/frdpd/monitoring` with focused CTest validation; native authentication/frame metrics and pilot threshold tuning remain open);
 - [x] migration/fallback plan to xrdp (basic documented fallback in `09-runbooks.md`; rollback testing remains part of exit criteria);
-- [ ] GA support matrix (draft support notes exist only in documentation).
+- [ ] GA support matrix (partial: `14-support-matrix.md` defines pilot candidates, unsupported capabilities, and required evidence before GA support claims; actual platform/client/package evidence remains open).
 
 Exit criteria: pilot users complete acceptance scenarios; rollback is tested; the operations team can install, diagnose, and upgrade without developer assistance.
 

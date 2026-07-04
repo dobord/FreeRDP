@@ -23,6 +23,7 @@
 | [11-packaging.md](11-packaging.md) | Packaging layout, install paths, systemd/PAM/MAC artifacts, and current DEB/RPM status. |
 | [12-readiness-and-test-strategy.md](12-readiness-and-test-strategy.md) | Current readiness assessment, highest-value implementation order, and executable test strategy. |
 | [13-threat-model.md](13-threat-model.md) | Draft threat model for FRDP helper topology, trust boundaries, current controls, and validation gates. |
+| [14-support-matrix.md](14-support-matrix.md) | Pilot support targets, unsupported capabilities, and evidence required before GA support claims. |
 
 ## Main recommendation
 

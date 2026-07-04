@@ -79,13 +79,8 @@ To fall back to xrdp:
 
 ## GA support matrix
 
-| Component                 | Supported versions                    |
-|---------------------------|----------------------------------------|
-| Operating system          | Ubuntu 22.04 LTS, RHEL 9, Debian 12    |
-| PAM providers             | pam_sss (SSSD 2.7+), pam_krb5 (1.19+)  |
-| Kerberos                  | MIT Kerberos 1.19+, AD 2016–2022       |
-| Clients                   | Windows 10/11 mstsc, FreeRDP 3.0+      |
-| Desktop backends          | Xvfb 1.20+, XFCE 4.16+, Wayland (beta) |
-| Encryption algorithms     | TLS 1.2/1.3, AES128/AES256, disabled NTLM |
-
-Use this matrix to determine compatibility during the pilot and GA phases.
+The current branch does not claim GA support. Use
+`14-support-matrix.md` as the pilot validation target and evidence checklist.
+Do not call a platform, client, identity provider, channel, or package format
+supported until the matrix evidence is reproducible from a clean release
+artifact.
