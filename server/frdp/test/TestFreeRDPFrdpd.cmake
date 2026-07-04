@@ -75,6 +75,40 @@ run_frdpd_case_with_result(
   "Certificate or key file not found: cert=/missing key=/missing"
   --config "${ntlm_fallback_config}")
 
+set(audit_disabled_config "${test_dir}/audit-disabled.toml")
+file(WRITE "${audit_disabled_config}"
+     "[server]\n"
+     "tls_cert = \"/missing\"\n"
+     "tls_key = \"/missing\"\n"
+     "[auth]\n"
+     "auth_socket = \"/tmp/frdpd-test-auth.sock\"\n"
+     "[session]\n"
+     "session_socket = \"/tmp/frdpd-test-session.sock\"\n"
+     "[audit]\n"
+     "enabled = false\n")
+run_frdpd_case_with_result(
+  "audit-disabled-config"
+  255
+  "Certificate or key file not found: cert=/missing key=/missing"
+  --config "${audit_disabled_config}")
+
+set(audit_enabled_config "${test_dir}/audit-enabled.toml")
+file(WRITE "${audit_enabled_config}"
+     "[server]\n"
+     "tls_cert = \"/missing\"\n"
+     "tls_key = \"/missing\"\n"
+     "[auth]\n"
+     "auth_socket = \"/tmp/frdpd-test-auth.sock\"\n"
+     "[session]\n"
+     "session_socket = \"/tmp/frdpd-test-session.sock\"\n"
+     "[audit]\n"
+     "enabled = true\n")
+run_frdpd_case_with_result(
+  "audit-enabled-config"
+  1
+  "failed to load configuration from ${audit_enabled_config}"
+  --config "${audit_enabled_config}")
+
 set(kerberos_config "${test_dir}/kerberos-enabled.toml")
 file(WRITE "${kerberos_config}"
      "[server]\n"
