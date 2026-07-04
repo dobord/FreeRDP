@@ -532,6 +532,11 @@ static int test_auth_kerberos_policy(void)
 
 static int test_invalid_channel_config(void)
 {
+	char long_line[640] = { 0 };
+
+	memset(long_line, 'a', sizeof(long_line) - 1);
+	if (expect_load_failure("frdp-long-line.toml", long_line) != 0)
+		return -1;
 	if (expect_load_failure("frdp-top-level-key.toml", "listen = \"127.0.0.1:3389\"\n") !=
 	    0)
 		return -1;
