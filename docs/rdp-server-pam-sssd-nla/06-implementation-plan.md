@@ -206,8 +206,8 @@ Deliverables:
 - [x] package previews (root `debian/` metadata supports a verified server-only binary package smoke build with `dpkg-buildpackage`; `packaging/rpm/frdpd.spec` supports a verified server-only `rpmbuild -bb --nodeps` smoke build with local macros, while distro RPM CI and production distro policy verification remain open);
 - [x] admin CLI `frdpctl` builds and installs under `WITH_FRDPD`;
 - [x] admin CLI `frdpctl status` / `list-sessions` / `kill-session` operations over `frdp-sesmand` session IPC, with local CTest smoke coverage for request/response behavior;
-- [x] admin CLI `frdpctl reload` session IPC operation, with local request/response CTest coverage;
-- [x] real `frdp-authd --config` startup and `frdp-sesmand --config` reread/apply path behind `frdpctl reload` for PAM service selection;
+- [x] admin CLI `frdpctl reload` session IPC operation, with local request/response CTest coverage including the applied PAM-service success message;
+- [x] real `frdp-authd --config` startup and `frdp-sesmand --config` reread/apply path behind `frdpctl reload` for PAM service selection, with the reload response reporting `pam-service applied: <service>`;
 - [ ] full runtime config reload coverage for listener sockets, TLS material, channel policy, clipboard policy, and helper topology;
 - [x] configuration reference, example, and partial parser integration for implemented daemon fields, including `max_connections` and static/dynamic channel filter policy (`10-configuration-reference.md`, `server/frdp/config/frdpd.toml`);
 - [x] runbooks for AD join, keytab rotation, and troubleshooting (`09-runbooks.md`);
