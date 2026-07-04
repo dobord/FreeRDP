@@ -28,12 +28,13 @@ session_socket = "/run/frdp-sesmand/sesmand.sock"
 # static_deny = ""
 # dynamic_mode = "blocklist"
 # dynamic_deny = ""
-# Dynamic channel lists are preparatory until dynamic-channel open enforcement is implemented.
+# Dynamic channel lists feed the DVC authorization callback, but remain preparatory
+# while drdynvc and useful dynamic handlers stay disabled.
 # Use allowlist mode to permit only exact channel names:
 # static_mode = "allowlist"
 # static_allow = "cliprdr,rdpsnd"
 # Allowing a name only permits negotiation; clipboard/audio handlers are not implemented yet.
-# drdynvc remains guard-denied until dynamic-channel open enforcement is implemented.
+# drdynvc remains guard-denied until transport and useful handlers are enabled.
 
 # [clipboard]
 # Clipboard defaults to disabled. Text mode requires an explicit direction and
