@@ -91,7 +91,8 @@ foreach(line
         "SystemCallArchitectures=native"
         "LockPersonality=true"
         "UMask=0077"
-        "LimitNOFILE=1024")
+        "LimitNOFILE=1024"
+        "TasksMax=4096")
   require_unit_line(frdp-sesmand.service "${line}")
 endforeach()
 

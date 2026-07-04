@@ -138,7 +138,9 @@ to `/run/frdp-authd` and `/run/frdp-auth-token`.
 logind, user session startup, and runtime-directory responsibilities:
 `PrivateTmp=true`, `ProtectSystem=full`, kernel/log/realtime/personality
 restrictions, `SystemCallArchitectures=native`, and explicit write access only
-to `/run/frdp-sesmand` plus `/run/frdp-auth-token`.
+to `/run/frdp-sesmand` plus `/run/frdp-auth-token`. It also sets
+`TasksMax=4096` as a coarse process-count guard while per-session cgroup
+ownership and CPU/memory quota enforcement remain open.
 
 ## Package signing and reproducible builds
 

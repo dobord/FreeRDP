@@ -159,7 +159,9 @@ access to `/run/frdp-authd` and `/run/frdp-auth-token`.
 For `sesmand`, restrictions intentionally account for PAM, logind, user session startup, cgroups, and runtime
 directories. The shipped unit keeps `PrivateTmp=true`, `ProtectSystem=full`, kernel/log/realtime/personality
 restrictions, `SystemCallArchitectures=native`, and explicit write access only to `/run/frdp-sesmand` plus
-`/run/frdp-auth-token`.
+`/run/frdp-auth-token`. It also sets `TasksMax=4096` as a baseline process-count guard for the session
+manager and its launched desktop agent process groups; this is not a substitute for the remaining
+logind/cgroup ownership and CPU/memory quota work.
 
 SELinux and AppArmor draft profiles install as inactive examples under `/usr/share/frdpd/security`. They are
 not loaded automatically and must be reviewed, adapted, and validated for the target distribution before use.

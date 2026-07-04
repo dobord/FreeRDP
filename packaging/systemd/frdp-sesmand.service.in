@@ -21,6 +21,7 @@ SystemCallArchitectures=native
 LockPersonality=true
 UMask=0077
 LimitNOFILE=1024
+TasksMax=4096
 TimeoutStopSec=30s
 
 [Install]
