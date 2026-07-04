@@ -211,6 +211,10 @@ expect_rejected("alice@")
 expect_rejected("alice@example.com@EXAMPLE.COM")
 expect_rejected("alice smith@EXAMPLE.COM")
 expect_rejected("alice:admin@EXAMPLE.COM")
+expect_rejected("-alice@EXAMPLE.COM")
+expect_rejected(".alice@EXAMPLE.COM")
+expect_rejected("alice@-BADREALM")
+expect_rejected("alice@.BADREALM")
 expect_rejected("alice@BAD REALM")
 
 execute_process(

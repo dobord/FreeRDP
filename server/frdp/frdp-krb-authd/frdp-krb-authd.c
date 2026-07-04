@@ -114,6 +114,10 @@ static int normalize_user_principal(const char *principal, char *user, size_t us
     if (memchr(principal, '/', user_len) || memchr(principal, '\\', user_len) ||
         memchr(principal, ':', user_len))
         return -1;
+    if (!isalnum((unsigned char)principal[0]) && (principal[0] != '_'))
+        return -1;
+    if (!isalnum((unsigned char)realm[0]) && (realm[0] != '_'))
+        return -1;
 
     for (size_t x = 0; x < user_len; x++)
     {
