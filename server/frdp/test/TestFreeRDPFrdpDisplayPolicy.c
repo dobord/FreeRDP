@@ -133,6 +133,19 @@ static int write_pid_file(const char *path, long pid)
     return close(fd);
 }
 
+static int write_text_file(const char *path, const char *text)
+{
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+
+    if (fd < 0)
+        return -1;
+    if (dprintf(fd, "%s", text) < 0) {
+        close(fd);
+        return -1;
+    }
+    return close(fd);
+}
+
 static int test_reconcile_removes_stale_reservation(void)
 {
     char dir[128] = { 0 };
@@ -172,6 +185,33 @@ cleanup:
     if (child > 0)
         waitpid(child, &status, 0);
     frdp_sesmand_display_reservation_release(&fd, path);
+    if (path[0] != '\0')
+        unlink(path);
+    if (dir[0] != '\0')
+        rmdir(dir);
+    return rc;
+}
+
+static int test_reconcile_keeps_malformed_reservation(void)
+{
+    char dir[128] = { 0 };
+    char path[128] = { 0 };
+    int rc = -1;
+
+    if (make_test_dir(dir, sizeof(dir)) != 0)
+        return -1;
+    if (frdp_sesmand_display_reservation_path(path, sizeof(path), dir,
+                                              FRDP_SESMAND_DISPLAY_MIN) != 0)
+        goto cleanup;
+    if (write_text_file(path, "not-a-pid\n") != 0)
+        goto cleanup;
+    if (frdp_sesmand_display_reservation_reconcile_stale(dir, FRDP_SESMAND_DISPLAY_MIN) != -1)
+        goto cleanup;
+    if (access(path, F_OK) != 0)
+        goto cleanup;
+    rc = 0;
+
+cleanup:
     if (path[0] != '\0')
         unlink(path);
     if (dir[0] != '\0')
@@ -225,6 +265,10 @@ int TestFreeRDPFrdpDisplayPolicy(int argc, char *argv[])
     }
     if (test_reconcile_removes_stale_reservation() != 0) {
         fprintf(stderr, "display reservation stale reconciliation failed\n");
+        return -1;
+    }
+    if (test_reconcile_keeps_malformed_reservation() != 0) {
+        fprintf(stderr, "display reservation malformed reconciliation failed\n");
         return -1;
     }
     if (test_reconcile_keeps_live_reservation() != 0) {
