@@ -26,6 +26,13 @@ function(expect_contains haystack needle label)
   endif()
 endfunction()
 
+function(expect_not_contains haystack needle label)
+  string(FIND "${haystack}" "${needle}" found)
+  if(NOT found EQUAL -1)
+    message(FATAL_ERROR "${label} unexpectedly contains '${needle}':\n${haystack}")
+  endif()
+endfunction()
+
 file(WRITE "${fake_frdpctl}" [==[#!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ $# -ne 3 || $1 != status || $2 != --socket ]]; then
@@ -35,6 +42,9 @@ fi
 case "${FRDP_FAKE_MODE:-ok}" in
 	ok)
 		printf 'Status: running\nActive sessions: 7\n'
+		;;
+	missing-count)
+		printf 'Status: running\n'
 		;;
 	error)
 		printf 'cannot reach socket %s\n' "$3" >&2
@@ -95,6 +105,33 @@ foreach(expected
 endforeach()
 expect_contains("${metrics}" "# Last frdpctl scrape error: cannot reach socket /tmp/frdp-error"
                 "failed scrape metrics")
+
+set(malformed_socket "/tmp/frdp-malformed")
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env "PATH=${fake_bin_dir}:$ENV{PATH}" FRDP_FAKE_MODE=missing-count
+          "${BASH_EXECUTABLE}" "${FRDP_MONITORING_SCRIPT}" --socket "${malformed_socket}"
+          --output "${output_file}" --max-connections 10
+  RESULT_VARIABLE result
+  OUTPUT_VARIABLE stdout
+  ERROR_VARIABLE stderr)
+
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "monitoring malformed scrape case failed: ${stderr}\n${stdout}")
+endif()
+
+file(READ "${output_file}" metrics)
+foreach(expected
+        "frdp_sesmand_reachable{socket=\"/tmp/frdp-malformed\"} 1"
+        "frdp_exporter_scrape_success{socket=\"/tmp/frdp-malformed\"} 0"
+        "frdp_sessions_active{socket=\"/tmp/frdp-malformed\"} 0"
+        "frdp_sessions_max{socket=\"/tmp/frdp-malformed\"} 10"
+        "frdp_exporter_last_error{socket=\"/tmp/frdp-malformed\"} 1")
+  expect_contains("${metrics}" "${expected}" "malformed scrape metrics")
+endforeach()
+expect_contains("${metrics}" "# Last frdpctl scrape error: missing active session count"
+                "malformed scrape metrics")
+expect_not_contains("${metrics}" "frdp_sessions_utilization_ratio{socket=\"/tmp/frdp-malformed\"}"
+                    "malformed scrape metrics")
 
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env "PATH=${fake_bin_dir}:$ENV{PATH}"
