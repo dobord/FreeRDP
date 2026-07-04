@@ -302,7 +302,8 @@ BOOL credssp_auth_setup_client(rdpCredsspAuth* auth, const char* target_service,
 
 	if (identity)
 	{
-		credssp_auth_setup_auth_data(auth, identity, &winprAuthData);
+		if (!credssp_auth_setup_auth_data(auth, identity, &winprAuthData))
+			return FALSE;
 
 		if (pkinit)
 		{
@@ -348,9 +349,10 @@ BOOL credssp_auth_setup_server(rdpCredsspAuth* auth)
 	WINPR_ASSERT(auth->state == AUTH_STATE_INITIAL);
 
 	if (auth->ntlmSettings.samFile || auth->ntlmSettings.hashCallback ||
-	    auth->kerberosSettings.keytab)
+	    auth->kerberosSettings.keytab || auth->package_list)
 	{
-		credssp_auth_setup_auth_data(auth, &auth->identity, &winprAuthData);
+		if (!credssp_auth_setup_auth_data(auth, &auth->identity, &winprAuthData))
+			return FALSE;
 		pAuthData = &winprAuthData;
 	}
 
