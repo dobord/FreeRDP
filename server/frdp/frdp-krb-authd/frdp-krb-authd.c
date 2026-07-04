@@ -18,6 +18,7 @@ extern void crypto_base64_decode(const char *enc_data, size_t length, unsigned c
                                  size_t *res_length);
 
 #define FRDP_KRB_DEFAULT_KEYTAB "/etc/frdpd/frdpd.keytab"
+#define FRDP_KRB_ACCEPTOR_NAME_ENV "FRDP_KRB_ACCEPTOR_NAME"
 
 static void display_status(const char *msg, OM_uint32 code, int type)
 {
@@ -200,6 +201,97 @@ static int run_keytab_env_test(void)
     return 0;
 }
 
+static const char *select_acceptor_name(void)
+{
+    const char *name = getenv(FRDP_KRB_ACCEPTOR_NAME_ENV);
+
+    return (name && (name[0] != '\0')) ? name : NULL;
+}
+
+static int import_acceptor_name(const char *name, gss_name_t *acceptor_name)
+{
+    OM_uint32 maj_stat = 0;
+    OM_uint32 min_stat = 0;
+    char name_copy[256] = { 0 };
+    gss_buffer_desc name_buf = GSS_C_EMPTY_BUFFER;
+    size_t name_len = 0;
+
+    if (!name || (name[0] == '\0') || !acceptor_name)
+        return -1;
+
+    *acceptor_name = GSS_C_NO_NAME;
+    name_len = strlen(name);
+    if (name_len >= sizeof(name_copy))
+        return -1;
+    memcpy(name_copy, name, name_len);
+    name_copy[name_len] = '\0';
+    name_buf.value = name_copy;
+    name_buf.length = name_len;
+
+    maj_stat = gss_import_name(&min_stat, &name_buf, GSS_C_NT_HOSTBASED_SERVICE, acceptor_name);
+    if (maj_stat != GSS_S_COMPLETE)
+    {
+        display_status("gss_import_name", maj_stat, GSS_C_GSS_CODE);
+        display_status("gss_import_name", min_stat, GSS_C_MECH_CODE);
+        return -1;
+    }
+    return 0;
+}
+
+static int acquire_acceptor_cred(gss_cred_id_t *acceptor_cred)
+{
+    OM_uint32 maj_stat = 0;
+    OM_uint32 min_stat = 0;
+    gss_name_t acceptor_name = GSS_C_NO_NAME;
+    const char *name = NULL;
+
+    if (!acceptor_cred)
+        return -1;
+
+    *acceptor_cred = GSS_C_NO_CREDENTIAL;
+    name = select_acceptor_name();
+    if (!name)
+        return 0;
+
+    if (import_acceptor_name(name, &acceptor_name) != 0)
+        return -1;
+
+    maj_stat = gss_acquire_cred(&min_stat, acceptor_name, GSS_C_INDEFINITE, GSS_C_NO_OID_SET,
+                                GSS_C_ACCEPT, acceptor_cred, NULL, NULL);
+    gss_release_name(&min_stat, &acceptor_name);
+    if (maj_stat != GSS_S_COMPLETE)
+    {
+        display_status("gss_acquire_cred", maj_stat, GSS_C_GSS_CODE);
+        display_status("gss_acquire_cred", min_stat, GSS_C_MECH_CODE);
+        return -1;
+    }
+    return 0;
+}
+
+static int run_acceptor_env_test(void)
+{
+    const char *name = select_acceptor_name();
+
+    printf("%s\n", name ? name : "(default)");
+    return 0;
+}
+
+static int run_import_acceptor_name_test(const char *name)
+{
+    OM_uint32 min_stat = 0;
+    gss_name_t acceptor_name = GSS_C_NO_NAME;
+
+    if (import_acceptor_name(name, &acceptor_name) != 0)
+    {
+        fprintf(stderr, "invalid Kerberos acceptor name\n");
+        return 2;
+    }
+
+    gss_release_name(&min_stat, &acceptor_name);
+    printf("ok\n");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     int rc = 0;
@@ -207,7 +299,8 @@ int main(int argc, char **argv)
 
     if (argc < 2) {
         fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
-                        "--decode-token-test <base64-token> | --keytab-env-test] "
+                        "--decode-token-test <base64-token> | --keytab-env-test | "
+                        "--acceptor-env-test | --import-acceptor-name-test <name>] "
                         "<base64-token>\n",
                 argv[0]);
         return 1;
@@ -217,7 +310,8 @@ int main(int argc, char **argv)
         if (argc != 3)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
-                            "--decode-token-test <base64-token> | --keytab-env-test] "
+                            "--decode-token-test <base64-token> | --keytab-env-test | "
+                            "--acceptor-env-test | --import-acceptor-name-test <name>] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
@@ -229,7 +323,8 @@ int main(int argc, char **argv)
         if (argc != 3)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
-                            "--decode-token-test <base64-token> | --keytab-env-test] "
+                            "--decode-token-test <base64-token> | --keytab-env-test | "
+                            "--acceptor-env-test | --import-acceptor-name-test <name>] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
@@ -241,12 +336,39 @@ int main(int argc, char **argv)
         if (argc != 2)
         {
             fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
-                            "--decode-token-test <base64-token> | --keytab-env-test] "
+                            "--decode-token-test <base64-token> | --keytab-env-test | "
+                            "--acceptor-env-test | --import-acceptor-name-test <name>] "
                             "<base64-token>\n",
                     argv[0]);
             return 1;
         }
         return run_keytab_env_test();
+    }
+    if (strcmp(argv[1], "--acceptor-env-test") == 0)
+    {
+        if (argc != 2)
+        {
+            fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--decode-token-test <base64-token> | --keytab-env-test | "
+                            "--acceptor-env-test | --import-acceptor-name-test <name>] "
+                            "<base64-token>\n",
+                    argv[0]);
+            return 1;
+        }
+        return run_acceptor_env_test();
+    }
+    if (strcmp(argv[1], "--import-acceptor-name-test") == 0)
+    {
+        if (argc != 3)
+        {
+            fprintf(stderr, "Usage: %s [--normalize-principal-test <principal> | "
+                            "--decode-token-test <base64-token> | --keytab-env-test | "
+                            "--acceptor-env-test | --import-acceptor-name-test <name>] "
+                            "<base64-token>\n",
+                    argv[0]);
+            return 1;
+        }
+        return run_import_acceptor_name_test(argv[2]);
     }
     token_b64 = argv[1];
 
@@ -258,6 +380,7 @@ int main(int argc, char **argv)
     gss_buffer_desc output_token = GSS_C_EMPTY_BUFFER;
     gss_name_t client_name = GSS_C_NO_NAME;
     gss_ctx_id_t context = GSS_C_NO_CONTEXT;
+    gss_cred_id_t acceptor_cred = GSS_C_NO_CREDENTIAL;
     OM_uint32 maj_stat = 0, min_stat = 0;
 
     if (decode_input_token(token_b64, &input_token) != 0)
@@ -266,10 +389,16 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    if (acquire_acceptor_cred(&acceptor_cred) != 0)
+    {
+        rc = 1;
+        goto cleanup;
+    }
+
     fprintf(stderr, "frdp-krb-authd: skeleton - accepting decoded SPNEGO token.\n");
 
     /* Accept the security context. On success, client_name will hold the principal. */
-    maj_stat = gss_accept_sec_context(&min_stat, &context, GSS_C_NO_CREDENTIAL,
+    maj_stat = gss_accept_sec_context(&min_stat, &context, acceptor_cred,
                                       &input_token, GSS_C_NO_CHANNEL_BINDINGS,
                                       &client_name, NULL, &output_token,
                                       NULL, NULL, NULL);
@@ -316,6 +445,8 @@ cleanup:
         gss_release_name(&min_stat, &client_name);
     if (context != GSS_C_NO_CONTEXT)
         gss_delete_sec_context(&min_stat, &context, GSS_C_NO_BUFFER);
+    if (acceptor_cred != GSS_C_NO_CREDENTIAL)
+        gss_release_cred(&min_stat, &acceptor_cred);
     if (output_token.length > 0)
         gss_release_buffer(&min_stat, &output_token);
     free(input_token.value);

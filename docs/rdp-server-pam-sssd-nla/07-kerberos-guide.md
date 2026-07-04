@@ -20,6 +20,9 @@ The `frdp-krb-authd` component (see `server/frdp/frdp-krb-authd/frdp-krb-authd.c
 
 - Sets the keytab through `KRB5_KTNAME`, preserving an existing non-empty value,
   otherwise using `FRDP_KRB_KEYTAB` or `/etc/frdpd/frdpd.keytab`.
+- Optionally imports `FRDP_KRB_ACCEPTOR_NAME` as a GSS host-based service name
+  such as `TERMSRV@host.example.com` and acquires acceptor credentials for that
+  name before accepting a context.
 - Base64-decodes the standalone token argument and calls `gss_accept_sec_context()`
   on the resulting token bytes. Production `frdpd` still needs to extract the
   SPNEGO token from the RDP CredSSP handshake and pass it to the acceptor path.
