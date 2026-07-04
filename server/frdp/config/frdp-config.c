@@ -622,6 +622,10 @@ int frdp_config_load(const char *path, frdpConfig *config)
                     return -1;
                 }
                 seen_auth_mode = 1;
+                if (strcmp(val, "pam-sssd") != 0) {
+                    fclose(f);
+                    return -1;
+                }
                 if (copy_string(config->auth_mode, sizeof(config->auth_mode), val) != 0) {
                     fclose(f);
                     return -1;

@@ -557,6 +557,9 @@ static int test_invalid_channel_config(void)
 	if (expect_load_failure("frdp-unsupported-security.toml",
 	                        "[server]\nsecurity = \"tls\"\n") != 0)
 		return -1;
+	if (expect_load_failure("frdp-unsupported-auth-mode.toml",
+	                        "[auth]\nmode = \"local\"\n") != 0)
+		return -1;
 	if (expect_load_failure("frdp-duplicate-auth-socket.toml",
 	                        "[auth]\nauth_socket = \"/tmp/a\"\nauth_socket = \"/tmp/b\"\n") !=
 	    0)
