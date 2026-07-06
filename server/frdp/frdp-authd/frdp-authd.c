@@ -81,7 +81,9 @@ static void clear_pam_responses(struct pam_response *responses, int count)
 
     for (int x = 0; x < count; x++) {
         if (responses[x].resp) {
-            clear_secret(responses[x].resp, strlen(responses[x].resp));
+            const size_t length = strlen(responses[x].resp) + 1U;
+
+            clear_secret(responses[x].resp, length);
             free(responses[x].resp);
             responses[x].resp = NULL;
         }

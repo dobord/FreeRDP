@@ -130,7 +130,7 @@ Deliverables:
 - [x] audit events with correlation id integrated with the authenticated auth/session/agent path (channels and structured audit config are tracked separately);
 - [x] `frdpd` peer/channel/session logs escape client-supplied hostnames, authenticated usernames, static channel names, and IPC-supplied session ids, display names, agent socket paths, and session-manager error strings;
 - [x] fail-closed core dump/non-dumpable hardening in `server/frdp/frdpd`, `server/frdp/frdp-authd`, and `server/frdp/frdp-sesmand`;
-- [ ] locked secret buffers and brokerized credential handling across the integrated auth/session path (normal startup now uses the auth broker, temporary password copies are locked/wiped, the peer-owned FreeRDP auth identity is cleared after authentication, Remote Credential Guard ticket-logon buffers are wiped before release, and the old direct PAM fallback has been removed; remaining CredSSP internals remain tracked).
+- [ ] locked secret buffers and brokerized credential handling across the integrated auth/session path (normal startup now uses the auth broker, temporary password copies are locked/wiped, PAM conversation response failure-cleanup is wiped, the peer-owned FreeRDP auth identity is cleared after authentication, Remote Credential Guard ticket-logon buffers are wiped before release, and the old direct PAM fallback has been removed; remaining CredSSP/PAM internals remain tracked).
 
 Exit criteria: a domain user can authenticate through NLA/PAM; a denied user receives a clean failure; no desktop resources are allocated before authentication succeeds.
 
