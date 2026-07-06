@@ -799,6 +799,31 @@ cleanup:
 	return rc;
 }
 
+static int test_sesmand_rejects_explicit_reconnect_request(const char* socket_path)
+{
+	frdpSessionRequestV3 request = { 0 };
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	snprintf(request.correlation_id, sizeof(request.correlation_id),
+	         "77777777-7777-4777-8777-777777777777");
+	snprintf(request.session_id, sizeof(request.session_id),
+	         "aaaaaaaa-7777-4777-8777-aaaaaaaaaaaa");
+	snprintf(request.user, sizeof(request.user), "nobody");
+	request.has_posix_account = 1;
+	request.uid = 0;
+	request.gid = 0;
+	if (frdp_ipc_send_session_request_v3(fd, &request) != 0)
+		goto cleanup;
+	rc = receive_session_response(fd, 0, "reconnect not implemented");
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
 static int test_sesmand_rejects_invalid_authorization(const char* socket_path)
 {
 	frdpSessionRequestV3 request = { 0 };
@@ -1121,6 +1146,8 @@ static int test_sesmand_component(void)
 	if (test_sesmand_rejects_legacy_v2_posix_account_mismatch(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_missing_authorization(helper.socket_path) != 0)
+		goto cleanup;
+	if (test_sesmand_rejects_explicit_reconnect_request(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_invalid_authorization(helper.socket_path) != 0)
 		goto cleanup;

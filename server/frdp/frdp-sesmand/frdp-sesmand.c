@@ -1184,6 +1184,8 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
 
         if (user[0] == '\0')
             return send_session_response(fd, 0, NULL, NULL, NULL, "missing user");
+        if (session_id[0] != '\0')
+            return send_session_response(fd, 0, NULL, NULL, NULL, "reconnect not implemented");
         if (authorization_id[0] == '\0')
             return send_session_response(fd, 0, NULL, NULL, NULL, "missing authorization");
         if (req_v3.group_count > FRDP_IPC_MAX_AUTH_GROUPS)
