@@ -32,6 +32,7 @@
 #include <grp.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <poll.h>
 
 #include <winpr/platform.h>
@@ -1416,7 +1417,10 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                 char message[sizeof(((frdpControlResponse *)0)->message)] = {0};
 
                 if (reload_configured_sesmand_policy(error, sizeof(error)) == 0) {
-                    snprintf(message, sizeof(message), "pam-service applied: %s", g_pam_service);
+                    snprintf(message, sizeof(message),
+                             "pam_service=%s;max_processes=%" PRIu32 ";memory_max_mb=%" PRIu32,
+                             g_pam_service, g_session_resource_policy.max_processes,
+                             g_session_resource_policy.memory_max_mb);
                     (void)send_reload_response(cfd, 1, message, NULL);
                 } else
                     (void)send_reload_response(cfd, 0, NULL, error);

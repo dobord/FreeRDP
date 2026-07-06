@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <inttypes.h>
 #include <pwd.h>
 #include <signal.h>
 #include <stdint.h>
@@ -1032,7 +1033,8 @@ cleanup:
 	return test_sesmand_list_empty(socket_path);
 }
 
-static int write_sesmand_config(const char* path, const char* pam_service)
+static int write_sesmand_config(const char* path, const char* pam_service, uint32_t max_processes,
+                                uint32_t memory_max_mb)
 {
 	FILE* fp = NULL;
 
@@ -1041,7 +1043,9 @@ static int write_sesmand_config(const char* path, const char* pam_service)
 	fp = fopen(path, "wb");
 	if (!fp)
 		return -1;
-	if (fprintf(fp, "[auth]\npam_service = \"%s\"\n", pam_service) < 0)
+	if (fprintf(fp, "[auth]\npam_service = \"%s\"\n"
+	                "[session]\nmax_processes = %" PRIu32 "\nmemory_max_mb = %" PRIu32 "\n",
+	            pam_service, max_processes, memory_max_mb) < 0)
 	{
 		fclose(fp);
 		return -1;
@@ -1063,18 +1067,24 @@ static int test_sesmand_reload_config(void)
 	if (snprintf(config_path, sizeof(config_path), "%s/frdpd.toml", config_dir) >=
 	    (int)sizeof(config_path))
 		goto cleanup_dir;
-	if (write_sesmand_config(config_path, "frdpd") != 0)
+	if (write_sesmand_config(config_path, "frdpd", 0, 0) != 0)
 		goto cleanup_dir;
 	if (start_helper_with_config(FRDP_SESMAND_BINARY, "frdp-sesmand-reload", config_path,
 	                             &helper) != 0)
 		goto cleanup_dir;
-	if (test_sesmand_reload(helper.socket_path, 1, "pam-service applied: frdpd", NULL) != 0)
+	if (test_sesmand_reload(helper.socket_path, 1,
+	                        "pam_service=frdpd;max_processes=0;memory_max_mb=0", NULL) != 0)
 		goto cleanup;
-	if (write_sesmand_config(config_path, "frdpd_reload") != 0)
+	if (write_sesmand_config(config_path,
+	                         "frdpd_reload_abcdefghijklmnopqrstuvwxyz_0123456789_ABCDEFGHIJKL",
+	                         77, 1536) != 0)
 		goto cleanup;
-	if (test_sesmand_reload(helper.socket_path, 1, "pam-service applied: frdpd_reload", NULL) != 0)
+	if (test_sesmand_reload(helper.socket_path, 1,
+	                        "pam_service=frdpd_reload_abcdefghijklmnopqrstuvwxyz_"
+	                        "0123456789_ABCDEFGHIJKL;max_processes=77;memory_max_mb=1536",
+	                        NULL) != 0)
 		goto cleanup;
-	if (write_sesmand_config(config_path, "bad/service") != 0)
+	if (write_sesmand_config(config_path, "bad/service", 1, 1) != 0)
 		goto cleanup;
 	if (test_sesmand_reload(helper.socket_path, 0, NULL, "config reload failed") != 0)
 		goto cleanup;

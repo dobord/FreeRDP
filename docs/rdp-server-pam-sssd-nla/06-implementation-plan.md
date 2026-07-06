@@ -213,7 +213,7 @@ Deliverables:
 - [x] admin CLI `frdpctl` builds and installs under `WITH_FRDPD`;
 - [x] admin CLI `frdpctl status` / `list-sessions` / `kill-session` operations over `frdp-sesmand` session IPC, including per-session lifecycle state in `list-sessions` and grouped state counts in `status`, with local CTest smoke coverage for request/response behavior;
 - [x] admin CLI `frdpctl reload` session IPC operation, with local request/response CTest coverage including the applied PAM-service success message;
-- [x] real `frdp-authd --config` startup and `frdp-sesmand --config` startup/reread/apply path behind installed helper units and `frdpctl reload` for PAM service and session resource guard selection, with the reload response reporting `pam-service applied: <service>`;
+- [x] real `frdp-authd --config` startup and `frdp-sesmand --config` startup/reread/apply path behind installed helper units and `frdpctl reload` for PAM service and session resource guard selection, with the reload response reporting the applied PAM service plus session resource guard values;
 - [ ] full runtime config reload coverage for listener sockets, TLS material, channel policy, clipboard policy, and helper topology;
 - [x] configuration reference, example, and partial parser integration for implemented daemon fields, including `max_connections` and static/dynamic channel filter policy (`10-configuration-reference.md`, `server/frdp/config/frdpd.toml`);
 - [x] runbooks for AD join, keytab rotation, and troubleshooting (`09-runbooks.md`);

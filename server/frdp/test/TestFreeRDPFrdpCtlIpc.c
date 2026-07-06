@@ -243,7 +243,8 @@ static int handle_reload_pam_service_request(int fd)
 		return -1;
 
 	response.success = 1;
-	snprintf(response.message, sizeof(response.message), "pam-service applied: frdpd_reload");
+	snprintf(response.message, sizeof(response.message),
+	         "pam_service=frdpd_reload;max_processes=77;memory_max_mb=1536");
 	return frdp_ipc_send_session_reload_response(fd, &response);
 }
 
@@ -700,7 +701,8 @@ static int test_reload_pam_service_message(void)
 		return -1;
 	if (result.status != 0)
 		return -1;
-	if (strcmp(result.stdout_data, "Reload pam-service applied: frdpd_reload\n") != 0)
+	if (strcmp(result.stdout_data,
+	           "Reload pam_service=frdpd_reload;max_processes=77;memory_max_mb=1536\n") != 0)
 		return -1;
 	if (strcmp(result.stderr_data, "") != 0)
 		return -1;
