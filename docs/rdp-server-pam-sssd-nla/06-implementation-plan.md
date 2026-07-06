@@ -211,7 +211,7 @@ Deliverables:
 - [x] CMake install rules for FRDP runtime helper binaries, `frdpd.toml`, PAM service, systemd unit examples, and inactive MAC policy examples verified with the `server` component in an isolated build;
 - [x] package previews (root `debian/` metadata supports a verified server-only binary package smoke build with `dpkg-buildpackage`; `packaging/rpm/frdpd.spec` supports a verified server-only `rpmbuild -bb --nodeps` smoke build with local macros, while distro RPM CI and production distro policy verification remain open);
 - [x] admin CLI `frdpctl` builds and installs under `WITH_FRDPD`;
-- [x] admin CLI `frdpctl status` / `list-sessions` / `kill-session` operations over `frdp-sesmand` session IPC, including per-session lifecycle state in `list-sessions`, with local CTest smoke coverage for request/response behavior;
+- [x] admin CLI `frdpctl status` / `list-sessions` / `kill-session` operations over `frdp-sesmand` session IPC, including per-session lifecycle state in `list-sessions` and grouped state counts in `status`, with local CTest smoke coverage for request/response behavior;
 - [x] admin CLI `frdpctl reload` session IPC operation, with local request/response CTest coverage including the applied PAM-service success message;
 - [x] real `frdp-authd --config` startup and `frdp-sesmand --config` reread/apply path behind `frdpctl reload` for PAM service selection, with the reload response reporting `pam-service applied: <service>`;
 - [ ] full runtime config reload coverage for listener sockets, TLS material, channel policy, clipboard policy, and helper topology;

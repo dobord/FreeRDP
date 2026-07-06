@@ -140,6 +140,42 @@ static void terminate_session_list_response_strings(frdpSessionListResponse *res
     }
 }
 
+static const char *session_entry_state_or_unknown(const frdpSessionListEntry *entry)
+{
+    return (entry && entry->state[0]) ? entry->state : "unknown";
+}
+
+static void print_session_state_summary(const frdpSessionListResponse *response)
+{
+    if (!response || (response->count == 0))
+        return;
+
+    printf("Session states:\n");
+    for (uint32_t i = 0; i < response->count; i++) {
+        const char *state = session_entry_state_or_unknown(&response->entries[i]);
+        uint32_t count = 0;
+        char escaped_state[sizeof(response->entries[i].state) * 4] = { 0 };
+        int seen = 0;
+
+        for (uint32_t j = 0; j < i; j++) {
+            if (strcmp(session_entry_state_or_unknown(&response->entries[j]), state) == 0) {
+                seen = 1;
+                break;
+            }
+        }
+        if (seen)
+            continue;
+
+        for (uint32_t j = i; j < response->count; j++) {
+            if (strcmp(session_entry_state_or_unknown(&response->entries[j]), state) == 0)
+                count++;
+        }
+
+        escape_text(state, escaped_state, sizeof(escaped_state));
+        printf("  %s: %" PRIu32 "\n", escaped_state, count);
+    }
+}
+
 static int send_session_list_request(const char *socket_path, int status_only)
 {
     int fd = -1;
@@ -181,6 +217,7 @@ static int send_session_list_request(const char *socket_path, int status_only)
     if (status_only) {
         printf("Session manager: reachable\n");
         printf("Active sessions: %" PRIu32 "\n", response.count);
+        print_session_state_summary(&response);
         return 0;
     }
 
@@ -199,8 +236,8 @@ static int send_session_list_request(const char *socket_path, int status_only)
         escape_text(response.entries[i].session_id, escaped_session_id, sizeof(escaped_session_id));
         escape_text(response.entries[i].user, escaped_user, sizeof(escaped_user));
         escape_text(response.entries[i].display, escaped_display, sizeof(escaped_display));
-        escape_text(response.entries[i].state[0] ? response.entries[i].state : "unknown",
-                    escaped_state, sizeof(escaped_state));
+        escape_text(session_entry_state_or_unknown(&response.entries[i]), escaped_state,
+                    sizeof(escaped_state));
         printf("%-36s  %-20s  %-8s  %-13s  %-8d\n", escaped_session_id, escaped_user,
                escaped_display, escaped_state, (int)response.entries[i].agent_pid);
     }

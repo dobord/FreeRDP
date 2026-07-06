@@ -568,7 +568,12 @@ static int test_status(void)
 		return -1;
 	if (result.status != 0)
 		return -1;
-	if (strcmp(result.stdout_data, "Session manager: reachable\nActive sessions: 2\n") != 0)
+	if (strcmp(result.stdout_data,
+	           "Session manager: reachable\n"
+	           "Active sessions: 2\n"
+	           "Session states:\n"
+	           "  active: 1\n"
+	           "  disconnected: 1\n") != 0)
 		return -1;
 	if (strcmp(result.stderr_data, "") != 0)
 		return -1;
