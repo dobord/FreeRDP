@@ -36,11 +36,17 @@ cmake -S . -B /tmp/opencode/freerdp-frdp-strict-warnings -GNinja -DCMAKE_BUILD_T
 cmake --build /tmp/opencode/freerdp-frdp-strict-warnings --target TestFreeRDPFrdp
 ctest --test-dir /tmp/opencode/freerdp-frdp-strict-warnings -R '^TestFreeRDPFrdp' --output-on-failure
 cmake -S . -B /tmp/opencode/freerdp-frdp-fuzz -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DBUILD_FUZZERS=ON -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SHADOW=OFF -DWITH_PROXY=OFF -DWITH_SAMPLE=OFF -DWITH_MANPAGES=OFF -DWITH_WAYLAND=OFF -DWITH_SDL=OFF -DWITH_PULSE=OFF -DWITH_ALSA=OFF -DWITH_CUPS=OFF -DWITH_PCSC=OFF -DWITH_FFMPEG=OFF -DWITH_SWSCALE=OFF -DWITH_FUSE=OFF -DWITH_OPENCL=OFF -DCHANNEL_URBDRC=OFF
-cmake --build /tmp/opencode/freerdp-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig TestFuzzFreeRDPFrdpAuthToken TestFuzzFreeRDPFrdpIpcCodec TestFuzzFreeRDPFrdpFramePolicy TestFuzzFreeRDPFrdpInputPolicy TestFuzzFreeRDPFrdpDisplayPolicy TestFuzzFreeRDPFrdpSessionLifecycle
+cmake --build /tmp/opencode/freerdp-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig TestFuzzFreeRDPFrdpAuthToken TestFuzzFreeRDPFrdpAuthdPam TestFuzzFreeRDPFrdpPam TestFuzzFreeRDPFrdpIpcCodec TestFuzzFreeRDPFrdpFramePolicy TestFuzzFreeRDPFrdpInputPolicy TestFuzzFreeRDPFrdpDisplayPolicy TestFuzzFreeRDPFrdpSessionLifecycle
 /tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpConfig -runs=128 -max_len=1024
 printf 'FRDPalice' > /tmp/opencode/frdp-auth-token-fuzz-seed.bin
 /tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpAuthToken /tmp/opencode/frdp-auth-token-fuzz-seed.bin -runs=1
 /tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpAuthToken -runs=32 -max_len=512
+printf 'FRDPauthd-pam' > /tmp/opencode/frdp-authd-pam-fuzz-seed.bin
+/tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpAuthdPam /tmp/opencode/frdp-authd-pam-fuzz-seed.bin -runs=1
+/tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpAuthdPam -runs=32 -max_len=512
+printf 'FRDPfrdpd-pam' > /tmp/opencode/frdpd-pam-fuzz-seed.bin
+/tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpPam /tmp/opencode/frdpd-pam-fuzz-seed.bin -runs=1
+/tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpPam -runs=32 -max_len=512
 printf 'FRDPipc-codec' > /tmp/opencode/frdp-ipc-codec-fuzz-seed.bin
 /tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpIpcCodec /tmp/opencode/frdp-ipc-codec-fuzz-seed.bin -runs=1
 /tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpIpcCodec -runs=32 -max_len=512
