@@ -95,6 +95,8 @@ foreach(expected
         "command -v timeout"
         "command -v xvfb-run"
         "command -v Xvfb"
+        "command -v nc"
+        "command -v frdpctl"
         "timeout \"\${FRDP_AUTH_TIMEOUT}s\""
         "frdpctl list-sessions --socket")
   expect_contains("${rdp_probe}" "${expected}" "E2E RDP probe script")
@@ -107,6 +109,7 @@ foreach(expected
         "FRDP_LOAD_TIMEOUT"
         "command -v timeout"
         "command -v xvfb-run"
+        "command -v nc"
         "timeout \"\${FRDP_LOAD_TIMEOUT}s\"")
   expect_contains("${load_probe}" "${expected}" "E2E load probe script")
 endforeach()
@@ -116,6 +119,7 @@ foreach(expected
         "FRDP_PROTOCOL_TIMEOUT"
         "command -v timeout"
         "command -v xvfb-run"
+        "command -v nc"
         "timeout \"\${FRDP_PROTOCOL_TIMEOUT}s\"")
   expect_contains("${protocol_probe}" "${expected}" "E2E protocol regression script")
 endforeach()
@@ -126,6 +130,8 @@ foreach(expected
         "FRDP_SESSION_HOLD_SECONDS"
         "command -v Xvfb"
         "command -v xdpyinfo"
+        "command -v nc"
+        "command -v frdpctl"
         "allocate_display"
         "xdpyinfo -display \"$display_name\""
         "frdpctl status --socket"

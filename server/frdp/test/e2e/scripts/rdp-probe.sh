@@ -123,6 +123,8 @@ positive_integer "$FRDP_AUTH_TIMEOUT" || fail "FRDP_AUTH_TIMEOUT must be positiv
 command -v timeout >/dev/null 2>&1 || fail "timeout executable was not found"
 command -v xvfb-run >/dev/null 2>&1 || fail "xvfb-run executable was not found"
 command -v Xvfb >/dev/null 2>&1 || fail "Xvfb executable was not found"
+command -v nc >/dev/null 2>&1 || fail "nc executable was not found"
+command -v frdpctl >/dev/null 2>&1 || fail "frdpctl executable was not found"
 
 XFREERDP=$(find_xfreerdp) || fail "xfreerdp executable was not found"
 help_output=$("$XFREERDP" /help 2>&1 || true)
