@@ -19,6 +19,15 @@ groups:
           summary: "FRDP textfile scrape failed"
           description: "The FRDP node_exporter textfile collector could not parse a healthy frdpctl status response for {{ $labels.socket }}."
 
+      - alert: FRDPSessionDetailScrapeFailed
+        expr: frdp_sessions_detail_scrape_success == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FRDP per-session detail scrape failed"
+          description: "The FRDP node_exporter textfile collector could not scrape per-session details for {{ $labels.socket }}."
+
       - alert: FRDPTextfileCollectorStale
         expr: time() - frdp_exporter_last_scrape_timestamp_seconds > 300
         for: 2m

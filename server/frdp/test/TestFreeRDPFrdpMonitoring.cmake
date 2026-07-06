@@ -222,6 +222,8 @@ foreach(expected
         "expr: frdp_sesmand_reachable == 0"
         "alert: FRDPTextfileScrapeFailed"
         "expr: frdp_exporter_scrape_success == 0"
+        "alert: FRDPSessionDetailScrapeFailed"
+        "expr: frdp_sessions_detail_scrape_success == 0"
         "alert: FRDPTextfileCollectorStale"
         "expr: time() - frdp_exporter_last_scrape_timestamp_seconds > 300"
         "alert: FRDPSessionCapacityHigh"
@@ -239,6 +241,9 @@ foreach(expected
         "\"expr\": \"frdp_sessions_active\""
         "\"expr\": \"frdp_sessions_max\""
         "\"expr\": \"frdp_sessions_utilization_ratio\""
+        "\"expr\": \"frdp_sessions_detail_scrape_success\""
+        "\"expr\": \"frdp_sessions_info\""
+        "\"title\": \"Active Session Details\""
         "\"type\": \"prometheus\"")
   expect_contains("${dashboard}" "${expected}" "Grafana dashboard")
 endforeach()
