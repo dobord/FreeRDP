@@ -57,6 +57,7 @@ static void fuzz_policy_helpers(const frdpChannelPolicy* policy, const frdpClipb
 	                                                             sizeof(extracted_name));
 	(void)frdp_channel_policy_static_allowed(policy, "cliprdr");
 	(void)frdp_channel_policy_static_allowed_for_runtime(policy, clipboard, "cliprdr");
+	(void)frdp_channel_policy_static_allowed_for_runtime(policy, clipboard, "rdpsnd");
 	(void)frdp_channel_policy_static_allowed(policy, "drdynvc");
 	(void)frdp_channel_policy_static_allowed_for_runtime(policy, clipboard, "drdynvc");
 	(void)frdp_channel_policy_dynamic_allowed(policy, "rdpgfx");

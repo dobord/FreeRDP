@@ -38,8 +38,9 @@ session_socket = "/run/frdp-sesmand/sesmand.sock"
 # while drdynvc and useful dynamic handlers stay disabled.
 # Use allowlist mode to permit only exact channel names:
 # static_mode = "allowlist"
-# static_allow = "cliprdr,rdpsnd"
-# Allowing a name only permits negotiation; clipboard/audio handlers are not implemented yet.
+# static_allow = "cliprdr"
+# Allowing a name only permits negotiation; runtime gates still deny handlers
+# that are not implemented yet, including rdpsnd audio output.
 
 # [clipboard]
 # mode = "disabled"

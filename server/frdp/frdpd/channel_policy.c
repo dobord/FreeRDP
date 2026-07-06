@@ -79,6 +79,8 @@ int frdp_channel_policy_static_allowed_for_runtime(const frdpChannelPolicy *poli
 		if (clipboard->mode != FRDP_CLIPBOARD_MODE_TEXT)
 			return 0;
 	}
+	if (strcmp(channel, "rdpsnd") == 0)
+		return 0;
 	return frdp_channel_policy_static_allowed(policy, channel);
 }
 
