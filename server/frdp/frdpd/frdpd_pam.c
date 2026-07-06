@@ -13,6 +13,8 @@
 #include <winpr/crt.h>
 #include <winpr/string.h>
 
+#define FRDPD_PAM_MAX_MESSAGES 32
+
 static BOOL frdpd_string_is_empty(const char* value)
 {
 	return !value || (value[0] == '\0');
@@ -64,7 +66,7 @@ int frdpd_pam_answer_conversation(int num_msg, const struct pam_message** msg,
 {
 	if (resp)
 		*resp = NULL;
-	if ((num_msg <= 0) || !msg || !resp)
+	if ((num_msg <= 0) || (num_msg > FRDPD_PAM_MAX_MESSAGES) || !msg || !resp)
 		return PAM_CONV_ERR;
 
 	struct pam_response* reply = calloc((size_t)num_msg, sizeof(struct pam_response));

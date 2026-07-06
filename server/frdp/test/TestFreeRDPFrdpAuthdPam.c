@@ -89,6 +89,10 @@ static int test_authd_pam_conversation_rejects_bad_arguments(void)
 		return -1;
 	if (responses)
 		return -1;
+	if (frdp_authd_pam_conversation(33, &message_ptr, &responses, "secret") != PAM_CONV_ERR)
+		return -1;
+	if (responses)
+		return -1;
 	return 0;
 }
 

@@ -87,6 +87,10 @@ static int test_sesmand_pam_conversation_rejects_bad_arguments(void)
 		return -1;
 	if (responses)
 		return -1;
+	if (frdp_sesmand_pam_conversation(33, &message_ptr, &responses, NULL) != PAM_CONV_ERR)
+		return -1;
+	if (responses)
+		return -1;
 	return 0;
 }
 

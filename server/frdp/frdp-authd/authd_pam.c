@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define FRDP_AUTHD_PAM_MAX_MESSAGES 32
+
 static void clear_secret(char *secret, size_t length)
 {
     volatile unsigned char *p = (volatile unsigned char *)secret;
@@ -35,7 +37,7 @@ int frdp_authd_pam_conversation(int num_msg, const struct pam_message **msg,
 
     if (resp)
         *resp = NULL;
-    if (num_msg <= 0 || !msg || !resp)
+    if (num_msg <= 0 || num_msg > FRDP_AUTHD_PAM_MAX_MESSAGES || !msg || !resp)
         return PAM_CONV_ERR;
 
     responses = calloc((size_t)num_msg, sizeof(struct pam_response));

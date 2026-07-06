@@ -2,6 +2,8 @@
 
 #include <stdlib.h>
 
+#define FRDP_SESMAND_PAM_MAX_MESSAGES 32
+
 void frdp_sesmand_pam_clear_responses(struct pam_response *responses, int count)
 {
     if (!responses || count <= 0)
@@ -22,7 +24,7 @@ int frdp_sesmand_pam_conversation(int num_msg, const struct pam_message **msg,
 
     if (resp)
         *resp = NULL;
-    if (num_msg <= 0 || !msg || !resp)
+    if (num_msg <= 0 || num_msg > FRDP_SESMAND_PAM_MAX_MESSAGES || !msg || !resp)
         return PAM_CONV_ERR;
 
     for (int x = 0; x < num_msg; x++) {

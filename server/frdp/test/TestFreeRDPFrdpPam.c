@@ -279,6 +279,13 @@ static int test_pam_conversation_rejects_bad_arguments(void)
 		free_pam_responses(responses, 1);
 		return -1;
 	}
+	if (frdpd_pam_answer_conversation(33, &message_ptr, &responses, "secret") != PAM_CONV_ERR)
+		return -1;
+	if (responses)
+	{
+		free_pam_responses(responses, 1);
+		return -1;
+	}
 	return 0;
 }
 
