@@ -221,6 +221,45 @@ static void clear_secret(char *secret, size_t length)
         *p++ = 0;
 }
 
+typedef struct
+{
+    char *secret;
+    size_t length;
+    int locked;
+} lockedSecret;
+
+static int lock_secret(char *secret, size_t length, lockedSecret *locked)
+{
+    if (!secret || length == 0 || !locked)
+        return -1;
+
+    memset(locked, 0, sizeof(*locked));
+    locked->secret = secret;
+    locked->length = length;
+    if (mlock(secret, length) != 0)
+        return -1;
+    locked->locked = 1;
+    return 0;
+}
+
+static void wipe_locked_secret(lockedSecret *locked)
+{
+    if (!locked || !locked->secret)
+        return;
+
+    clear_secret(locked->secret, locked->length);
+}
+
+static void unlock_locked_secret(lockedSecret *locked)
+{
+    if (!locked || !locked->secret)
+        return;
+
+    if (locked->locked)
+        (void)munlock(locked->secret, locked->length);
+    memset(locked, 0, sizeof(*locked));
+}
+
 static int copy_ipc_string(char *dst, size_t dst_size, const char *src, size_t src_size)
 {
     size_t len = 0;
@@ -615,11 +654,16 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             (hdr.payload_len == FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE)) {
             frdpAuthRequest req;
             if (frdp_ipc_recv_auth_request_v2_payload(cfd, &req, hdr.payload_len) == 0) {
+                lockedSecret request_password_secret = {0};
+                lockedSecret password_secret = {0};
                 char user[sizeof(req.user)] = {0};
                 char correlation_id[sizeof(req.correlation_id)] = {0};
                 char rhost[sizeof(req.rhost)] = {0};
                 char password[sizeof(req.password)] = {0};
-                if (copy_ipc_string(user, sizeof(user), req.user, sizeof(req.user)) != 0 ||
+                if (lock_secret(req.password, sizeof(req.password),
+                                &request_password_secret) != 0 ||
+                    lock_secret(password, sizeof(password), &password_secret) != 0 ||
+                    copy_ipc_string(user, sizeof(user), req.user, sizeof(req.user)) != 0 ||
                     copy_ipc_string(correlation_id, sizeof(correlation_id), req.correlation_id,
                                     sizeof(req.correlation_id)) != 0 ||
                     copy_ipc_string(rhost, sizeof(rhost), req.rhost, sizeof(req.rhost)) != 0 ||
@@ -658,8 +702,10 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                                            authenticated ? group_count : 0,
                                            authenticated ? 1 : 0);
                 }
-                clear_secret(password, sizeof(password));
-                clear_secret(req.password, sizeof(req.password));
+                wipe_locked_secret(&password_secret);
+                wipe_locked_secret(&request_password_secret);
+                unlock_locked_secret(&password_secret);
+                unlock_locked_secret(&request_password_secret);
             }
         } else {
             send_auth_response(cfd, 0, "unsupported IPC request", NULL, (uid_t)-1, (gid_t)-1,
