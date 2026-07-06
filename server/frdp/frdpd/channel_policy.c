@@ -74,9 +74,11 @@ int frdp_channel_policy_static_allowed_for_runtime(const frdpChannelPolicy *poli
 {
 	if (!policy || !clipboard || !frdp_channel_policy_name_valid(channel))
 		return 0;
-	if ((strcmp(channel, "cliprdr") == 0) &&
-	    (clipboard->mode == FRDP_CLIPBOARD_MODE_DISABLED))
-		return 0;
+	if (strcmp(channel, "cliprdr") == 0)
+	{
+		if (clipboard->mode != FRDP_CLIPBOARD_MODE_TEXT)
+			return 0;
+	}
 	return frdp_channel_policy_static_allowed(policy, channel);
 }
 

@@ -461,6 +461,9 @@ static int test_dynamic_blocklist(void)
 static int test_clipboard_policy(void)
 {
 	frdpConfig config = { 0 };
+	frdpClipboardPolicy invalid_clipboard = { .mode = (frdpClipboardMode)99,
+		                                      .direction = FRDP_CLIPBOARD_DIRECTION_BIDIRECTIONAL,
+		                                      .max_text_bytes = 4096 };
 	const char* body = "[clipboard]\nmode = \"text\"\n"
 	                   "direction = \"client-to-server\"\nmax_text_bytes = 4096\n";
 
@@ -474,6 +477,9 @@ static int test_clipboard_policy(void)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
 	                                                   "cliprdr") == 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &invalid_clipboard,
+	                                                   "cliprdr") != 0)
 		return -1;
 
 	body = "[clipboard]\nmode = \"text\"\ndirection = \"server-to-client\"\n";
