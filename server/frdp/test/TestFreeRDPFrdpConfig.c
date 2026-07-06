@@ -94,6 +94,11 @@ static int test_default_blocklist(void)
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
 	                                                   "rdpsnd") != 0)
 		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "rdpdr") == 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
+	                                                   "rdpdr") != 0)
+		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "drdynvc") != 0)
 		return -1;
 	if (frdp_channel_policy_dynamic_allowed(&config.channels, "rdpgfx") == 0)
@@ -333,6 +338,9 @@ static int test_static_allowlist(void)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "rdpdr") == 0)
 		return -1;
+	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
+	                                                   "rdpdr") != 0)
+		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "drdynvc") != 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "CLIPRDR") != 0)
@@ -397,6 +405,11 @@ static int test_static_blocklist(void)
 	                                               sizeof(name)) == 0)
 		return -1;
 	if (strcmp(name, "rdpsnd") != 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "rdpdr") == 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
+	                                                   "rdpdr") != 0)
 		return -1;
 	return 0;
 }

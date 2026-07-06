@@ -34,7 +34,7 @@ This document describes the configuration options available in `frdpd.toml` (see
 - `dynamic_mode` (string): `blocklist`/`blacklist` or `allowlist`/`whitelist`. Default is `blocklist`. This feeds the DVC authorization callback for server-created dynamic channels, but remains operationally preparatory while `drdynvc` and useful dynamic handlers stay disabled.
 - `dynamic_deny` (string): Optional comma-separated exact dynamic virtual channel names to reject in `blocklist` mode, for example `"rdpgfx,disp"`. Default empty. The key is rejected unless `dynamic_mode = "blocklist"`, even when the value is empty.
 - `dynamic_allow` (string): Optional comma-separated exact dynamic virtual channel names to allow in `allowlist` mode, for example `"rdpgfx,disp"`. Default empty. The key is rejected unless `dynamic_mode = "allowlist"`, even when the value is empty.
-- Allowing a name only permits negotiation/filter passage; runtime gates still deny handlers that are not implemented yet, including `rdpsnd` audio output.
+- Allowing a name only permits negotiation/filter passage; runtime gates still deny handlers that are not implemented yet, including `rdpsnd` audio output and `rdpdr` device redirection.
 
 ## [clipboard]
 

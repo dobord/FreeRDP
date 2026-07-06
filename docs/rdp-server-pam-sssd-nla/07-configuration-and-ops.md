@@ -40,7 +40,7 @@ session_socket = "/run/frdp-sesmand/sesmand.sock"
 # static_mode = "allowlist"
 # static_allow = "cliprdr"
 # Allowing a name only permits negotiation; runtime gates still deny handlers
-# that are not implemented yet, including rdpsnd audio output.
+# that are not implemented yet, including rdpsnd audio output and rdpdr device redirection.
 
 # [clipboard]
 # mode = "disabled"
