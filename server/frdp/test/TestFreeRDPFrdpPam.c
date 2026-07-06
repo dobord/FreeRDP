@@ -205,37 +205,47 @@ static int test_pam_conversation_answers_supported_prompts(void)
 	struct pam_response* responses = NULL;
 	const struct pam_message messages[] = {
 		{ .msg_style = PAM_PROMPT_ECHO_OFF, .msg = "Password:" },
-		{ .msg_style = PAM_PROMPT_ECHO_ON, .msg = "Ignored:" },
 		{ .msg_style = PAM_TEXT_INFO, .msg = "Info" },
 		{ .msg_style = PAM_ERROR_MSG, .msg = "Error" },
 	};
-	const struct pam_message* message_ptrs[] = { &messages[0], &messages[1], &messages[2],
-		                                         &messages[3] };
+	const struct pam_message* message_ptrs[] = { &messages[0], &messages[1],
+		                                         &messages[2] };
 
-	if (frdpd_pam_answer_conversation(4, message_ptrs, &responses, "secret") != PAM_SUCCESS)
+	if (frdpd_pam_answer_conversation(3, message_ptrs, &responses, "secret") != PAM_SUCCESS)
 		return -1;
 	if (!responses)
 		return -1;
 	if (!responses[0].resp || (strcmp(responses[0].resp, "secret") != 0))
 		goto fail;
-	if (!responses[1].resp || (responses[1].resp[0] != '\0'))
+	if (responses[1].resp || responses[2].resp)
 		goto fail;
-	if (responses[2].resp || responses[3].resp)
-		goto fail;
-	free_pam_responses(responses, 4);
+	free_pam_responses(responses, 3);
 	return 0;
 
 fail:
-	free_pam_responses(responses, 4);
+	free_pam_responses(responses, 3);
 	return -1;
 }
 
 static int test_pam_conversation_rejects_unsupported_prompt(void)
 {
 	struct pam_response* responses = NULL;
-	const struct pam_message message = { .msg_style = 0x7fffffff, .msg = "unsupported" };
-	const struct pam_message* message_ptr = &message;
+	const struct pam_message echo_on = { .msg_style = PAM_PROMPT_ECHO_ON, .msg = "Login:" };
+	const struct pam_message unsupported = { .msg_style = 0x7fffffff, .msg = "unsupported" };
+	const struct pam_message* message_ptr = &echo_on;
 
+	if (frdpd_pam_answer_conversation(1, &message_ptr, &responses, "secret") != PAM_CONV_ERR)
+	{
+		free_pam_responses(responses, 1);
+		return -1;
+	}
+	if (responses)
+	{
+		free_pam_responses(responses, 1);
+		return -1;
+	}
+
+	message_ptr = &unsupported;
 	if (frdpd_pam_answer_conversation(1, &message_ptr, &responses, "secret") != PAM_CONV_ERR)
 	{
 		free_pam_responses(responses, 1);

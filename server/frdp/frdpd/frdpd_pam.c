@@ -85,12 +85,6 @@ int frdpd_pam_answer_conversation(int num_msg, const struct pam_message** msg,
 					goto fail;
 				break;
 
-			case PAM_PROMPT_ECHO_ON:
-				reply[x].resp = frdpd_pam_strdup_len("", 0);
-				if (!reply[x].resp)
-					goto fail;
-				break;
-
 			case PAM_TEXT_INFO:
 			case PAM_ERROR_MSG:
 				break;
