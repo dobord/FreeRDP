@@ -40,6 +40,7 @@
 #include "../ipc/frdp-auth-token.h"
 #include "../ipc/frdp-ipc.h"
 #include "display_policy.h"
+#include "sesmand_pam.h"
 #include "session_cleanup.h"
 #include "session_state.h"
 
@@ -340,33 +341,6 @@ static void wait_for_agent_exit(pid_t pid, pid_t pgid)
     }
 }
 
-/* Non-interactive PAM conversation. */
-static int pam_conv_fn(int num_msg, const struct pam_message **msg,
-                       struct pam_response **resp, void *appdata_ptr)
-{
-    (void)appdata_ptr;
-
-    if (num_msg <= 0 || !msg || !resp)
-        return PAM_CONV_ERR;
-    for (int x = 0; x < num_msg; x++) {
-        if (!msg[x])
-            return PAM_CONV_ERR;
-        switch (msg[x]->msg_style) {
-            case PAM_TEXT_INFO:
-            case PAM_ERROR_MSG:
-                break;
-            default:
-                return PAM_CONV_ERR;
-        }
-    }
-
-    struct pam_response *aresp = calloc((size_t)num_msg, sizeof(struct pam_response));
-    if (!aresp)
-        return PAM_BUF_ERR;
-    *resp = aresp;
-    return PAM_SUCCESS;
-}
-
 static void session_id_to_string(const session *s, char *dst, size_t dst_size)
 {
     char uuid_str[37];
@@ -492,7 +466,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     if (copy_groups_to_native(groups, group_count, native_groups,
                               sizeof(native_groups) / sizeof(native_groups[0])) != 0)
         return -1;
-    struct pam_conv conv = {pam_conv_fn, NULL};
+    struct pam_conv conv = {frdp_sesmand_pam_conversation, NULL};
     pam_handle_t *pamh = NULL;
     int credentials_established = 0;
     int ret = pam_start(g_pam_service, user, &conv, &pamh);

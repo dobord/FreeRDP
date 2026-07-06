@@ -10,6 +10,7 @@ set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFree
                          TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpInputPolicy.c
                          TestFreeRDPFrdpDisplayPolicy.c TestFreeRDPFrdpSessionState.c
                          TestFreeRDPFrdpSessionCleanup.c TestFreeRDPFrdpSessionReconnect.c
+                         TestFreeRDPFrdpSesmandPam.c
                          TestFreeRDPFrdpPam.c)
 find_program(XVFB_EXECUTABLE Xvfb)
 if(XVFB_EXECUTABLE)
@@ -34,6 +35,8 @@ add_executable(${MODULE_NAME}
     ../frdpd/frdpd_pam.h
     ../frdp-authd/authd_pam.c
     ../frdp-authd/authd_pam.h
+    ../frdp-sesmand/sesmand_pam.c
+    ../frdp-sesmand/sesmand_pam.h
     ../frdp-session-agent/input_policy.c
     ../frdp-session-agent/input_policy.h
     ../frdp-sesmand/display_policy.c
