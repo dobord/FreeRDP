@@ -43,6 +43,7 @@
 #include "display_policy.h"
 #include "sesmand_pam.h"
 #include "session_cleanup.h"
+#include "session_resources.h"
 #include "session_state.h"
 
 /* Session registry entry.  Each session retains its PAM handle and the
@@ -230,34 +231,6 @@ static void terminate_agent_start_failure(pid_t pid, pid_t pgid)
             return;
         usleep(100000);
     }
-}
-
-static int set_session_rlimit(int resource, rlim_t value)
-{
-    struct rlimit limit;
-
-    memset(&limit, 0, sizeof(limit));
-    limit.rlim_cur = value;
-    limit.rlim_max = value;
-    return setrlimit(resource, &limit);
-}
-
-static int apply_session_resource_policy(const frdpSessionResourcePolicy *policy)
-{
-    if (!policy)
-        return -1;
-    if (policy->max_processes > 0 &&
-        set_session_rlimit(RLIMIT_NPROC, (rlim_t)policy->max_processes) != 0)
-        return -1;
-    if (policy->memory_max_mb > 0) {
-        const rlim_t memory_limit = (rlim_t)policy->memory_max_mb * (rlim_t)1024U * (rlim_t)1024U;
-
-        if ((memory_limit / ((rlim_t)1024U * (rlim_t)1024U)) != (rlim_t)policy->memory_max_mb)
-            return -1;
-        if (set_session_rlimit(RLIMIT_AS, memory_limit) != 0)
-            return -1;
-    }
-    return 0;
 }
 
 static int wait_for_agent_ready(int fd, pid_t pid, pid_t pgid)
@@ -591,7 +564,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
         /* Child: create a new process group for the session and drop privileges. */
         if (setpgid(0, 0) != 0)
             child_exec_failed(exec_pipe[1]);
-        if (apply_session_resource_policy(&g_session_resource_policy) != 0)
+        if (frdp_sesmand_apply_session_resource_policy(&g_session_resource_policy) != 0)
             child_exec_failed(exec_pipe[1]);
         /* Set environment variables for the display */
         setenv("DISPLAY", display_str, 1);

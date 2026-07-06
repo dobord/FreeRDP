@@ -10,7 +10,7 @@ set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFree
                          TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpInputPolicy.c
                          TestFreeRDPFrdpDisplayPolicy.c TestFreeRDPFrdpSessionState.c
                          TestFreeRDPFrdpSessionCleanup.c TestFreeRDPFrdpSessionReconnect.c
-                         TestFreeRDPFrdpSesmandPam.c
+                         TestFreeRDPFrdpSessionResources.c TestFreeRDPFrdpSesmandPam.c
                          TestFreeRDPFrdpPam.c)
 find_program(XVFB_EXECUTABLE Xvfb)
 if(XVFB_EXECUTABLE)
@@ -45,6 +45,8 @@ add_executable(${MODULE_NAME}
     ../frdp-sesmand/session_cleanup.h
     ../frdp-sesmand/session_reconnect.c
     ../frdp-sesmand/session_reconnect.h
+    ../frdp-sesmand/session_resources.c
+    ../frdp-sesmand/session_resources.h
     ../frdp-sesmand/session_state.c
     ../frdp-sesmand/session_state.h)
 add_dependencies(${MODULE_NAME} frdpd frdpctl frdp-authd frdp-sesmand frdp-session-agent)
