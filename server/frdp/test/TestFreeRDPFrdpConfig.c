@@ -99,6 +99,11 @@ static int test_default_blocklist(void)
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
 	                                                   "rdpdr") != 0)
 		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "rail") == 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
+	                                                   "rail") != 0)
+		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "drdynvc") != 0)
 		return -1;
 	if (frdp_channel_policy_dynamic_allowed(&config.channels, "rdpgfx") == 0)
@@ -311,7 +316,7 @@ static int test_static_allowlist(void)
 	frdpConfig config = { 0 };
 	frdpChannelPolicy direct_policy = { 0 };
 	const char* body = "[channels]\nstatic_mode = \"allowlist\"\n"
-	                   "static_allow = \"cliprdr, rdpsnd,rdpdr\"\n";
+	                   "static_allow = \"cliprdr, rdpsnd,rdpdr,rail\"\n";
 	CHANNEL_DEF channel = { 0 };
 	char name[CHANNEL_NAME_LEN + 2] = { 0 };
 
@@ -319,7 +324,7 @@ static int test_static_allowlist(void)
 		return -1;
 	if (config.channels.static_mode != FRDP_CHANNEL_FILTER_ALLOWLIST)
 		return -1;
-	if (config.channels.static_allow_count != 3)
+	if (config.channels.static_allow_count != 4)
 		return -1;
 	if (config.channels.static_deny_count != 0)
 		return -1;
@@ -328,6 +333,8 @@ static int test_static_allowlist(void)
 	if (strcmp(config.channels.static_allow[1], "rdpsnd") != 0)
 		return -1;
 	if (strcmp(config.channels.static_allow[2], "rdpdr") != 0)
+		return -1;
+	if (strcmp(config.channels.static_allow[3], "rail") != 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") == 0)
 		return -1;
@@ -340,6 +347,11 @@ static int test_static_allowlist(void)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
 	                                                   "rdpdr") != 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "rail") == 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
+	                                                   "rail") != 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "drdynvc") != 0)
 		return -1;
@@ -410,6 +422,11 @@ static int test_static_blocklist(void)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
 	                                                   "rdpdr") != 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed(&config.channels, "rail") == 0)
+		return -1;
+	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
+	                                                   "rail") != 0)
 		return -1;
 	return 0;
 }

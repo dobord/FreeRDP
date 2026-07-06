@@ -50,9 +50,12 @@ static int frdp_channel_policy_name_valid(const char* channel)
 	return 1;
 }
 
-static int frdp_channel_policy_runtime_static_unsupported(const char* channel)
+static int frdp_channel_policy_runtime_static_supported(const frdpClipboardPolicy* clipboard,
+                                                        const char* channel)
 {
-	return (strcmp(channel, "rdpsnd") == 0) || (strcmp(channel, "rdpdr") == 0);
+	if (strcmp(channel, "cliprdr") == 0)
+		return clipboard->mode == FRDP_CLIPBOARD_MODE_TEXT;
+	return 0;
 }
 
 int frdp_channel_policy_static_allowed(const frdpChannelPolicy *policy, const char *channel)
@@ -79,14 +82,9 @@ int frdp_channel_policy_static_allowed_for_runtime(const frdpChannelPolicy *poli
 {
 	if (!policy || !clipboard || !frdp_channel_policy_name_valid(channel))
 		return 0;
-	if (strcmp(channel, "cliprdr") == 0)
-	{
-		if (clipboard->mode != FRDP_CLIPBOARD_MODE_TEXT)
-			return 0;
-	}
-	if (frdp_channel_policy_runtime_static_unsupported(channel))
+	if (!frdp_channel_policy_static_allowed(policy, channel))
 		return 0;
-	return frdp_channel_policy_static_allowed(policy, channel);
+	return frdp_channel_policy_runtime_static_supported(clipboard, channel);
 }
 
 int frdp_channel_policy_dynamic_allowed(const frdpChannelPolicy *policy, const char *channel)
