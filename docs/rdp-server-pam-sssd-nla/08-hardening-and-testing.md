@@ -120,6 +120,8 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
 ProtectControlGroups=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
@@ -136,7 +138,7 @@ to `/run/frdp-authd` and `/run/frdp-auth-token`.
 
 `frdp-sesmand.service` uses a narrower baseline that still accounts for PAM,
 logind, user session startup, and runtime-directory responsibilities:
-`PrivateTmp=true`, `ProtectSystem=full`, kernel/log/realtime/personality
+`PrivateTmp=true`, `ProtectSystem=full`, kernel/log/clock/hostname/realtime/personality
 restrictions, `SystemCallArchitectures=native`, and explicit write access only
 to `/run/frdp-sesmand` plus `/run/frdp-auth-token`. It also sets
 `TasksMax=4096` as a coarse process-count guard while per-session cgroup

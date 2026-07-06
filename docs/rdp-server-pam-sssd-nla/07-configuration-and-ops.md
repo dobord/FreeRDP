@@ -142,6 +142,8 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
 ProtectControlGroups=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
@@ -157,7 +159,7 @@ and additionally declares `RuntimeDirectory=frdp-authd` plus explicit write
 access to `/run/frdp-authd` and `/run/frdp-auth-token`.
 
 For `sesmand`, restrictions intentionally account for PAM, logind, user session startup, cgroups, and runtime
-directories. The shipped unit keeps `PrivateTmp=true`, `ProtectSystem=full`, kernel/log/realtime/personality
+directories. The shipped unit keeps `PrivateTmp=true`, `ProtectSystem=full`, kernel/log/clock/hostname/realtime/personality
 restrictions, `SystemCallArchitectures=native`, and explicit write access only to `/run/frdp-sesmand` plus
 `/run/frdp-auth-token`. It also sets `TasksMax=4096` as a baseline process-count guard for the session
 manager and its launched desktop agent process groups; this is not a substitute for the remaining
