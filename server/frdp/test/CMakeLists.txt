@@ -6,6 +6,7 @@ disable_warnings_for_directory(${CMAKE_CURRENT_BINARY_DIR})
 set(${MODULE_PREFIX}_DRIVER ${MODULE_NAME}.c)
 set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFreeRDPFrdpCtlIpc.c
                          TestFreeRDPFrdpHelperStop.c TestFreeRDPFrdpServiceIpc.c
+                         TestFreeRDPFrdpAuthdPam.c
                          TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpInputPolicy.c
                          TestFreeRDPFrdpDisplayPolicy.c TestFreeRDPFrdpSessionState.c
                          TestFreeRDPFrdpSessionCleanup.c TestFreeRDPFrdpSessionReconnect.c
@@ -31,6 +32,8 @@ add_executable(${MODULE_NAME}
     ../frdpd/frame_policy.h
     ../frdpd/frdpd_pam.c
     ../frdpd/frdpd_pam.h
+    ../frdp-authd/authd_pam.c
+    ../frdp-authd/authd_pam.h
     ../frdp-session-agent/input_policy.c
     ../frdp-session-agent/input_policy.h
     ../frdp-sesmand/display_policy.c

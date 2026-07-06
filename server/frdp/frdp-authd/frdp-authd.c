@@ -38,6 +38,7 @@
 #include "../config/frdp-config.h"
 #include "../ipc/frdp-auth-token.h"
 #include "../ipc/frdp-ipc.h"
+#include "authd_pam.h"
 #include <sys/socket.h>
 #include <sys/un.h>
 
@@ -72,43 +73,6 @@ static int install_signal_handlers(void)
     if (sigaction(SIGTERM, &action, NULL) != 0)
         return -1;
     return 0;
-}
-
-static void clear_pam_responses(struct pam_response *responses, int count)
-{
-    if (!responses || count <= 0)
-        return;
-
-    for (int x = 0; x < count; x++) {
-        if (responses[x].resp) {
-            const size_t length = strlen(responses[x].resp) + 1U;
-
-            clear_secret(responses[x].resp, length);
-            free(responses[x].resp);
-            responses[x].resp = NULL;
-        }
-    }
-}
-
-static int pam_conversation(int num_msg, const struct pam_message **msg,
-                            struct pam_response **resp, void *appdata_ptr)
-{
-    const char *password = (const char *)appdata_ptr;
-    struct pam_response *aresp = calloc((size_t)num_msg, sizeof(struct pam_response));
-    if (!aresp)
-        return PAM_BUF_ERR;
-    for (int i = 0; i < num_msg; i++) {
-        if (msg[i]->msg_style == PAM_PROMPT_ECHO_OFF) {
-            aresp[i].resp = strdup(password ? password : "");
-            if (!aresp[i].resp) {
-                clear_pam_responses(aresp, i);
-                free(aresp);
-                return PAM_BUF_ERR;
-            }
-        }
-    }
-    *resp = aresp;
-    return PAM_SUCCESS;
 }
 
 /* Disable core dumps for the process. */
@@ -388,7 +352,7 @@ static int authenticate_user(const char *service, const char *rhost, const char 
         return -1;
     }
 
-    struct pam_conv conv = {pam_conversation, buf};
+    struct pam_conv conv = {frdp_authd_pam_conversation, buf};
     pam_handle_t *pamh = NULL;
     int credentials_established = 0;
     int ret = pam_start(service, user, &conv, &pamh);
