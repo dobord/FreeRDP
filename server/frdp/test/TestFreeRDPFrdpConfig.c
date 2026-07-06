@@ -86,6 +86,9 @@ static int test_default_blocklist(void)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") == 0)
 		return -1;
+	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
+	                                                   "cliprdr") != 0)
+		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "drdynvc") != 0)
 		return -1;
 	if (frdp_channel_policy_dynamic_allowed(&config.channels, "rdpgfx") == 0)
@@ -103,6 +106,13 @@ static int test_default_blocklist(void)
 	memcpy(channel.name, "bad-name", sizeof(channel.name));
 	if (frdp_channel_policy_static_channel_allowed(&config.channels, &channel, name,
 	                                               sizeof(name)) != 0)
+		return -1;
+	memcpy(channel.name, "cliprdr", sizeof("cliprdr"));
+	if (frdp_channel_policy_static_channel_allowed_for_runtime(&config.channels,
+	                                                           &config.clipboard, &channel, name,
+	                                                           sizeof(name)) != 0)
+		return -1;
+	if (strcmp(name, "cliprdr") != 0)
 		return -1;
 	return 0;
 }
@@ -461,6 +471,9 @@ static int test_clipboard_policy(void)
 	if (config.clipboard.direction != FRDP_CLIPBOARD_DIRECTION_CLIENT_TO_SERVER)
 		return -1;
 	if (config.clipboard.max_text_bytes != 4096)
+		return -1;
+	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
+	                                                   "cliprdr") == 0)
 		return -1;
 
 	body = "[clipboard]\nmode = \"text\"\ndirection = \"server-to-client\"\n";

@@ -40,6 +40,7 @@ extern "C"
 		BOOL ntlm_fallback;
 		frdpdDomainMode domain_mode;
 		frdpChannelPolicy channels;
+		frdpClipboardPolicy clipboard;
 	} frdpdServerConfig;
 
 	typedef struct

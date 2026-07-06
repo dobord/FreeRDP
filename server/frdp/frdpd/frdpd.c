@@ -1504,8 +1504,8 @@ static BOOL frdpd_peer_client_capabilities(freerdp_peer* client)
 		    (const CHANNEL_DEF*)freerdp_settings_get_pointer_array(settings,
 		                                                          FreeRDP_ChannelDefArray, i);
 
-		const int allowed = frdp_channel_policy_static_channel_allowed(&config->channels, channel,
-		                                                              name, sizeof(name));
+		const int allowed = frdp_channel_policy_static_channel_allowed_for_runtime(
+		    &config->channels, &config->clipboard, channel, name, sizeof(name));
 		frdpd_escape_log_string(log_name, sizeof(log_name), name);
 		if (!allowed)
 		{
@@ -2105,6 +2105,7 @@ static BOOL frdpd_apply_file_config(frdpdOptions* options)
 		options->server.session_socket = config->session_socket;
 	}
 	options->server.channels = config->channels;
+	options->server.clipboard = config->clipboard;
 
 	if (_stricmp(config->security, "nla") == 0)
 		options->server.allow_tls_fallback = FALSE;
