@@ -195,6 +195,22 @@ if(BUILD_FUZZERS)
                  FOLDER "FreeRDP/Test/Fuzzers")
   add_dependencies(fuzzers ${FRDP_AUTHD_PAM_FUZZER})
 
+  set(FRDPD_PAM_FUZZER TestFuzzFreeRDPFrdpPam)
+  add_executable(${FRDPD_PAM_FUZZER}
+      TestFuzzFreeRDPFrdpPam.c
+      ../frdpd/frdpd_pam.c
+      ../frdpd/frdpd_pam.h)
+  target_include_directories(${FRDPD_PAM_FUZZER} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+  target_include_directories(${FRDPD_PAM_FUZZER} SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
+  target_link_libraries(${FRDPD_PAM_FUZZER} PUBLIC fuzzer_config winpr ${PAM_LIBRARIES})
+  if(HAVE_PAM_PAM_APPL_H)
+    target_compile_definitions(${FRDPD_PAM_FUZZER} PRIVATE HAVE_PAM_PAM_APPL_H)
+  endif()
+  set_target_properties(${FRDPD_PAM_FUZZER}
+      PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${TESTING_OUTPUT_DIRECTORY}"
+                 FOLDER "FreeRDP/Test/Fuzzers")
+  add_dependencies(fuzzers ${FRDPD_PAM_FUZZER})
+
   set(FRDP_IPC_CODEC_FUZZER TestFuzzFreeRDPFrdpIpcCodec)
   add_executable(${FRDP_IPC_CODEC_FUZZER}
       TestFuzzFreeRDPFrdpIpcCodec.c

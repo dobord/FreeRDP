@@ -111,13 +111,14 @@ jobs:
             -DCHANNEL_URBDRC=OFF
 
       - name: Build focused FRDP fuzzers
-        run: cmake --build build-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig TestFuzzFreeRDPFrdpAuthToken TestFuzzFreeRDPFrdpAuthdPam TestFuzzFreeRDPFrdpIpcCodec TestFuzzFreeRDPFrdpFramePolicy TestFuzzFreeRDPFrdpInputPolicy TestFuzzFreeRDPFrdpDisplayPolicy TestFuzzFreeRDPFrdpSessionLifecycle
+        run: cmake --build build-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig TestFuzzFreeRDPFrdpAuthToken TestFuzzFreeRDPFrdpAuthdPam TestFuzzFreeRDPFrdpPam TestFuzzFreeRDPFrdpIpcCodec TestFuzzFreeRDPFrdpFramePolicy TestFuzzFreeRDPFrdpInputPolicy TestFuzzFreeRDPFrdpDisplayPolicy TestFuzzFreeRDPFrdpSessionLifecycle
 
       - name: Run focused FRDP fuzzer smoke
         run: |
           printf '[channels]\nstatic_mode = "allowlist"\nstatic_allow = "cliprdr,rdpsnd"\ndynamic_mode = "allowlist"\ndynamic_allow = "rdpgfx"\n[clipboard]\nmode = "text"\ndirection = "client-to-server"\nmax_text_bytes = 4096\n' > frdp-fuzz-seed.toml
           printf 'FRDPalice' > frdp-auth-token-fuzz-seed.bin
           printf 'FRDPauthd-pam' > frdp-authd-pam-fuzz-seed.bin
+          printf 'FRDPfrdpd-pam' > frdpd-pam-fuzz-seed.bin
           printf 'FRDPipc-codec' > frdp-ipc-codec-fuzz-seed.bin
           printf 'FRDPframe-policy' > frdp-frame-policy-fuzz-seed.bin
           printf 'FRDPinput-policy' > frdp-input-policy-fuzz-seed.bin
@@ -129,6 +130,8 @@ jobs:
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpAuthToken -runs=32 -max_len=512 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpAuthdPam frdp-authd-pam-fuzz-seed.bin -runs=1 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpAuthdPam -runs=32 -max_len=512 -artifact_prefix=build-frdp-fuzz/
+          build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpPam frdpd-pam-fuzz-seed.bin -runs=1 -artifact_prefix=build-frdp-fuzz/
+          build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpPam -runs=32 -max_len=512 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpIpcCodec frdp-ipc-codec-fuzz-seed.bin -runs=1 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpIpcCodec -runs=32 -max_len=512 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpFramePolicy frdp-frame-policy-fuzz-seed.bin -runs=1 -artifact_prefix=build-frdp-fuzz/
