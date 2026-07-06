@@ -4,6 +4,7 @@
 
 #include "frdp-sesmand/session_cleanup.h"
 #include "frdp-sesmand/session_reconnect.h"
+#include "frdp-sesmand/session_resources.h"
 #include "frdp-sesmand/session_state.h"
 
 #define FRDP_SESSION_LIFECYCLE_FUZZ_MAX_SIZE 256U
@@ -101,6 +102,44 @@ static void fuzz_session_reconnect_policy(const uint8_t* data, size_t size)
 	                                    (selector & 0x02U) ? "" : requested_user, &selected);
 }
 
+typedef struct
+{
+	uint32_t calls;
+	uint32_t fail_mask;
+} FuzzResourceProbe;
+
+static int fuzz_setrlimit(int resource, const struct rlimit* limit, void* context)
+{
+	FuzzResourceProbe* probe = (FuzzResourceProbe*)context;
+
+	if (!probe || !limit)
+		return -1;
+	probe->calls++;
+	if (((resource == RLIMIT_NPROC) && ((probe->fail_mask & 0x01U) != 0)) ||
+	    ((resource == RLIMIT_AS) && ((probe->fail_mask & 0x02U) != 0)))
+		return -1;
+	if (limit->rlim_cur != limit->rlim_max)
+		return -1;
+	return 0;
+}
+
+static void fuzz_session_resource_policy(const uint8_t* data, size_t size)
+{
+	const uint32_t selector = read_u32(data, size, 156U);
+	FuzzResourceProbe probe = { .fail_mask = selector >> 8U };
+	frdpSessionResourcePolicy policy = { .max_processes = read_u32(data, size, 160U),
+		                                 .memory_max_mb = read_u32(data, size, 164U) };
+
+	if ((selector & 0x01U) != 0)
+		policy.max_processes = 0;
+	if ((selector & 0x02U) != 0)
+		policy.memory_max_mb = 0;
+
+	(void)frdp_sesmand_apply_session_resource_policy_ex(&policy, fuzz_setrlimit, &probe);
+	(void)frdp_sesmand_apply_session_resource_policy_ex(NULL, fuzz_setrlimit, &probe);
+	(void)frdp_sesmand_apply_session_resource_policy_ex(&policy, NULL, &probe);
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t* Data, size_t Size)
 {
 	if (!Data || (Size > FRDP_SESSION_LIFECYCLE_FUZZ_MAX_SIZE))
@@ -108,5 +147,6 @@ int LLVMFuzzerTestOneInput(const uint8_t* Data, size_t Size)
 	fuzz_session_state_policy(Data, Size);
 	fuzz_session_cleanup_policy(Data, Size);
 	fuzz_session_reconnect_policy(Data, Size);
+	fuzz_session_resource_policy(Data, Size);
 	return 0;
 }

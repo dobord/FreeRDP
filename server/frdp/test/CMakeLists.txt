@@ -272,6 +272,8 @@ if(BUILD_FUZZERS)
       ../frdp-sesmand/session_cleanup.h
       ../frdp-sesmand/session_reconnect.c
       ../frdp-sesmand/session_reconnect.h
+      ../frdp-sesmand/session_resources.c
+      ../frdp-sesmand/session_resources.h
       ../frdp-sesmand/session_state.c
       ../frdp-sesmand/session_state.h)
   target_include_directories(${FRDP_SESSION_LIFECYCLE_FUZZER} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
