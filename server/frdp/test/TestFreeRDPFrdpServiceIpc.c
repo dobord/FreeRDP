@@ -1078,6 +1078,23 @@ static int write_sesmand_config(const char* path, const char* pam_service, uint3
 	return fclose(fp);
 }
 
+static int write_sesmand_config_body(const char* path, const char* body)
+{
+	FILE* fp = NULL;
+
+	if (!path || !body)
+		return -1;
+	fp = fopen(path, "wb");
+	if (!fp)
+		return -1;
+	if (fputs(body, fp) < 0)
+	{
+		fclose(fp);
+		return -1;
+	}
+	return fclose(fp);
+}
+
 static int test_sesmand_reload_config(void)
 {
 	frdpTestHelper helper;
@@ -1110,6 +1127,22 @@ static int test_sesmand_reload_config(void)
 	                        NULL) != 0)
 		goto cleanup;
 	if (write_sesmand_config(config_path, "bad/service", 1, 1) != 0)
+		goto cleanup;
+	if (test_sesmand_reload(helper.socket_path, 0, NULL, "config reload failed") != 0)
+		goto cleanup;
+	if (write_sesmand_config_body(config_path,
+	                              "[auth]\npam_service = \"frdpd\"\n"
+	                              "[clipboard]\nmode = \"text\"\n"
+	                              "direction = \"bidirectional\"\n") != 0)
+		goto cleanup;
+	if (test_sesmand_reload(helper.socket_path, 0, NULL, "config reload failed") != 0)
+		goto cleanup;
+	if (write_sesmand_config_body(config_path,
+	                              "[auth]\npam_service = \"frdpd\"\n"
+	                              "ntlm_fallback = false\n"
+	                              "kerberos = true\n"
+	                              "keytab = \"/etc/frdpd/frdpd.keytab\"\n"
+	                              "accepted_spn = \"TERMSRV/host.example.com\"\n") != 0)
 		goto cleanup;
 	if (test_sesmand_reload(helper.socket_path, 0, NULL, "config reload failed") != 0)
 		goto cleanup;
