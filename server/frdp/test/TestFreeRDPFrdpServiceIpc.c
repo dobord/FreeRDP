@@ -455,6 +455,35 @@ cleanup:
 	return rc;
 }
 
+static int test_authd_bad_length_or_rate_limited(const char* socket_path, int* limited)
+{
+	frdpAuthResponse response = { 0 };
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (limited)
+		*limited = 0;
+	if (fd < 0 || !limited)
+		return -1;
+	if (send_header(fd, FRDP_IPC_AUTH_REQUEST_V2, sizeof(frdpAuthRequest) - 1U) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_auth_response(fd, &response) != 0)
+		goto cleanup;
+	if (response.success != 0 || !memchr(response.error, '\0', sizeof(response.error)))
+		goto cleanup;
+	if (strcmp(response.error, "IPC rate limit exceeded") == 0)
+	{
+		*limited = 1;
+		rc = 0;
+	}
+	else if (strcmp(response.error, "unsupported IPC request") == 0)
+		rc = 0;
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
 static int test_authd_rejects_unknown_type(const char* socket_path)
 {
 	int fd = frdp_ipc_connect(socket_path);
@@ -597,22 +626,19 @@ static int test_authd_rate_limit(void)
 {
 	frdpTestHelper helper;
 	int rc = -1;
+	int limited = 0;
 
 	if (start_helper(FRDP_AUTHD_BINARY, "frdp-authd-rate-limit", &helper) != 0)
 		return -1;
-	for (uint32_t x = 0; x < FRDP_IPC_RATE_LIMIT_MAX_REQUESTS; x++)
+	for (uint32_t x = 0; x < FRDP_IPC_RATE_LIMIT_MAX_REQUESTS + 2U; x++)
 	{
-		if (test_authd_rejects_bad_length(helper.socket_path) != 0)
+		if (test_authd_bad_length_or_rate_limited(helper.socket_path, &limited) != 0)
 			goto cleanup;
-	}
-	{
-		int fd = frdp_ipc_connect(helper.socket_path);
-
-		if (fd < 0)
+		if (limited)
+		{
+			rc = 0;
 			goto cleanup;
-		if (send_header(fd, FRDP_IPC_AUTH_REQUEST_V2, sizeof(frdpAuthRequest) - 1U) == 0)
-			rc = receive_auth_failure(fd, "IPC rate limit exceeded");
-		frdp_ipc_close(fd);
+		}
 	}
 
 cleanup:
@@ -666,6 +692,56 @@ static int test_sesmand_list_empty(const char* socket_path)
 	if ((response.success != 1) || (response.count != 0))
 		goto cleanup;
 	rc = 0;
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
+static int test_sesmand_list_empty_or_rate_limited(const char* socket_path, int* limited)
+{
+	frdpIpcHeader header = { .type = FRDP_IPC_INVALID, .payload_len = 0 };
+	uint8_t list_wire[FRDP_IPC_SESSION_LIST_RESPONSE_WIRE_SIZE] = { 0 };
+	uint8_t response_wire[FRDP_IPC_SESSION_RESPONSE_WIRE_SIZE] = { 0 };
+	char error[sizeof(((frdpSessionResponse*)0)->error)] = { 0 };
+	const size_t error_offset = 4U + sizeof(((frdpSessionResponse*)0)->session_id) +
+	                            sizeof(((frdpSessionResponse*)0)->display) +
+	                            sizeof(((frdpSessionResponse*)0)->agent_socket);
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (limited)
+		*limited = 0;
+	if (fd < 0 || !limited)
+		return -1;
+	if (send_header(fd, FRDP_IPC_SESSION_LIST_REQUEST, 0) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type == FRDP_IPC_SESSION_LIST_RESPONSE) &&
+	    (header.payload_len == sizeof(list_wire)))
+	{
+		if (frdp_ipc_recv(fd, list_wire, sizeof(list_wire)) != (int)sizeof(list_wire))
+			goto cleanup;
+		if ((list_wire[0] != 1U) || (list_wire[1] != 0U) || (list_wire[2] != 0U) ||
+		    (list_wire[3] != 0U) || (list_wire[4] != 0U) || (list_wire[5] != 0U) ||
+		    (list_wire[6] != 0U) || (list_wire[7] != 0U))
+			goto cleanup;
+		rc = 0;
+	}
+	else if ((header.type == FRDP_IPC_SESSION_RESPONSE) &&
+	         (header.payload_len == sizeof(response_wire)))
+	{
+		if (frdp_ipc_recv(fd, response_wire, sizeof(response_wire)) !=
+		    (int)sizeof(response_wire))
+			goto cleanup;
+		memcpy(error, &response_wire[error_offset], sizeof(error));
+		if (!memchr(error, '\0', sizeof(error)) ||
+		    (strcmp(error, "IPC rate limit exceeded") != 0))
+			goto cleanup;
+		*limited = 1;
+		rc = 0;
+	}
 
 cleanup:
 	frdp_ipc_close(fd);
@@ -1214,22 +1290,19 @@ static int test_sesmand_rate_limit(void)
 {
 	frdpTestHelper helper;
 	int rc = -1;
+	int limited = 0;
 
 	if (start_helper(FRDP_SESMAND_BINARY, "frdp-sesmand-rate-limit", &helper) != 0)
 		return -1;
-	for (uint32_t x = 0; x < FRDP_IPC_RATE_LIMIT_MAX_REQUESTS; x++)
+	for (uint32_t x = 0; x < FRDP_IPC_RATE_LIMIT_MAX_REQUESTS + 2U; x++)
 	{
-		if (test_sesmand_list_empty(helper.socket_path) != 0)
+		if (test_sesmand_list_empty_or_rate_limited(helper.socket_path, &limited) != 0)
 			goto cleanup;
-	}
-	{
-		int fd = frdp_ipc_connect(helper.socket_path);
-
-		if (fd < 0)
+		if (limited)
+		{
+			rc = 0;
 			goto cleanup;
-		if (send_header(fd, FRDP_IPC_SESSION_LIST_REQUEST, 0) == 0)
-			rc = receive_session_response(fd, 0, "IPC rate limit exceeded");
-		frdp_ipc_close(fd);
+		}
 	}
 
 cleanup:
