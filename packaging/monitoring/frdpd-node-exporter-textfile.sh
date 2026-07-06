@@ -85,7 +85,9 @@ scrape_timestamp=$(date +%s)
 status_output=$(frdpctl status --socket "$socket" 2>&1) || status=$?
 reachable=0
 scrape_success=0
+detail_scrape_success=0
 active_sessions=0
+session_details=()
 error=""
 
 if [[ $status -eq 0 ]]; then
@@ -93,6 +95,23 @@ if [[ $status -eq 0 ]]; then
 	if [[ $status_output =~ Active[[:space:]]sessions:[[:space:]]([0-9]+) ]]; then
 		active_sessions=${BASH_REMATCH[1]}
 		scrape_success=1
+		detail_status=0
+		detail_output=$(frdpctl list-sessions --socket "$socket" 2>&1) || detail_status=$?
+		if [[ $detail_status -eq 0 ]]; then
+			detail_scrape_success=1
+			while IFS= read -r line; do
+				[[ -n $line ]] || continue
+				[[ $line == SESSION* ]] && continue
+				[[ $line == "No active sessions" ]] && continue
+				read -r session_id session_user session_display session_pid _ <<<"$line"
+				if [[ -n ${session_id:-} && -n ${session_user:-} && -n ${session_display:-} &&
+				      ${session_pid:-} =~ ^-?[0-9]+$ ]]; then
+					session_details+=("${session_id}"$'\t'"${session_user}"$'\t'"${session_display}"$'\t'"${session_pid}")
+				fi
+			done <<<"$detail_output"
+		else
+			error="session detail scrape failed: $detail_output"
+		fi
 	else
 		error="missing active session count"
 	fi
@@ -114,6 +133,21 @@ fi
 	printf '# HELP frdp_sessions_active Active sessions reported by frdp-sesmand.\n'
 	printf '# TYPE frdp_sessions_active gauge\n'
 	printf 'frdp_sessions_active{socket="%s"} %d\n' "$(escape_label "$socket")" "$active_sessions"
+	printf '# HELP frdp_sessions_detail_scrape_success Whether per-session detail scraping completed and parsed successfully.\n'
+	printf '# TYPE frdp_sessions_detail_scrape_success gauge\n'
+	printf 'frdp_sessions_detail_scrape_success{socket="%s"} %d\n' \
+		"$(escape_label "$socket")" "$detail_scrape_success"
+	if [[ ${#session_details[@]} -gt 0 ]]; then
+		printf '# HELP frdp_sessions_info Per-session metadata reported by frdpctl list-sessions.\n'
+		printf '# TYPE frdp_sessions_info gauge\n'
+		for detail in "${session_details[@]}"; do
+			IFS=$'\t' read -r session_id session_user session_display session_pid <<<"$detail"
+			printf 'frdp_sessions_info{socket="%s",session_id="%s",user="%s",display="%s",agent_pid="%s"} 1\n' \
+				"$(escape_label "$socket")" "$(escape_label "$session_id")" \
+				"$(escape_label "$session_user")" "$(escape_label "$session_display")" \
+				"$(escape_label "$session_pid")"
+		done
+	fi
 	if [[ -n $max_connections ]]; then
 		printf '# HELP frdp_sessions_max Configured maximum concurrent frdpd sessions.\n'
 		printf '# TYPE frdp_sessions_max gauge\n'

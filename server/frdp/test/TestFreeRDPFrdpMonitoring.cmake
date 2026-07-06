@@ -41,13 +41,30 @@ endfunction()
 
 file(WRITE "${fake_frdpctl}" [==[#!/usr/bin/env bash
 set -Eeuo pipefail
-if [[ $# -ne 3 || $1 != status || $2 != --socket ]]; then
+if [[ $# -ne 3 || ( $1 != status && $1 != list-sessions ) || $2 != --socket ]]; then
 	echo "unexpected frdpctl invocation: $*" >&2
 	exit 64
 fi
 case "${FRDP_FAKE_MODE:-ok}" in
 	ok)
-		printf 'Status: running\nActive sessions: 7\n'
+		printf 'Status: running\nActive sessions: 2\n'
+		;;
+	detail)
+		if [[ $1 == status ]]; then
+			printf 'Status: running\nActive sessions: 2\n'
+		elif [[ $1 == list-sessions ]]; then
+			printf '%-36s  %-20s  %-8s  %-8s\n' SESSION USER DISPLAY PID
+			printf '%-36s  %-20s  %-8s  %-8s\n' session-1 alice :20 1001
+			printf '%-36s  %-20s  %-8s  %-8s\n' session-2 bob :21 1002
+		fi
+		;;
+	detail-error)
+		if [[ $1 == status ]]; then
+			printf 'Status: running\nActive sessions: 2\n'
+		elif [[ $1 == list-sessions ]]; then
+			printf 'detail failure for %s\n' "$3" >&2
+			exit 4
+		fi
 		;;
 	missing-count)
 		printf 'Status: running\n'
@@ -67,7 +84,7 @@ file(CHMOD "${fake_frdpctl}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
 
 set(success_socket "/tmp/frdp-\"quoted\"-socket")
 execute_process(
-  COMMAND "${CMAKE_COMMAND}" -E env "PATH=${fake_bin_dir}:$ENV{PATH}" FRDP_FAKE_MODE=ok
+  COMMAND "${CMAKE_COMMAND}" -E env "PATH=${fake_bin_dir}:$ENV{PATH}" FRDP_FAKE_MODE=detail
           "${BASH_EXECUTABLE}" "${FRDP_MONITORING_SCRIPT}" --socket "${success_socket}"
           --output "${output_file}" --max-connections 10
   RESULT_VARIABLE result
@@ -83,9 +100,12 @@ foreach(expected
         "frdp_sesmand_reachable{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 1"
         "frdp_exporter_scrape_success{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 1"
         "frdp_exporter_last_scrape_timestamp_seconds{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"}"
-        "frdp_sessions_active{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 7"
+        "frdp_sessions_active{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 2"
+        "frdp_sessions_detail_scrape_success{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 1"
+        "frdp_sessions_info{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\",session_id=\"session-1\",user=\"alice\",display=\":20\",agent_pid=\"1001\"} 1"
+        "frdp_sessions_info{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\",session_id=\"session-2\",user=\"bob\",display=\":21\",agent_pid=\"1002\"} 1"
         "frdp_sessions_max{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 10"
-        "frdp_sessions_utilization_ratio{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 0.700000")
+        "frdp_sessions_utilization_ratio{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 0.200000")
   expect_contains("${metrics}" "${expected}" "successful scrape metrics")
 endforeach()
 expect_matches("${metrics}"
@@ -111,6 +131,7 @@ foreach(expected
         "frdp_exporter_scrape_success{socket=\"/tmp/frdp-error\"} 0"
         "frdp_exporter_last_scrape_timestamp_seconds{socket=\"/tmp/frdp-error\"}"
         "frdp_sessions_active{socket=\"/tmp/frdp-error\"} 0"
+        "frdp_sessions_detail_scrape_success{socket=\"/tmp/frdp-error\"} 0"
         "frdp_exporter_last_error{socket=\"/tmp/frdp-error\"} 1")
   expect_contains("${metrics}" "${expected}" "failed scrape metrics")
 endforeach()
@@ -139,6 +160,7 @@ foreach(expected
         "frdp_exporter_scrape_success{socket=\"/tmp/frdp-malformed\"} 0"
         "frdp_exporter_last_scrape_timestamp_seconds{socket=\"/tmp/frdp-malformed\"}"
         "frdp_sessions_active{socket=\"/tmp/frdp-malformed\"} 0"
+        "frdp_sessions_detail_scrape_success{socket=\"/tmp/frdp-malformed\"} 0"
         "frdp_sessions_max{socket=\"/tmp/frdp-malformed\"} 10"
         "frdp_exporter_last_error{socket=\"/tmp/frdp-malformed\"} 1")
   expect_contains("${metrics}" "${expected}" "malformed scrape metrics")
@@ -150,6 +172,34 @@ expect_contains("${metrics}" "# Last frdpctl scrape error: missing active sessio
                 "malformed scrape metrics")
 expect_not_contains("${metrics}" "frdp_sessions_utilization_ratio{socket=\"/tmp/frdp-malformed\"}"
                     "malformed scrape metrics")
+
+set(detail_error_socket "/tmp/frdp-detail-error")
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env "PATH=${fake_bin_dir}:$ENV{PATH}" FRDP_FAKE_MODE=detail-error
+          "${BASH_EXECUTABLE}" "${FRDP_MONITORING_SCRIPT}" --socket "${detail_error_socket}"
+          --output "${output_file}" --max-connections 10
+  RESULT_VARIABLE result
+  OUTPUT_VARIABLE stdout
+  ERROR_VARIABLE stderr)
+
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "monitoring detail-error scrape case failed: ${stderr}\n${stdout}")
+endif()
+
+file(READ "${output_file}" metrics)
+foreach(expected
+        "frdp_sesmand_reachable{socket=\"/tmp/frdp-detail-error\"} 1"
+        "frdp_exporter_scrape_success{socket=\"/tmp/frdp-detail-error\"} 1"
+        "frdp_sessions_active{socket=\"/tmp/frdp-detail-error\"} 2"
+        "frdp_sessions_detail_scrape_success{socket=\"/tmp/frdp-detail-error\"} 0"
+        "frdp_sessions_utilization_ratio{socket=\"/tmp/frdp-detail-error\"} 0.200000"
+        "frdp_exporter_last_error{socket=\"/tmp/frdp-detail-error\"} 1")
+  expect_contains("${metrics}" "${expected}" "detail-error scrape metrics")
+endforeach()
+expect_contains("${metrics}" "# Last frdpctl scrape error: session detail scrape failed: detail failure for /tmp/frdp-detail-error"
+                "detail-error scrape metrics")
+expect_not_contains("${metrics}" "frdp_sessions_info{socket=\"/tmp/frdp-detail-error\"}"
+                    "detail-error scrape metrics")
 
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env "PATH=${fake_bin_dir}:$ENV{PATH}"
