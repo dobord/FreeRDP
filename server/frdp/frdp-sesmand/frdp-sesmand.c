@@ -759,6 +759,8 @@ static int send_session_list_response(int fd)
         snprintf(resp.entries[i].user, sizeof(resp.entries[i].user), "%s", sessions[i].user);
         snprintf(resp.entries[i].display, sizeof(resp.entries[i].display), ":%d",
                  sessions[i].display_number);
+        snprintf(resp.entries[i].state, sizeof(resp.entries[i].state), "%s",
+                 frdp_sesmand_session_state_string(sessions[i].state));
         resp.entries[i].agent_pid = sessions[i].agent_pid;
     }
 

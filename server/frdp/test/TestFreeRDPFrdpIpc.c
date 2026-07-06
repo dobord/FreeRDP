@@ -851,7 +851,8 @@ static int test_session_list_response_uses_explicit_wire_format(void)
 	const size_t count_offset = 4U;
 	const size_t entries_offset = count_offset + 4U;
 	const size_t entry1_offset = entries_offset + FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE;
-	const size_t pid_offset = entries_offset + 64U + 64U + 32U;
+	const size_t state_offset = entries_offset + 64U + 64U + 32U;
+	const size_t pid_offset = state_offset + 16U;
 	int rc = -1;
 
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
@@ -861,8 +862,10 @@ static int test_session_list_response_uses_explicit_wire_format(void)
 	snprintf(response.entries[0].session_id, sizeof(response.entries[0].session_id), "session");
 	snprintf(response.entries[0].user, sizeof(response.entries[0].user), "alice");
 	snprintf(response.entries[0].display, sizeof(response.entries[0].display), ":10");
+	snprintf(response.entries[0].state, sizeof(response.entries[0].state), "active");
 	response.entries[0].agent_pid = 0x01020304;
 	snprintf(response.entries[1].session_id, sizeof(response.entries[1].session_id), "unused");
+	snprintf(response.entries[1].state, sizeof(response.entries[1].state), "dead");
 	response.entries[1].agent_pid = 0x11121314;
 	snprintf(response.error, sizeof(response.error), "ignored");
 	if (frdp_ipc_send_session_list_response(fds[0], &response) != 0)
@@ -877,7 +880,8 @@ static int test_session_list_response_uses_explicit_wire_format(void)
 	if ((raw[0] != 1U) || (raw[count_offset] != 1U) ||
 	    (memcmp(&raw[entries_offset], "session", 7) != 0) ||
 	    (memcmp(&raw[entries_offset + 64U], "alice", 5) != 0) ||
-	    (memcmp(&raw[entries_offset + 128U], ":10", 3) != 0) || (raw[pid_offset] != 0x04U) ||
+	    (memcmp(&raw[entries_offset + 128U], ":10", 3) != 0) ||
+	    (memcmp(&raw[state_offset], "active", 6) != 0) || (raw[pid_offset] != 0x04U) ||
 	    (raw[pid_offset + 3U] != 0x01U))
 		goto cleanup;
 	for (size_t x = 0; x < FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE; x++) {
@@ -894,8 +898,10 @@ static int test_session_list_response_uses_explicit_wire_format(void)
 	    (strcmp(decoded.entries[0].session_id, response.entries[0].session_id) != 0) ||
 	    (strcmp(decoded.entries[0].user, response.entries[0].user) != 0) ||
 	    (strcmp(decoded.entries[0].display, response.entries[0].display) != 0) ||
+	    (strcmp(decoded.entries[0].state, response.entries[0].state) != 0) ||
 	    (decoded.entries[0].agent_pid != response.entries[0].agent_pid) ||
-	    (decoded.entries[1].session_id[0] != '\0') || (decoded.entries[1].agent_pid != 0))
+	    (decoded.entries[1].session_id[0] != '\0') || (decoded.entries[1].state[0] != '\0') ||
+	    (decoded.entries[1].agent_pid != 0))
 		goto cleanup;
 	rc = 0;
 

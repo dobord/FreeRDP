@@ -60,7 +60,7 @@ typedef struct {
      (FRDP_IPC_MAX_AUTH_GROUPS * 8U) + 4U + 4U + 4U + 4U)
 #define FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE (64U + 64U + 64U + 128U + 4U + 4U + 4U)
 #define FRDP_IPC_SESSION_RESPONSE_WIRE_SIZE (4U + 64U + 32U + 108U + 128U)
-#define FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE (64U + 64U + 32U + 4U)
+#define FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE (64U + 64U + 32U + 16U + 4U)
 #define FRDP_IPC_SESSION_LIST_RESPONSE_WIRE_SIZE \
     (4U + 4U + (FRDP_IPC_MAX_SESSION_LIST_ENTRIES * FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE) + 128U)
 #define FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE (4U + 128U + 128U)
@@ -158,6 +158,7 @@ typedef struct {
     char session_id[64];
     char user[64];
     char display[32];
+    char state[16];
     int32_t agent_pid;
 } frdpSessionListEntry;
 

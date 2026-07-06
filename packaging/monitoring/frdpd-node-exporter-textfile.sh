@@ -103,10 +103,11 @@ if [[ $status -eq 0 ]]; then
 				[[ -n $line ]] || continue
 				[[ $line == SESSION* ]] && continue
 				[[ $line == "No active sessions" ]] && continue
-				read -r session_id session_user session_display session_pid _ <<<"$line"
+				read -r session_id session_user session_display session_state session_pid _ <<<"$line"
 				if [[ -n ${session_id:-} && -n ${session_user:-} && -n ${session_display:-} &&
+				      -n ${session_state:-} &&
 				      ${session_pid:-} =~ ^-?[0-9]+$ ]]; then
-					session_details+=("${session_id}"$'\t'"${session_user}"$'\t'"${session_display}"$'\t'"${session_pid}")
+					session_details+=("${session_id}"$'\t'"${session_user}"$'\t'"${session_display}"$'\t'"${session_state}"$'\t'"${session_pid}")
 				fi
 			done <<<"$detail_output"
 		else
@@ -141,10 +142,11 @@ fi
 		printf '# HELP frdp_sessions_info Per-session metadata reported by frdpctl list-sessions.\n'
 		printf '# TYPE frdp_sessions_info gauge\n'
 		for detail in "${session_details[@]}"; do
-			IFS=$'\t' read -r session_id session_user session_display session_pid <<<"$detail"
-			printf 'frdp_sessions_info{socket="%s",session_id="%s",user="%s",display="%s",agent_pid="%s"} 1\n' \
+			IFS=$'\t' read -r session_id session_user session_display session_state session_pid <<<"$detail"
+			printf 'frdp_sessions_info{socket="%s",session_id="%s",user="%s",display="%s",state="%s",agent_pid="%s"} 1\n' \
 				"$(escape_label "$socket")" "$(escape_label "$session_id")" \
 				"$(escape_label "$session_user")" "$(escape_label "$session_display")" \
+				"$(escape_label "$session_state")" \
 				"$(escape_label "$session_pid")"
 		done
 	fi

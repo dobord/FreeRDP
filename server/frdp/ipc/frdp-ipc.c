@@ -848,6 +848,8 @@ int frdp_ipc_send_session_list_response(int fd, const frdpSessionListResponse *r
             memcpy(&wire[offset], response->entries[x].display,
                    sizeof(response->entries[x].display));
             offset += sizeof(response->entries[x].display);
+            memcpy(&wire[offset], response->entries[x].state, sizeof(response->entries[x].state));
+            offset += sizeof(response->entries[x].state);
             frdp_ipc_write_u32_le(&wire[offset], (uint32_t)response->entries[x].agent_pid);
             offset += 4U;
         } else {
@@ -904,6 +906,8 @@ int frdp_ipc_recv_session_list_response(int fd, frdpSessionListResponse *respons
             memcpy(response->entries[x].display, &wire[offset],
                    sizeof(response->entries[x].display));
             offset += sizeof(response->entries[x].display);
+            memcpy(response->entries[x].state, &wire[offset], sizeof(response->entries[x].state));
+            offset += sizeof(response->entries[x].state);
             response->entries[x].agent_pid = (int32_t)frdp_ipc_read_u32_le(&wire[offset]);
             offset += 4U;
         } else {

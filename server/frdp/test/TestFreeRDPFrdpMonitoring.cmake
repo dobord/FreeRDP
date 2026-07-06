@@ -53,9 +53,9 @@ case "${FRDP_FAKE_MODE:-ok}" in
 		if [[ $1 == status ]]; then
 			printf 'Status: running\nActive sessions: 2\n'
 		elif [[ $1 == list-sessions ]]; then
-			printf '%-36s  %-20s  %-8s  %-8s\n' SESSION USER DISPLAY PID
-			printf '%-36s  %-20s  %-8s  %-8s\n' session-1 alice :20 1001
-			printf '%-36s  %-20s  %-8s  %-8s\n' session-2 bob :21 1002
+			printf '%-36s  %-20s  %-8s  %-13s  %-8s\n' SESSION USER DISPLAY STATE PID
+			printf '%-36s  %-20s  %-8s  %-13s  %-8s\n' session-1 alice :20 active 1001
+			printf '%-36s  %-20s  %-8s  %-13s  %-8s\n' session-2 bob :21 disconnected 1002
 		fi
 		;;
 	detail-error)
@@ -102,8 +102,8 @@ foreach(expected
         "frdp_exporter_last_scrape_timestamp_seconds{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"}"
         "frdp_sessions_active{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 2"
         "frdp_sessions_detail_scrape_success{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 1"
-        "frdp_sessions_info{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\",session_id=\"session-1\",user=\"alice\",display=\":20\",agent_pid=\"1001\"} 1"
-        "frdp_sessions_info{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\",session_id=\"session-2\",user=\"bob\",display=\":21\",agent_pid=\"1002\"} 1"
+        "frdp_sessions_info{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\",session_id=\"session-1\",user=\"alice\",display=\":20\",state=\"active\",agent_pid=\"1001\"} 1"
+        "frdp_sessions_info{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\",session_id=\"session-2\",user=\"bob\",display=\":21\",state=\"disconnected\",agent_pid=\"1002\"} 1"
         "frdp_sessions_max{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 10"
         "frdp_sessions_utilization_ratio{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 0.200000")
   expect_contains("${metrics}" "${expected}" "successful scrape metrics")

@@ -211,13 +211,13 @@ Deliverables:
 - [x] CMake install rules for FRDP runtime helper binaries, `frdpd.toml`, PAM service, systemd unit examples, and inactive MAC policy examples verified with the `server` component in an isolated build;
 - [x] package previews (root `debian/` metadata supports a verified server-only binary package smoke build with `dpkg-buildpackage`; `packaging/rpm/frdpd.spec` supports a verified server-only `rpmbuild -bb --nodeps` smoke build with local macros, while distro RPM CI and production distro policy verification remain open);
 - [x] admin CLI `frdpctl` builds and installs under `WITH_FRDPD`;
-- [x] admin CLI `frdpctl status` / `list-sessions` / `kill-session` operations over `frdp-sesmand` session IPC, with local CTest smoke coverage for request/response behavior;
+- [x] admin CLI `frdpctl status` / `list-sessions` / `kill-session` operations over `frdp-sesmand` session IPC, including per-session lifecycle state in `list-sessions`, with local CTest smoke coverage for request/response behavior;
 - [x] admin CLI `frdpctl reload` session IPC operation, with local request/response CTest coverage including the applied PAM-service success message;
 - [x] real `frdp-authd --config` startup and `frdp-sesmand --config` reread/apply path behind `frdpctl reload` for PAM service selection, with the reload response reporting `pam-service applied: <service>`;
 - [ ] full runtime config reload coverage for listener sockets, TLS material, channel policy, clipboard policy, and helper topology;
 - [x] configuration reference, example, and partial parser integration for implemented daemon fields, including `max_connections` and static/dynamic channel filter policy (`10-configuration-reference.md`, `server/frdp/config/frdpd.toml`);
 - [x] runbooks for AD join, keytab rotation, and troubleshooting (`09-runbooks.md`);
-- [ ] dashboards and alert rules (partial: starter node_exporter textfile collector with session reachability/count/capacity/utilization/freshness/per-session info metrics, Prometheus alert examples including stale collector detection, and a Grafana dashboard install under `/usr/share/frdpd/monitoring` with focused CTest validation; native authentication/frame metrics and pilot threshold tuning remain open);
+- [ ] dashboards and alert rules (partial: starter node_exporter textfile collector with session reachability/count/capacity/utilization/freshness/per-session info metrics including session lifecycle state, Prometheus alert examples including stale collector detection, and a Grafana dashboard install under `/usr/share/frdpd/monitoring` with focused CTest validation; native authentication/frame metrics and pilot threshold tuning remain open);
 - [x] migration/fallback plan to xrdp (basic documented fallback in `09-runbooks.md`; rollback testing remains part of exit criteria);
 - [ ] GA support matrix (partial: `14-support-matrix.md` defines pilot candidates, unsupported capabilities, and required evidence before GA support claims; actual platform/client/package evidence remains open).
 

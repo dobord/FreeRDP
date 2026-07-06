@@ -95,10 +95,12 @@ static int send_list_response(int fd)
 	snprintf(response.entries[0].session_id, sizeof(response.entries[0].session_id), "session-1");
 	snprintf(response.entries[0].user, sizeof(response.entries[0].user), "alice");
 	snprintf(response.entries[0].display, sizeof(response.entries[0].display), ":20");
+	snprintf(response.entries[0].state, sizeof(response.entries[0].state), "active");
 	response.entries[0].agent_pid = 1001;
 	snprintf(response.entries[1].session_id, sizeof(response.entries[1].session_id), "session-2");
 	snprintf(response.entries[1].user, sizeof(response.entries[1].user), "bob");
 	snprintf(response.entries[1].display, sizeof(response.entries[1].display), ":21");
+	snprintf(response.entries[1].state, sizeof(response.entries[1].state), "disconnected");
 	response.entries[1].agent_pid = 1002;
 
 	return frdp_ipc_send_session_list_response(fd, &response);
@@ -113,6 +115,7 @@ static int send_control_list_response(int fd)
 	snprintf(response.entries[0].session_id, sizeof(response.entries[0].session_id), "session\n1");
 	snprintf(response.entries[0].user, sizeof(response.entries[0].user), "al\tice");
 	snprintf(response.entries[0].display, sizeof(response.entries[0].display), ":\\20");
+	snprintf(response.entries[0].state, sizeof(response.entries[0].state), "active\nnow");
 	response.entries[0].agent_pid = 1003;
 
 	return frdp_ipc_send_session_list_response(fd, &response);
@@ -582,12 +585,14 @@ static int test_list_sessions(void)
 		return -1;
 	if (result.status != 0)
 		return -1;
-	snprintf(expected, sizeof(expected), "%-36s  %-20s  %-8s  %-8s\n", "SESSION", "USER",
-	         "DISPLAY", "PID");
+	snprintf(expected, sizeof(expected), "%-36s  %-20s  %-8s  %-13s  %-8s\n", "SESSION",
+	         "USER", "DISPLAY", "STATE", "PID");
 	snprintf(expected + strlen(expected), sizeof(expected) - strlen(expected),
-	         "%-36s  %-20s  %-8s  %-8d\n", "session-1", "alice", ":20", 1001);
+	         "%-36s  %-20s  %-8s  %-13s  %-8d\n", "session-1", "alice", ":20",
+	         "active", 1001);
 	snprintf(expected + strlen(expected), sizeof(expected) - strlen(expected),
-	         "%-36s  %-20s  %-8s  %-8d\n", "session-2", "bob", ":21", 1002);
+	         "%-36s  %-20s  %-8s  %-13s  %-8d\n", "session-2", "bob", ":21",
+	         "disconnected", 1002);
 	if (strcmp(result.stdout_data, expected) != 0)
 		return -1;
 	if (strcmp(result.stderr_data, "") != 0)
@@ -605,10 +610,11 @@ static int test_list_sessions_escapes_fields(void)
 		return -1;
 	if (result.status != 0)
 		return -1;
-	snprintf(expected, sizeof(expected), "%-36s  %-20s  %-8s  %-8s\n", "SESSION", "USER",
-	         "DISPLAY", "PID");
+	snprintf(expected, sizeof(expected), "%-36s  %-20s  %-8s  %-13s  %-8s\n", "SESSION",
+	         "USER", "DISPLAY", "STATE", "PID");
 	snprintf(expected + strlen(expected), sizeof(expected) - strlen(expected),
-	         "%-36s  %-20s  %-8s  %-8d\n", "session\\x0a1", "al\\x09ice", ":\\\\20", 1003);
+	         "%-36s  %-20s  %-8s  %-13s  %-8d\n", "session\\x0a1", "al\\x09ice",
+	         ":\\\\20", "active\\x0anow", 1003);
 	if (strcmp(result.stdout_data, expected) != 0)
 		return -1;
 	if (strcmp(result.stderr_data, "") != 0)

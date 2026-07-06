@@ -136,6 +136,7 @@ static void terminate_session_list_response_strings(frdpSessionListResponse *res
         response->entries[i].session_id[sizeof(response->entries[i].session_id) - 1] = '\0';
         response->entries[i].user[sizeof(response->entries[i].user) - 1] = '\0';
         response->entries[i].display[sizeof(response->entries[i].display) - 1] = '\0';
+        response->entries[i].state[sizeof(response->entries[i].state) - 1] = '\0';
     }
 }
 
@@ -188,17 +189,20 @@ static int send_session_list_request(const char *socket_path, int status_only)
         return 0;
     }
 
-    printf("%-36s  %-20s  %-8s  %-8s\n", "SESSION", "USER", "DISPLAY", "PID");
+    printf("%-36s  %-20s  %-8s  %-13s  %-8s\n", "SESSION", "USER", "DISPLAY", "STATE", "PID");
     for (uint32_t i = 0; i < response.count; i++) {
         char escaped_session_id[sizeof(response.entries[i].session_id) * 4] = { 0 };
         char escaped_user[sizeof(response.entries[i].user) * 4] = { 0 };
         char escaped_display[sizeof(response.entries[i].display) * 4] = { 0 };
+        char escaped_state[sizeof(response.entries[i].state) * 4] = { 0 };
 
         escape_text(response.entries[i].session_id, escaped_session_id, sizeof(escaped_session_id));
         escape_text(response.entries[i].user, escaped_user, sizeof(escaped_user));
         escape_text(response.entries[i].display, escaped_display, sizeof(escaped_display));
-        printf("%-36s  %-20s  %-8s  %-8d\n", escaped_session_id, escaped_user,
-               escaped_display, (int)response.entries[i].agent_pid);
+        escape_text(response.entries[i].state[0] ? response.entries[i].state : "unknown",
+                    escaped_state, sizeof(escaped_state));
+        printf("%-36s  %-20s  %-8s  %-13s  %-8d\n", escaped_session_id, escaped_user,
+               escaped_display, escaped_state, (int)response.entries[i].agent_pid);
     }
     return 0;
 }
