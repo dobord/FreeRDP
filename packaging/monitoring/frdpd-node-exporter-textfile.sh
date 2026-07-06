@@ -81,6 +81,7 @@ cleanup()
 trap cleanup EXIT
 
 status=0
+scrape_timestamp=$(date +%s)
 status_output=$(frdpctl status --socket "$socket" 2>&1) || status=$?
 reachable=0
 scrape_success=0
@@ -106,6 +107,10 @@ fi
 	printf '# HELP frdp_exporter_scrape_success Whether this textfile scrape completed and parsed successfully.\n'
 	printf '# TYPE frdp_exporter_scrape_success gauge\n'
 	printf 'frdp_exporter_scrape_success{socket="%s"} %d\n' "$(escape_label "$socket")" "$scrape_success"
+	printf '# HELP frdp_exporter_last_scrape_timestamp_seconds Unix timestamp when this FRDP textfile collector last ran.\n'
+	printf '# TYPE frdp_exporter_last_scrape_timestamp_seconds gauge\n'
+	printf 'frdp_exporter_last_scrape_timestamp_seconds{socket="%s"} %d\n' \
+		"$(escape_label "$socket")" "$scrape_timestamp"
 	printf '# HELP frdp_sessions_active Active sessions reported by frdp-sesmand.\n'
 	printf '# TYPE frdp_sessions_active gauge\n'
 	printf 'frdp_sessions_active{socket="%s"} %d\n' "$(escape_label "$socket")" "$active_sessions"

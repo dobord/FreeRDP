@@ -38,11 +38,11 @@ The package installs starter monitoring examples under
 
 - `frdpd-node-exporter-textfile.sh` calls `frdpctl status` and writes
   Prometheus node_exporter textfile metrics for session-manager reachability,
-  scrape success and active sessions. Set `FRDP_MAX_CONNECTIONS` or pass
-  `--max-connections` to emit the optional capacity and utilization metrics
-  used by the alert rules.
+  scrape success, collector freshness and active sessions. Set
+  `FRDP_MAX_CONNECTIONS` or pass `--max-connections` to emit the optional
+  capacity and utilization metrics used by the alert rules.
 - `frdpd-prometheus-alerts.yml` contains starter alerts for an unreachable
-  session manager, failed textfile scrapes and high session capacity.
+  session manager, failed or stale textfile scrapes and high session capacity.
 
 Example cron or systemd timer command:
 
@@ -59,7 +59,7 @@ These examples currently export:
 - Configured session limit and active-session utilization ratio when
   `max_connections` is supplied to the collector.
 - Session-manager control-socket reachability.
-- Textfile scrape success or the last scrape error.
+- Textfile scrape freshness, success or the last scrape error.
 
 Integrate with Prometheus and Grafana:
 

@@ -33,6 +33,12 @@ function(expect_not_contains haystack needle label)
   endif()
 endfunction()
 
+function(expect_matches haystack pattern label)
+  if(NOT haystack MATCHES "${pattern}")
+    message(FATAL_ERROR "${label} does not match '${pattern}':\n${haystack}")
+  endif()
+endfunction()
+
 file(WRITE "${fake_frdpctl}" [==[#!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ $# -ne 3 || $1 != status || $2 != --socket ]]; then
@@ -76,11 +82,15 @@ file(READ "${output_file}" metrics)
 foreach(expected
         "frdp_sesmand_reachable{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 1"
         "frdp_exporter_scrape_success{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 1"
+        "frdp_exporter_last_scrape_timestamp_seconds{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"}"
         "frdp_sessions_active{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 7"
         "frdp_sessions_max{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 10"
         "frdp_sessions_utilization_ratio{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 0.700000")
   expect_contains("${metrics}" "${expected}" "successful scrape metrics")
 endforeach()
+expect_matches("${metrics}"
+               "frdp_exporter_last_scrape_timestamp_seconds\\{socket=\"/tmp/frdp-\\\\\"quoted\\\\\"-socket\"\\} [1-9][0-9]+"
+               "successful scrape metrics")
 
 set(error_socket "/tmp/frdp-error")
 execute_process(
@@ -99,10 +109,14 @@ file(READ "${output_file}" metrics)
 foreach(expected
         "frdp_sesmand_reachable{socket=\"/tmp/frdp-error\"} 0"
         "frdp_exporter_scrape_success{socket=\"/tmp/frdp-error\"} 0"
+        "frdp_exporter_last_scrape_timestamp_seconds{socket=\"/tmp/frdp-error\"}"
         "frdp_sessions_active{socket=\"/tmp/frdp-error\"} 0"
         "frdp_exporter_last_error{socket=\"/tmp/frdp-error\"} 1")
   expect_contains("${metrics}" "${expected}" "failed scrape metrics")
 endforeach()
+expect_matches("${metrics}"
+               "frdp_exporter_last_scrape_timestamp_seconds\\{socket=\"/tmp/frdp-error\"\\} [1-9][0-9]+"
+               "failed scrape metrics")
 expect_contains("${metrics}" "# Last frdpctl scrape error: cannot reach socket /tmp/frdp-error"
                 "failed scrape metrics")
 
@@ -123,11 +137,15 @@ file(READ "${output_file}" metrics)
 foreach(expected
         "frdp_sesmand_reachable{socket=\"/tmp/frdp-malformed\"} 1"
         "frdp_exporter_scrape_success{socket=\"/tmp/frdp-malformed\"} 0"
+        "frdp_exporter_last_scrape_timestamp_seconds{socket=\"/tmp/frdp-malformed\"}"
         "frdp_sessions_active{socket=\"/tmp/frdp-malformed\"} 0"
         "frdp_sessions_max{socket=\"/tmp/frdp-malformed\"} 10"
         "frdp_exporter_last_error{socket=\"/tmp/frdp-malformed\"} 1")
   expect_contains("${metrics}" "${expected}" "malformed scrape metrics")
 endforeach()
+expect_matches("${metrics}"
+               "frdp_exporter_last_scrape_timestamp_seconds\\{socket=\"/tmp/frdp-malformed\"\\} [1-9][0-9]+"
+               "malformed scrape metrics")
 expect_contains("${metrics}" "# Last frdpctl scrape error: missing active session count"
                 "malformed scrape metrics")
 expect_not_contains("${metrics}" "frdp_sessions_utilization_ratio{socket=\"/tmp/frdp-malformed\"}"
@@ -154,6 +172,8 @@ foreach(expected
         "expr: frdp_sesmand_reachable == 0"
         "alert: FRDPTextfileScrapeFailed"
         "expr: frdp_exporter_scrape_success == 0"
+        "alert: FRDPTextfileCollectorStale"
+        "expr: time() - frdp_exporter_last_scrape_timestamp_seconds > 300"
         "alert: FRDPSessionCapacityHigh"
         "expr: frdp_sessions_utilization_ratio > 0.9")
   expect_contains("${alerts}" "${expected}" "Prometheus alerts")
@@ -165,6 +185,7 @@ foreach(expected
         "\"uid\": \"frdp-server-preview\""
         "\"expr\": \"frdp_sesmand_reachable\""
         "\"expr\": \"frdp_exporter_scrape_success\""
+        "\"expr\": \"time() - frdp_exporter_last_scrape_timestamp_seconds\""
         "\"expr\": \"frdp_sessions_active\""
         "\"expr\": \"frdp_sessions_max\""
         "\"expr\": \"frdp_sessions_utilization_ratio\""
