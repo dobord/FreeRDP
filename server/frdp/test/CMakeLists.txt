@@ -83,6 +83,10 @@ add_test(NAME TestFreeRDPFrdpd
                  -DFRDP_SAMPLE_CONFIG_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../config/frdpd.toml
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpd.cmake)
 
+add_test(NAME TestFreeRDPFrdpIpcDemo
+         COMMAND ${CMAKE_COMMAND} -DFRDPD_IPC_DEMO_BINARY=$<TARGET_FILE:frdpd-ipc-demo>
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpIpcDemo.cmake)
+
 if(TARGET frdp-krb-authd)
   add_test(NAME TestFreeRDPFrdpKrbAuthd
            COMMAND ${CMAKE_COMMAND} -DFRDP_KRB_AUTHD_BINARY=$<TARGET_FILE:frdp-krb-authd>
