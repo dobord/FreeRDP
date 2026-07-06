@@ -104,6 +104,8 @@ foreach(expected
         "frdp_sessions_detail_scrape_success{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 1"
         "frdp_sessions_info{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\",session_id=\"session-1\",user=\"alice\",display=\":20\",state=\"active\",agent_pid=\"1001\"} 1"
         "frdp_sessions_info{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\",session_id=\"session-2\",user=\"bob\",display=\":21\",state=\"disconnected\",agent_pid=\"1002\"} 1"
+        "frdp_sessions_state{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\",state=\"active\"} 1"
+        "frdp_sessions_state{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\",state=\"disconnected\"} 1"
         "frdp_sessions_max{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 10"
         "frdp_sessions_utilization_ratio{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 0.200000")
   expect_contains("${metrics}" "${expected}" "successful scrape metrics")
@@ -243,6 +245,8 @@ foreach(expected
         "\"expr\": \"frdp_sessions_utilization_ratio\""
         "\"expr\": \"frdp_sessions_detail_scrape_success\""
         "\"expr\": \"frdp_sessions_info\""
+        "\"expr\": \"frdp_sessions_state\""
+        "\"title\": \"Session States\""
         "\"title\": \"Active Session Details\""
         "\"type\": \"prometheus\"")
   expect_contains("${dashboard}" "${expected}" "Grafana dashboard")

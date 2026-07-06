@@ -38,6 +38,21 @@ escape_comment()
 	printf '%s' "$value"
 }
 
+record_session_state()
+{
+	local state=$1
+	local index
+
+	for index in "${!session_states[@]}"; do
+		if [[ ${session_states[$index]} == "$state" ]]; then
+			session_state_counts[$index]=$((session_state_counts[$index] + 1))
+			return
+		fi
+	done
+	session_states+=("$state")
+	session_state_counts+=(1)
+}
+
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--socket)
@@ -88,6 +103,8 @@ scrape_success=0
 detail_scrape_success=0
 active_sessions=0
 session_details=()
+session_states=()
+session_state_counts=()
 error=""
 
 if [[ $status -eq 0 ]]; then
@@ -108,6 +125,7 @@ if [[ $status -eq 0 ]]; then
 				      -n ${session_state:-} &&
 				      ${session_pid:-} =~ ^-?[0-9]+$ ]]; then
 					session_details+=("${session_id}"$'\t'"${session_user}"$'\t'"${session_display}"$'\t'"${session_state}"$'\t'"${session_pid}")
+					record_session_state "$session_state"
 				fi
 			done <<<"$detail_output"
 		else
@@ -148,6 +166,13 @@ fi
 				"$(escape_label "$session_user")" "$(escape_label "$session_display")" \
 				"$(escape_label "$session_state")" \
 				"$(escape_label "$session_pid")"
+		done
+		printf '# HELP frdp_sessions_state Sessions grouped by lifecycle state reported by frdpctl list-sessions.\n'
+		printf '# TYPE frdp_sessions_state gauge\n'
+		for index in "${!session_states[@]}"; do
+			printf 'frdp_sessions_state{socket="%s",state="%s"} %d\n' \
+				"$(escape_label "$socket")" "$(escape_label "${session_states[$index]}")" \
+				"${session_state_counts[$index]}"
 		done
 	fi
 	if [[ -n $max_connections ]]; then
