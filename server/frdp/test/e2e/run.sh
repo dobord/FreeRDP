@@ -16,16 +16,18 @@ positive_integer()
 	[[ $1 =~ ^[1-9][0-9]*$ ]]
 }
 
+positive_integer "$profile_timeout" || { echo "FRDP_E2E_PROFILE_TIMEOUT must be positive" >&2; exit 2; }
+command -v git >/dev/null 2>&1 || { echo "git is required" >&2; exit 2; }
+command -v tar >/dev/null 2>&1 || { echo "tar is required" >&2; exit 2; }
+command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 2; }
+docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required" >&2; exit 2; }
+command -v timeout >/dev/null 2>&1 || { echo "timeout is required" >&2; exit 2; }
+
 git -C "$repo_root" rev-parse 'HEAD^{tree}' >"$artifacts/base-tree-sha.txt"
 tar -C "$repo_root" -czf "$artifacts/frdp-source.tar.gz" \
 	server/frdp tools/frdpctl include/freerdp/channels/wtsvc.h \
 	libfreerdp/core/server.c libfreerdp/core/server.h \
 	.github/workflows/frdpd-compose.yml
-
-positive_integer "$profile_timeout" || { echo "FRDP_E2E_PROFILE_TIMEOUT must be positive" >&2; exit 2; }
-command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 2; }
-docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required" >&2; exit 2; }
-command -v timeout >/dev/null 2>&1 || { echo "timeout is required" >&2; exit 2; }
 
 compose=(docker compose -f "$compose_file")
 
