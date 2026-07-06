@@ -3,7 +3,7 @@ Description=FreeRDP RDP Server Session Manager
 After=network.target
 
 [Service]
-ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/frdp-sesmand --pam-service frdpd --socket /run/frdp-sesmand/sesmand.sock
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/frdp-sesmand --config @CMAKE_INSTALL_FULL_SYSCONFDIR@/frdpd/frdpd.toml --socket /run/frdp-sesmand/sesmand.sock
 Environment=FRDP_AUTH_TOKEN_KEY=/run/frdp-auth-token/key
 User=root
 Group=root

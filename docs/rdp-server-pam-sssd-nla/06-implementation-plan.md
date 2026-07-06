@@ -149,7 +149,7 @@ Deliverables:
 - [x] session registry receives authenticated RDP peer open/close requests on the `session_socket` IPC path;
 - [x] PAM session lifecycle in the integrated `server/frdp/frdpd` peer path;
 - [x] standalone development `frdp-sesmand --open-session <user>` path performs PAM account, credential, session, process-group, and cleanup handling behind an explicit opt-in guard;
-- [ ] logind/cgroup integration;
+- [ ] logind/cgroup integration (partial: `frdp-sesmand` can apply configured POSIX `RLIMIT_NPROC` and `RLIMIT_AS` guards to newly launched session agents; systemd-logind scope ownership, cgroup CPU/memory accounting, and production quota management remain open);
 - [x] headless Xvfb launch integrated with `frdpd -> frdp-sesmand -> frdp-session-agent` session requests, including fail-closed backend `exec()`, X display, and XTest readiness checks;
 - [ ] simple reconnect by user/session id (partial: reconnect-selection policy for matching authenticated users to an explicit session id or the newest disconnected session now has focused CTest coverage; runtime attach/reuse behavior is still not implemented);
 - [x] cleanup on disconnect across `frdp-sesmand` agent process groups and PAM sessions (`session_socket` close requests use covered cleanup-decision policy to terminate the agent process group, close PAM state, unlink runtime sockets, release display reservations, and mark the in-memory session state through the `ACTIVE` -> `STOPPING` -> `DEAD` path; display allocation can safely reconcile stale FRDP-owned reservation files whose recorded PID is gone, while durable cleanup after prolonged `frdp-sesmand` outage remains tracked separately).
@@ -213,7 +213,7 @@ Deliverables:
 - [x] admin CLI `frdpctl` builds and installs under `WITH_FRDPD`;
 - [x] admin CLI `frdpctl status` / `list-sessions` / `kill-session` operations over `frdp-sesmand` session IPC, including per-session lifecycle state in `list-sessions` and grouped state counts in `status`, with local CTest smoke coverage for request/response behavior;
 - [x] admin CLI `frdpctl reload` session IPC operation, with local request/response CTest coverage including the applied PAM-service success message;
-- [x] real `frdp-authd --config` startup and `frdp-sesmand --config` reread/apply path behind `frdpctl reload` for PAM service selection, with the reload response reporting `pam-service applied: <service>`;
+- [x] real `frdp-authd --config` startup and `frdp-sesmand --config` startup/reread/apply path behind installed helper units and `frdpctl reload` for PAM service and session resource guard selection, with the reload response reporting `pam-service applied: <service>`;
 - [ ] full runtime config reload coverage for listener sockets, TLS material, channel policy, clipboard policy, and helper topology;
 - [x] configuration reference, example, and partial parser integration for implemented daemon fields, including `max_connections` and static/dynamic channel filter policy (`10-configuration-reference.md`, `server/frdp/config/frdpd.toml`);
 - [x] runbooks for AD join, keytab rotation, and troubleshooting (`09-runbooks.md`);

@@ -9,6 +9,8 @@
 
 #define FRDP_CLIPBOARD_DEFAULT_MAX_TEXT_BYTES 65536U
 #define FRDP_CLIPBOARD_MAX_TEXT_BYTES_LIMIT 1048576U
+#define FRDP_SESSION_MAX_PROCESSES_LIMIT 1048576U
+#define FRDP_SESSION_MEMORY_MAX_MB_LIMIT 1048576U
 
 static int copy_string(char *dst, size_t dst_size, const char *src)
 {
@@ -375,6 +377,17 @@ static int validate_audit_policy(const frdpConfig *config)
     return (config->audit.enabled == 0) ? 0 : -1;
 }
 
+static int validate_session_resource_policy(const frdpConfig *config)
+{
+    if (!config)
+        return -1;
+    if (config->session_resources.max_processes > FRDP_SESSION_MAX_PROCESSES_LIMIT)
+        return -1;
+    if (config->session_resources.memory_max_mb > FRDP_SESSION_MEMORY_MAX_MB_LIMIT)
+        return -1;
+    return 0;
+}
+
 /* Load key/value pairs from a small fail-closed TOML subset. */
 int frdp_config_load(const char *path, frdpConfig *config)
 {
@@ -405,6 +418,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_keytab = 0;
     int seen_accepted_spn = 0;
     int seen_session_socket = 0;
+    int seen_session_max_processes = 0;
+    int seen_session_memory_max_mb = 0;
     int seen_channel_static_mode = 0;
     int seen_channel_static_allow = 0;
     int seen_channel_static_deny = 0;
@@ -530,6 +545,9 @@ int frdp_config_load(const char *path, frdpConfig *config)
                                       (strcmp(key, "kerberos") == 0)) ||
                                      ((strcmp(current_section, "clipboard") == 0) &&
                                       (strcmp(key, "max_text_bytes") == 0)) ||
+                                     ((strcmp(current_section, "session") == 0) &&
+                                      ((strcmp(key, "max_processes") == 0) ||
+                                       (strcmp(key, "memory_max_mb") == 0))) ||
                                      ((strcmp(current_section, "audit") == 0) &&
                                       (strcmp(key, "enabled") == 0));
         if (allow_bare_value) {
@@ -724,6 +742,30 @@ int frdp_config_load(const char *path, frdpConfig *config)
                     return -1;
                 }
             }
+            else if (strcmp(key, "max_processes") == 0)
+            {
+                if (seen_session_max_processes) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_session_max_processes = 1;
+                if (parse_uint32_limit(val, &config->session_resources.max_processes) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "memory_max_mb") == 0)
+            {
+                if (seen_session_memory_max_mb) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_session_memory_max_mb = 1;
+                if (parse_uint32_limit(val, &config->session_resources.memory_max_mb) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
             else {
                 fclose(f);
                 return -1;
@@ -867,6 +909,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
                                       seen_channel_dynamic_deny) != 0)
         return -1;
     if (validate_clipboard_policy(config, seen_clipboard_direction) != 0)
+        return -1;
+    if (validate_session_resource_policy(config) != 0)
         return -1;
     if (validate_audit_policy(config) != 0)
         return -1;

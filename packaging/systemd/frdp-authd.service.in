@@ -3,7 +3,7 @@ Description=FreeRDP RDP Server Authentication Broker
 After=network.target
 
 [Service]
-ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/frdp-authd --pam-service frdpd --socket /run/frdp-authd/authd.sock
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/frdp-authd --config @CMAKE_INSTALL_FULL_SYSCONFDIR@/frdpd/frdpd.toml --socket /run/frdp-authd/authd.sock
 Environment=FRDP_AUTH_TOKEN_KEY=/run/frdp-auth-token/key
 User=root
 Group=root

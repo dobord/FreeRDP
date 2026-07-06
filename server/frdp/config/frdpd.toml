@@ -21,6 +21,11 @@ auth_socket = "/run/frdp-authd/authd.sock"
 
 [session]
 session_socket = "/run/frdp-sesmand/sesmand.sock"
+# Optional POSIX resource-limit guard applied by frdp-sesmand to newly launched
+# session agents before exec. 0 or omission means unlimited; cgroup/logind
+# ownership remains a separate production hardening milestone.
+# max_processes = 256
+# memory_max_mb = 4096
 
 # [channels]
 # Channel filtering defaults to blocklist mode with empty lists.

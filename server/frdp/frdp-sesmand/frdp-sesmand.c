@@ -69,6 +69,7 @@ static session sessions[MAX_SESSIONS];
 static int session_count = 0;
 static int next_display = FRDP_SESMAND_DISPLAY_MIN;
 static char g_pam_service[64] = "frdpd";
+static frdpSessionResourcePolicy g_session_resource_policy = {0};
 static char g_config_path[1024] = {0};
 static char g_agent_socket_dir[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
 static volatile sig_atomic_t g_stop_requested = 0;
@@ -228,6 +229,34 @@ static void terminate_agent_start_failure(pid_t pid, pid_t pgid)
             return;
         usleep(100000);
     }
+}
+
+static int set_session_rlimit(int resource, rlim_t value)
+{
+    struct rlimit limit;
+
+    memset(&limit, 0, sizeof(limit));
+    limit.rlim_cur = value;
+    limit.rlim_max = value;
+    return setrlimit(resource, &limit);
+}
+
+static int apply_session_resource_policy(const frdpSessionResourcePolicy *policy)
+{
+    if (!policy)
+        return -1;
+    if (policy->max_processes > 0 &&
+        set_session_rlimit(RLIMIT_NPROC, (rlim_t)policy->max_processes) != 0)
+        return -1;
+    if (policy->memory_max_mb > 0) {
+        const rlim_t memory_limit = (rlim_t)policy->memory_max_mb * (rlim_t)1024U * (rlim_t)1024U;
+
+        if ((memory_limit / ((rlim_t)1024U * (rlim_t)1024U)) != (rlim_t)policy->memory_max_mb)
+            return -1;
+        if (set_session_rlimit(RLIMIT_AS, memory_limit) != 0)
+            return -1;
+    }
+    return 0;
 }
 
 static int wait_for_agent_ready(int fd, pid_t pid, pid_t pgid)
@@ -560,6 +589,8 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
             child_exec_failed(exec_pipe[1]);
         /* Child: create a new process group for the session and drop privileges. */
         if (setpgid(0, 0) != 0)
+            child_exec_failed(exec_pipe[1]);
+        if (apply_session_resource_policy(&g_session_resource_policy) != 0)
             child_exec_failed(exec_pipe[1]);
         /* Set environment variables for the display */
         setenv("DISPLAY", display_str, 1);
@@ -899,38 +930,56 @@ static int copy_config_path(const char *path)
     return (rc >= 0 && (size_t)rc < sizeof(g_config_path)) ? 0 : -1;
 }
 
-static int load_configured_pam_service(const char *config_path, char *service, size_t service_size)
+static int load_configured_sesmand_policy(const char *config_path, char *service,
+                                          size_t service_size,
+                                          frdpSessionResourcePolicy *resource_policy)
 {
     frdpConfig config;
     int rc = 0;
 
-    if (!config_path || !service || service_size == 0)
+    if (!config_path || !service || service_size == 0 || !resource_policy)
         return -1;
     if (frdp_config_load(config_path, &config) != 0)
         return -1;
     if (!pam_service_is_valid(config.pam_service))
         return -1;
     rc = snprintf(service, service_size, "%s", config.pam_service);
-    return (rc >= 0 && (size_t)rc < service_size) ? 0 : -1;
+    if (!(rc >= 0 && (size_t)rc < service_size))
+        return -1;
+    *resource_policy = config.session_resources;
+    return 0;
 }
 
-static int reload_configured_pam_service(char *error, size_t error_size)
+static int apply_sesmand_policy(const char *pam_service,
+                                const frdpSessionResourcePolicy *resource_policy)
+{
+    if (!resource_policy)
+        return -1;
+    if (set_pam_service_name(pam_service) != 0)
+        return -1;
+    g_session_resource_policy = *resource_policy;
+    return 0;
+}
+
+static int reload_configured_sesmand_policy(char *error, size_t error_size)
 {
     char pam_service[sizeof(g_pam_service)] = {0};
+    frdpSessionResourcePolicy resource_policy = {0};
 
     if (g_config_path[0] == '\0') {
         if (error && error_size > 0)
             snprintf(error, error_size, "%s", "no config path configured");
         return -1;
     }
-    if (load_configured_pam_service(g_config_path, pam_service, sizeof(pam_service)) != 0) {
+    if (load_configured_sesmand_policy(g_config_path, pam_service, sizeof(pam_service),
+                                       &resource_policy) != 0) {
         if (error && error_size > 0)
             snprintf(error, error_size, "%s", "config reload failed");
         return -1;
     }
-    if (set_pam_service_name(pam_service) != 0) {
+    if (apply_sesmand_policy(pam_service, &resource_policy) != 0) {
         if (error && error_size > 0)
-            snprintf(error, error_size, "%s", "invalid PAM service name");
+            snprintf(error, error_size, "%s", "invalid session policy");
         return -1;
     }
     return 0;
@@ -1241,11 +1290,12 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
 
     if (config_path) {
         char configured_service[sizeof(g_pam_service)] = {0};
+        frdpSessionResourcePolicy resource_policy = {0};
 
         if (copy_config_path(config_path) != 0 ||
-            load_configured_pam_service(config_path, configured_service,
-                                        sizeof(configured_service)) != 0 ||
-            set_pam_service_name(configured_service) != 0) {
+            load_configured_sesmand_policy(config_path, configured_service,
+                                           sizeof(configured_service), &resource_policy) != 0 ||
+            apply_sesmand_policy(configured_service, &resource_policy) != 0) {
             fprintf(stderr, "failed to load frdp-sesmand config\n");
             return -1;
         }
@@ -1365,7 +1415,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                 char error[sizeof(((frdpControlResponse *)0)->error)] = {0};
                 char message[sizeof(((frdpControlResponse *)0)->message)] = {0};
 
-                if (reload_configured_pam_service(error, sizeof(error)) == 0) {
+                if (reload_configured_sesmand_policy(error, sizeof(error)) == 0) {
                     snprintf(message, sizeof(message), "pam-service applied: %s", g_pam_service);
                     (void)send_reload_response(cfd, 1, message, NULL);
                 } else

@@ -141,8 +141,10 @@ logind, user session startup, and runtime-directory responsibilities:
 `PrivateTmp=true`, `ProtectSystem=full`, kernel/log/clock/hostname/realtime/personality
 restrictions, `SystemCallArchitectures=native`, and explicit write access only
 to `/run/frdp-sesmand` plus `/run/frdp-auth-token`. It also sets
-`TasksMax=4096` as a coarse process-count guard while per-session cgroup
-ownership and CPU/memory quota enforcement remain open.
+`TasksMax=4096` as a coarse daemon-wide process-count guard. Per-session
+`frdp-session-agent` launches can also receive configured POSIX
+`RLIMIT_NPROC` and `RLIMIT_AS` guards, while systemd-logind scope ownership,
+cgroup CPU/memory accounting, and production quota management remain open.
 
 ## Package signing and reproducible builds
 

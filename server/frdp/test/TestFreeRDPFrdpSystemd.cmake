@@ -7,6 +7,9 @@ endif()
 if(NOT DEFINED FRDP_INSTALL_FULL_BINDIR)
   message(FATAL_ERROR "FRDP_INSTALL_FULL_BINDIR is not set")
 endif()
+if(NOT DEFINED FRDP_INSTALL_FULL_SYSCONFDIR)
+  message(FATAL_ERROR "FRDP_INSTALL_FULL_SYSCONFDIR is not set")
+endif()
 
 set(test_root "${CMAKE_CURRENT_BINARY_DIR}/TestFreeRDPFrdpSystemd")
 set(systemd_dir "${test_root}/etc/systemd/system")
@@ -56,6 +59,7 @@ foreach(line
 endforeach()
 
 foreach(line
+        "ExecStart=${FRDP_INSTALL_FULL_BINDIR}/frdp-authd --config ${FRDP_INSTALL_FULL_SYSCONFDIR}/frdpd/frdpd.toml --socket /run/frdp-authd/authd.sock"
         "RuntimeDirectory=frdp-authd"
         "RuntimeDirectoryMode=0755"
         "PrivateTmp=true"
@@ -82,6 +86,7 @@ foreach(line
 endforeach()
 
 foreach(line
+        "ExecStart=${FRDP_INSTALL_FULL_BINDIR}/frdp-sesmand --config ${FRDP_INSTALL_FULL_SYSCONFDIR}/frdpd/frdpd.toml --socket /run/frdp-sesmand/sesmand.sock"
         "RuntimeDirectory=frdp-sesmand"
         "RuntimeDirectoryMode=0755"
         "PrivateTmp=true"

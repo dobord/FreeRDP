@@ -24,6 +24,9 @@ auth_socket = "/run/frdp-authd/authd.sock"
 
 [session]
 session_socket = "/run/frdp-sesmand/sesmand.sock"
+# Optional POSIX guards for new session-agent children; 0 or omission means unlimited.
+# max_processes = 256
+# memory_max_mb = 4096
 
 # [channels]
 # Channel filtering defaults to blocklist mode with empty lists.
@@ -124,8 +127,9 @@ Installed unit examples:
 - per-user transient units for `frdp-session-agent`.
 
 The helper units are required for normal listener startup. The shipped `frdpd.service` requires and
-orders `frdp-authd.service` and `frdp-sesmand.service`; the shipped `frdpd.toml` points at their default
-sockets, and `FRDPD_ARGS` can stay empty for the canonical helper topology.
+orders `frdp-authd.service` and `frdp-sesmand.service`; all three units read
+`/etc/frdpd/frdpd.toml`, the shipped config points at the helper default sockets,
+and `FRDPD_ARGS` can stay empty for the canonical helper topology.
 
 The shipped unit hardening baseline is enforced by `TestFreeRDPFrdpSystemd`.
 The listener unit includes:

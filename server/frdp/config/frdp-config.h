@@ -42,6 +42,11 @@ typedef struct {
 } frdpClipboardPolicy;
 
 typedef struct {
+    uint32_t max_processes;
+    uint32_t memory_max_mb;
+} frdpSessionResourcePolicy;
+
+typedef struct {
     int enabled;
 } frdpAuditPolicy;
 
@@ -60,6 +65,7 @@ typedef struct {
     char keytab[256];
     char accepted_spn[256];
     char session_socket[108];
+    frdpSessionResourcePolicy session_resources;
     frdpChannelPolicy channels;
     frdpClipboardPolicy clipboard;
     frdpAuditPolicy audit;
