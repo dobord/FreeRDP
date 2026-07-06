@@ -45,3 +45,12 @@ groups:
         annotations:
           summary: "FRDP session capacity is high"
           description: "Active FRDP sessions are above 90% of the configured max_connections value for {{ $labels.socket }}."
+
+      - alert: FRDPSessionCleanupStuck
+        expr: frdp_sessions_state{state=~"stopping|dead"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FRDP sessions are stuck in cleanup states"
+          description: "One or more FRDP sessions for {{ $labels.socket }} have remained in {{ $labels.state }} state for more than ten minutes."

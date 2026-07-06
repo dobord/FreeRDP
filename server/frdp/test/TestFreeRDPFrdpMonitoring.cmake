@@ -229,7 +229,9 @@ foreach(expected
         "alert: FRDPTextfileCollectorStale"
         "expr: time() - frdp_exporter_last_scrape_timestamp_seconds > 300"
         "alert: FRDPSessionCapacityHigh"
-        "expr: frdp_sessions_utilization_ratio > 0.9")
+        "expr: frdp_sessions_utilization_ratio > 0.9"
+        "alert: FRDPSessionCleanupStuck"
+        "expr: frdp_sessions_state{state=~\"stopping|dead\"} > 0")
   expect_contains("${alerts}" "${expected}" "Prometheus alerts")
 endforeach()
 
