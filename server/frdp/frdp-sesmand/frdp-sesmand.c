@@ -734,6 +734,7 @@ static int send_session_response(int fd, int success, const char *session_id,
                                  const char *error)
 {
     frdpSessionResponse resp;
+    int rc = 0;
 
     memset(&resp, 0, sizeof(resp));
     resp.success = success;
@@ -746,12 +747,15 @@ static int send_session_response(int fd, int success, const char *session_id,
     if (error)
         snprintf(resp.error, sizeof(resp.error), "%s", error);
 
-    return frdp_ipc_send_session_response(fd, &resp);
+    rc = frdp_ipc_send_session_response(fd, &resp);
+    SecureZeroMemory(&resp, sizeof(resp));
+    return rc;
 }
 
 static int send_session_list_response(int fd)
 {
     frdpSessionListResponse resp;
+    int rc = 0;
 
     memset(&resp, 0, sizeof(resp));
 
@@ -770,12 +774,15 @@ static int send_session_list_response(int fd)
         resp.entries[i].agent_pid = sessions[i].agent_pid;
     }
 
-    return frdp_ipc_send_session_list_response(fd, &resp);
+    rc = frdp_ipc_send_session_list_response(fd, &resp);
+    SecureZeroMemory(&resp, sizeof(resp));
+    return rc;
 }
 
 static int send_reload_response(int fd, int success, const char *message, const char *error)
 {
     frdpControlResponse resp;
+    int rc = 0;
 
     memset(&resp, 0, sizeof(resp));
     resp.success = success;
@@ -784,7 +791,9 @@ static int send_reload_response(int fd, int success, const char *message, const 
     if (error)
         snprintf(resp.error, sizeof(resp.error), "%s", error);
 
-    return frdp_ipc_send_session_reload_response(fd, &resp);
+    rc = frdp_ipc_send_session_reload_response(fd, &resp);
+    SecureZeroMemory(&resp, sizeof(resp));
+    return rc;
 }
 
 static int verify_peer(int fd)
