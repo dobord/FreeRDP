@@ -965,6 +965,7 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 	char log_session_display[FRDPD_LOG_STRING_SIZE] = { 0 };
 	char log_agent_socket[FRDPD_LOG_STRING_SIZE] = { 0 };
 	char log_user[FRDPD_LOG_STRING_SIZE] = { 0 };
+	BOOL ok = FALSE;
 
 	if (!config || !context || !config->session_socket || (config->session_socket[0] == '\0'))
 		return TRUE;
@@ -986,7 +987,7 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 	                          context->authorization_id) ||
 	    !frdpd_copy_ipc_string(request.rhost, sizeof(request.rhost),
 	                          (client->hostname[0] != '\0') ? client->hostname : NULL))
-		return FALSE;
+		goto cleanup;
 
 	request.uid = (UINT64)context->uid;
 	request.gid = (UINT64)context->gid;
@@ -1010,7 +1011,7 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 		          frdpd_log_value(context->pam_user, log_user, sizeof(log_user), "unknown"),
 		          frdpd_log_value(response.error[0] ? response.error : NULL, log_error,
 		                          sizeof(log_error), "IPC failure"));
-		return FALSE;
+		goto cleanup;
 	}
 
 	if (!frdpd_copy_ipc_string(context->session_id, sizeof(context->session_id),
@@ -1050,7 +1051,7 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 		context->session_id[0] = '\0';
 		context->session_display[0] = '\0';
 		context->agent_socket[0] = '\0';
-		return FALSE;
+		goto cleanup;
 	}
 
 	context->managed_session_open = TRUE;
@@ -1066,7 +1067,12 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 	          frdpd_log_value(context->agent_socket, log_agent_socket, sizeof(log_agent_socket),
 	                          "unknown"),
 	          frdpd_log_value(context->pam_user, log_user, sizeof(log_user), "unknown"));
-	return TRUE;
+	ok = TRUE;
+
+cleanup:
+	SecureZeroMemory(&request, sizeof(request));
+	SecureZeroMemory(&response, sizeof(response));
+	return ok;
 }
 
 static void frdpd_auth_result_cleanup(frdpdAuthResult* result)
