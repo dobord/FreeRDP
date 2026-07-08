@@ -35,6 +35,7 @@
 #include <inttypes.h>
 #include <poll.h>
 
+#include <winpr/crt.h>
 #include <winpr/platform.h>
 
 #include "../config/frdp-config.h"
@@ -1145,12 +1146,13 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
     uid_t uid = (uid_t)-1;
     gid_t gid = (gid_t)-1;
     int has_posix_account = 0;
+    int rc = -1;
 
     memset(&req, 0, sizeof(req));
     memset(&req_v3, 0, sizeof(req_v3));
     if (type == FRDP_IPC_SESSION_REQUEST_V3) {
         if (frdp_ipc_recv_session_request_v3_payload(fd, &req_v3, payload_len) != 0)
-            return -1;
+            goto cleanup;
         memcpy(req.correlation_id, req_v3.correlation_id, sizeof(req.correlation_id));
         memcpy(req.session_id, req_v3.session_id, sizeof(req.session_id));
         memcpy(req.user, req_v3.user, sizeof(req.user));
@@ -1163,9 +1165,9 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
         has_posix_account = req_v3.has_posix_account;
     } else if (type == FRDP_IPC_SESSION_CLOSE_REQUEST) {
         if (frdp_ipc_recv_session_close_request_payload(fd, &req, payload_len) != 0)
-            return -1;
+            goto cleanup;
     } else {
-        return -1;
+        goto cleanup;
     }
     if (copy_ipc_string(correlation_id, sizeof(correlation_id), req.correlation_id,
                         sizeof(req.correlation_id)) != 0 ||
@@ -1173,37 +1175,56 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
                         sizeof(req.session_id)) != 0 ||
         copy_ipc_string(user, sizeof(user), req.user, sizeof(req.user)) != 0 ||
         copy_ipc_string(rhost, sizeof(rhost), req.rhost, sizeof(req.rhost)) != 0) {
-        return send_session_response(fd, 0, NULL, NULL, NULL, "invalid session request");
+        rc = send_session_response(fd, 0, NULL, NULL, NULL, "invalid session request");
+        goto cleanup;
     }
     if ((type == FRDP_IPC_SESSION_REQUEST_V3) &&
         (copy_ipc_string(authorization_id, sizeof(authorization_id), req_v3.authorization_id,
                          sizeof(req_v3.authorization_id)) != 0)) {
-        return send_session_response(fd, 0, NULL, NULL, NULL, "invalid authorization");
+        rc = send_session_response(fd, 0, NULL, NULL, NULL, "invalid authorization");
+        goto cleanup;
     }
 
     if (type == FRDP_IPC_SESSION_REQUEST_V3) {
         struct passwd *pwd = NULL;
 
-        if (user[0] == '\0')
-            return send_session_response(fd, 0, NULL, NULL, NULL, "missing user");
-        if (session_id[0] != '\0')
-            return send_session_response(fd, 0, NULL, NULL, NULL, "reconnect not implemented");
-        if (authorization_id[0] == '\0')
-            return send_session_response(fd, 0, NULL, NULL, NULL, "missing authorization");
-        if (req_v3.group_count > FRDP_IPC_MAX_AUTH_GROUPS)
-            return send_session_response(fd, 0, NULL, NULL, NULL, "missing POSIX account");
+        if (user[0] == '\0') {
+            rc = send_session_response(fd, 0, NULL, NULL, NULL, "missing user");
+            goto cleanup;
+        }
+        if (session_id[0] != '\0') {
+            rc = send_session_response(fd, 0, NULL, NULL, NULL, "reconnect not implemented");
+            goto cleanup;
+        }
+        if (authorization_id[0] == '\0') {
+            rc = send_session_response(fd, 0, NULL, NULL, NULL, "missing authorization");
+            goto cleanup;
+        }
+        if (req_v3.group_count > FRDP_IPC_MAX_AUTH_GROUPS) {
+            rc = send_session_response(fd, 0, NULL, NULL, NULL, "missing POSIX account");
+            goto cleanup;
+        }
         if (validate_and_consume_authorization(authorization_id, user, rhost, correlation_id,
                                                req_v3.uid, req_v3.gid, req_v3.groups,
-                                               req_v3.group_count, req_v3.has_posix_account) != 0)
-            return send_session_response(fd, 0, NULL, NULL, NULL, "invalid authorization");
+                                               req_v3.group_count,
+                                               req_v3.has_posix_account) != 0) {
+            rc = send_session_response(fd, 0, NULL, NULL, NULL, "invalid authorization");
+            goto cleanup;
+        }
         if (!has_posix_account || ((uint64_t)uid != req_v3.uid) || ((uint64_t)gid != req_v3.gid) ||
-            (req_v3.group_count > FRDP_IPC_MAX_AUTH_GROUPS))
-            return send_session_response(fd, 0, NULL, NULL, NULL, "missing POSIX account");
+            (req_v3.group_count > FRDP_IPC_MAX_AUTH_GROUPS)) {
+            rc = send_session_response(fd, 0, NULL, NULL, NULL, "missing POSIX account");
+            goto cleanup;
+        }
         pwd = getpwnam(user);
-        if (!pwd || (pwd->pw_uid != uid) || (pwd->pw_gid != gid))
-            return send_session_response(fd, 0, NULL, NULL, NULL, "POSIX account mismatch");
-        if (!posix_groups_match(user, gid, req_v3.groups, req_v3.group_count))
-            return send_session_response(fd, 0, NULL, NULL, NULL, "POSIX groups mismatch");
+        if (!pwd || (pwd->pw_uid != uid) || (pwd->pw_gid != gid)) {
+            rc = send_session_response(fd, 0, NULL, NULL, NULL, "POSIX account mismatch");
+            goto cleanup;
+        }
+        if (!posix_groups_match(user, gid, req_v3.groups, req_v3.group_count)) {
+            rc = send_session_response(fd, 0, NULL, NULL, NULL, "POSIX groups mismatch");
+            goto cleanup;
+        }
         if (open_session(user, uid, gid, req_v3.groups, req_v3.group_count, rhost,
                          correlation_id, req.desktop_width, req.desktop_height, req.color_depth,
                          response_session_id, sizeof(response_session_id), display,
@@ -1216,7 +1237,8 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
             escape_log_field(user, escaped_user, sizeof(escaped_user));
             syslog(LOG_ERR, "correlation_id=%s failed to create session for %s",
                    escaped_correlation_id, escaped_user);
-            return send_session_response(fd, 0, NULL, NULL, NULL, "session open failed");
+            rc = send_session_response(fd, 0, NULL, NULL, NULL, "session open failed");
+            goto cleanup;
         }
         const int send_status = send_session_response(fd, 1, response_session_id, display,
                                                      agent_socket, NULL);
@@ -1235,14 +1257,17 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
                 cleanup_session(idx);
             }
         }
-        return send_status;
+        rc = send_status;
+        goto cleanup;
     }
 
     if (type == FRDP_IPC_SESSION_CLOSE_REQUEST) {
         const int idx = find_session_by_id(session_id);
 
-        if (idx < 0)
-            return send_session_response(fd, 0, NULL, NULL, NULL, "unknown session");
+        if (idx < 0) {
+            rc = send_session_response(fd, 0, NULL, NULL, NULL, "unknown session");
+            goto cleanup;
+        }
         char escaped_correlation_id[256] = {0};
         char escaped_session_id[256] = {0};
         char escaped_user[256] = {0};
@@ -1254,10 +1279,17 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
         syslog(LOG_INFO, "correlation_id=%s closing session_id=%s user=%s",
                escaped_correlation_id, escaped_session_id, escaped_user);
         cleanup_session(idx);
-        return send_session_response(fd, 1, session_id, NULL, NULL, NULL);
+        rc = send_session_response(fd, 1, session_id, NULL, NULL, NULL);
+        goto cleanup;
     }
 
-    return send_session_response(fd, 0, NULL, NULL, NULL, "unsupported session request");
+    rc = send_session_response(fd, 0, NULL, NULL, NULL, "unsupported session request");
+
+cleanup:
+    SecureZeroMemory(&req, sizeof(req));
+    SecureZeroMemory(&req_v3, sizeof(req_v3));
+    SecureZeroMemory(authorization_id, sizeof(authorization_id));
+    return rc;
 }
 
 static int run_ipc_server(const char *socket_path, const char *pam_service, const char *config_path)
