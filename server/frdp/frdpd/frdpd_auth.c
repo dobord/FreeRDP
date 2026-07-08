@@ -28,9 +28,9 @@ static void frdpd_auth_result_set(frdpdAuthResult* result, frdpdPamAuthStatus st
 	result->uid = (uid_t)-1;
 	result->gid = (gid_t)-1;
 	result->group_count = 0;
-	memset(result->groups, 0, sizeof(result->groups));
+	SecureZeroMemory(result->groups, sizeof(result->groups));
 	result->has_posix_account = FALSE;
-	memset(result->authorization_id, 0, sizeof(result->authorization_id));
+	SecureZeroMemory(result->authorization_id, sizeof(result->authorization_id));
 }
 
 static BOOL frdpd_auth_string_is_empty(const char* value)

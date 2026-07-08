@@ -1060,7 +1060,7 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 	}
 
 	context->managed_session_open = TRUE;
-	memset(context->authorization_id, 0, sizeof(context->authorization_id));
+	SecureZeroMemory(context->authorization_id, sizeof(context->authorization_id));
 	context->agent_input_warned = FALSE;
 	context->agent_frame_warned = FALSE;
 	frdpd_reset_framebuffer_state(context);
