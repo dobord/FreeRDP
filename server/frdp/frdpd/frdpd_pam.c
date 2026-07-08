@@ -73,6 +73,7 @@ int frdpd_pam_answer_conversation(int num_msg, const struct pam_message** msg,
 	if (!reply)
 		return PAM_BUF_ERR;
 
+	BOOL answered_password_prompt = FALSE;
 	for (int x = 0; x < num_msg; x++)
 	{
 		if (!msg[x])
@@ -81,10 +82,13 @@ int frdpd_pam_answer_conversation(int num_msg, const struct pam_message** msg,
 		switch (msg[x]->msg_style)
 		{
 			case PAM_PROMPT_ECHO_OFF:
+				if (answered_password_prompt)
+					goto fail;
 				reply[x].resp =
 				    frdpd_pam_strdup_len(password ? password : "", password ? strlen(password) : 0);
 				if (!reply[x].resp)
 					goto fail;
+				answered_password_prompt = TRUE;
 				break;
 
 			case PAM_TEXT_INFO:

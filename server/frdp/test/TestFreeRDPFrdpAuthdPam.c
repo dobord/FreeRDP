@@ -60,11 +60,29 @@ static int test_authd_pam_conversation_rejects_interactive_prompts(void)
 {
 	const struct pam_message echo_on = { .msg_style = PAM_PROMPT_ECHO_ON, .msg = "Login:" };
 	const struct pam_message unsupported = { .msg_style = 0x7fffffff, .msg = "unsupported" };
+	const struct pam_message password_prompts[] = {
+		{ .msg_style = PAM_PROMPT_ECHO_OFF, .msg = "Password:" },
+		{ .msg_style = PAM_PROMPT_ECHO_OFF, .msg = "Second password:" },
+	};
+	const struct pam_message* password_prompt_ptrs[] = { &password_prompts[0],
+		                                                 &password_prompts[1] };
+	struct pam_response* responses = NULL;
 
 	if (expect_conversation_error(&echo_on) != 0)
 		return -1;
 	if (expect_conversation_error(&unsupported) != 0)
 		return -1;
+	if (frdp_authd_pam_conversation(2, password_prompt_ptrs, &responses, "secret") !=
+	    PAM_CONV_ERR)
+	{
+		free_authd_pam_responses(responses, 2);
+		return -1;
+	}
+	if (responses)
+	{
+		free_authd_pam_responses(responses, 2);
+		return -1;
+	}
 	return 0;
 }
 

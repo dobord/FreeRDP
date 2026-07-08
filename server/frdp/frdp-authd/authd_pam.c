@@ -34,6 +34,7 @@ int frdp_authd_pam_conversation(int num_msg, const struct pam_message **msg,
 {
     const char *password = (const char *)appdata_ptr;
     struct pam_response *responses = NULL;
+    int answered_password_prompt = 0;
 
     if (resp)
         *resp = NULL;
@@ -50,9 +51,12 @@ int frdp_authd_pam_conversation(int num_msg, const struct pam_message **msg,
 
         switch (msg[i]->msg_style) {
             case PAM_PROMPT_ECHO_OFF:
+                if (answered_password_prompt)
+                    goto fail;
                 responses[i].resp = strdup(password ? password : "");
                 if (!responses[i].resp)
                     goto fail;
+                answered_password_prompt = 1;
                 break;
             case PAM_TEXT_INFO:
             case PAM_ERROR_MSG:

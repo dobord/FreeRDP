@@ -31,7 +31,7 @@ the release record.
 | NTLM-enabled NLA fallback | Prototype | Explicit deployment decision, audit trail, and client matrix evidence; default guidance remains Kerberos-preferred. |
 | NTLM-disabled Kerberos-only mode | Prototype | Integrated CredSSP/SPNEGO acceptor, keytab/SPN handling, SSSD principal mapping, and Windows client evidence. |
 | Remote Credential Guard ticket handoff | Not supported | Current integrated path rejects unsupported ticket handoff. |
-| Interactive PAM prompts/MFA inside NLA | Not supported | Requires separate UX and protocol design; non-interactive PAM prompts fail closed. |
+| Interactive PAM prompts/MFA inside NLA | Not supported | Requires separate UX and protocol design; interactive and extra password PAM prompts fail closed. |
 
 ## Clients
 

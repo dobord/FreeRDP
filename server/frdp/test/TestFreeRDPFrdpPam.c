@@ -232,6 +232,12 @@ static int test_pam_conversation_rejects_unsupported_prompt(void)
 	struct pam_response* responses = NULL;
 	const struct pam_message echo_on = { .msg_style = PAM_PROMPT_ECHO_ON, .msg = "Login:" };
 	const struct pam_message unsupported = { .msg_style = 0x7fffffff, .msg = "unsupported" };
+	const struct pam_message password_prompts[] = {
+		{ .msg_style = PAM_PROMPT_ECHO_OFF, .msg = "Password:" },
+		{ .msg_style = PAM_PROMPT_ECHO_OFF, .msg = "Second password:" },
+	};
+	const struct pam_message* password_prompt_ptrs[] = { &password_prompts[0],
+		                                                 &password_prompts[1] };
 	const struct pam_message* message_ptr = &echo_on;
 
 	if (frdpd_pam_answer_conversation(1, &message_ptr, &responses, "secret") != PAM_CONV_ERR)
@@ -254,6 +260,17 @@ static int test_pam_conversation_rejects_unsupported_prompt(void)
 	if (responses)
 	{
 		free_pam_responses(responses, 1);
+		return -1;
+	}
+	if (frdpd_pam_answer_conversation(2, password_prompt_ptrs, &responses, "secret") !=
+	    PAM_CONV_ERR)
+	{
+		free_pam_responses(responses, 2);
+		return -1;
+	}
+	if (responses)
+	{
+		free_pam_responses(responses, 2);
 		return -1;
 	}
 	return 0;
