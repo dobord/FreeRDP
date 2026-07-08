@@ -1047,6 +1047,8 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 				context->session_display[0] = '\0';
 				context->agent_socket[0] = '\0';
 			}
+			SecureZeroMemory(&close_request, sizeof(close_request));
+			SecureZeroMemory(&close_response, sizeof(close_response));
 		}
 		context->session_id[0] = '\0';
 		context->session_display[0] = '\0';
@@ -1095,6 +1097,7 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 	frdpSessionRequest request = { 0 };
 	frdpSessionResponse response = { 0 };
 	BOOL closed = FALSE;
+	BOOL ok = FALSE;
 	char log_error[FRDPD_LOG_STRING_SIZE] = { 0 };
 	char log_session_id[FRDPD_LOG_STRING_SIZE] = { 0 };
 
@@ -1110,7 +1113,7 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 	{
 		WLog_WARN(TAG, "correlation_id=%s unable to build session close request",
 		          context->correlation_id);
-		return FALSE;
+		goto cleanup;
 	}
 
 	if (async_only)
@@ -1120,7 +1123,7 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 			WLog_WARN(TAG, "correlation_id=%s failed to schedule close retry for session_id=%s",
 			          context->correlation_id,
 			          frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)));
-			return FALSE;
+			goto cleanup;
 		}
 		WLog_INFO(TAG, "correlation_id=%s scheduled close retry for managed session_id=%s",
 		          context->correlation_id,
@@ -1130,7 +1133,8 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 		context->session_id[0] = '\0';
 		context->session_display[0] = '\0';
 		context->agent_socket[0] = '\0';
-		return TRUE;
+		ok = TRUE;
+		goto cleanup;
 	}
 
 	closed = frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_CLOSE_REQUEST,
@@ -1143,7 +1147,7 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 		          frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)),
 		          frdpd_log_value(response.error[0] ? response.error : NULL, log_error,
 		                          sizeof(log_error), "IPC failure"));
-		return FALSE;
+		goto cleanup;
 	}
 
 	WLog_INFO(TAG, "correlation_id=%s closed managed session_id=%s", context->correlation_id,
@@ -1154,7 +1158,12 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 	context->session_id[0] = '\0';
 	context->session_display[0] = '\0';
 	context->agent_socket[0] = '\0';
-	return TRUE;
+	ok = TRUE;
+
+cleanup:
+	SecureZeroMemory(&request, sizeof(request));
+	SecureZeroMemory(&response, sizeof(response));
+	return ok;
 }
 
 static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
