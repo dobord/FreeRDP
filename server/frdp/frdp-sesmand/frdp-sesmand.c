@@ -44,6 +44,7 @@
 #include "display_policy.h"
 #include "sesmand_pam.h"
 #include "session_cleanup.h"
+#include "session_reconnect.h"
 #include "session_resources.h"
 #include "session_state.h"
 
@@ -1035,6 +1036,60 @@ static int find_session_by_id(const char *session_id)
     return -1;
 }
 
+static int reconnect_existing_session(int fd, const char *correlation_id,
+                                      const char *requested_session_id, const char *user)
+{
+    frdpSesmandReconnectCandidate candidates[MAX_SESSIONS];
+    char candidate_ids[MAX_SESSIONS][64];
+    size_t selected = 0;
+    session *s = NULL;
+    char response_session_id[64] = {0};
+    char display[32] = {0};
+    char escaped_correlation_id[256] = {0};
+    char escaped_session_id[256] = {0};
+    char escaped_user[256] = {0};
+    int rc = -1;
+
+    if (session_count <= 0)
+        return send_session_response(fd, 0, NULL, NULL, NULL, "reconnect target not found");
+
+    memset(candidates, 0, sizeof(candidates));
+    memset(candidate_ids, 0, sizeof(candidate_ids));
+    for (int x = 0; x < session_count; x++) {
+        session_id_to_string(&sessions[x], candidate_ids[x], sizeof(candidate_ids[x]));
+        candidates[x].session_id = candidate_ids[x];
+        candidates[x].user = sessions[x].user;
+        candidates[x].state = sessions[x].state;
+        candidates[x].start_time = (unsigned long long)sessions[x].start_time;
+    }
+
+    if (frdp_sesmand_reconnect_select(candidates, (size_t)session_count,
+                                      requested_session_id, user, &selected) != 0 ||
+        selected >= (size_t)session_count)
+        return send_session_response(fd, 0, NULL, NULL, NULL, "reconnect target not found");
+
+    s = &sessions[selected];
+    if ((s->state != FRDP_SESMAND_SESSION_DISCONNECTED) || (s->agent_socket[0] == '\0'))
+        return send_session_response(fd, 0, NULL, NULL, NULL, "reconnect target not available");
+    if (!frdp_sesmand_session_state_can_transition(s->state, FRDP_SESMAND_SESSION_ACTIVE))
+        return send_session_response(fd, 0, NULL, NULL, NULL, "reconnect target not available");
+
+    session_id_to_string(s, response_session_id, sizeof(response_session_id));
+    snprintf(display, sizeof(display), ":%d", s->display_number);
+    rc = send_session_response(fd, 1, response_session_id, display, s->agent_socket, NULL);
+    if (rc != 0)
+        return rc;
+    s->state = FRDP_SESMAND_SESSION_ACTIVE;
+
+    escape_log_field(correlation_id && correlation_id[0] ? correlation_id : "unknown",
+                     escaped_correlation_id, sizeof(escaped_correlation_id));
+    escape_log_field(response_session_id, escaped_session_id, sizeof(escaped_session_id));
+    escape_log_field(user, escaped_user, sizeof(escaped_user));
+    syslog(LOG_INFO, "correlation_id=%s reconnected session_id=%s user=%s",
+           escaped_correlation_id, escaped_session_id, escaped_user);
+    return 0;
+}
+
 static void prune_consumed_auth_tokens(unsigned long long now)
 {
     for (size_t x = 0; x < MAX_CONSUMED_AUTH_TOKENS; x++) {
@@ -1206,10 +1261,6 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
             rc = send_session_response(fd, 0, NULL, NULL, NULL, "missing user");
             goto cleanup;
         }
-        if (session_id[0] != '\0') {
-            rc = send_session_response(fd, 0, NULL, NULL, NULL, "reconnect not implemented");
-            goto cleanup;
-        }
         if (authorization_id[0] == '\0') {
             rc = send_session_response(fd, 0, NULL, NULL, NULL, "missing authorization");
             goto cleanup;
@@ -1237,6 +1288,10 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
         }
         if (!posix_groups_match(user, gid, req_v3.groups, req_v3.group_count)) {
             rc = send_session_response(fd, 0, NULL, NULL, NULL, "POSIX groups mismatch");
+            goto cleanup;
+        }
+        if (session_id[0] != '\0') {
+            rc = reconnect_existing_session(fd, correlation_id, session_id, user);
             goto cleanup;
         }
         if (open_session(user, uid, gid, req_v3.groups, req_v3.group_count, rhost,

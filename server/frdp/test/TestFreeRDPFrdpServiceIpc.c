@@ -875,7 +875,7 @@ cleanup:
 	return rc;
 }
 
-static int test_sesmand_rejects_explicit_reconnect_request(const char* socket_path)
+static int test_sesmand_requires_authorization_for_explicit_reconnect(const char* socket_path)
 {
 	frdpSessionRequestV3 request = { 0 };
 	int fd = frdp_ipc_connect(socket_path);
@@ -893,7 +893,7 @@ static int test_sesmand_rejects_explicit_reconnect_request(const char* socket_pa
 	request.gid = 0;
 	if (frdp_ipc_send_session_request_v3(fd, &request) != 0)
 		goto cleanup;
-	rc = receive_session_response(fd, 0, "reconnect not implemented");
+	rc = receive_session_response(fd, 0, "missing authorization");
 
 cleanup:
 	frdp_ipc_close(fd);
@@ -1256,7 +1256,7 @@ static int test_sesmand_component(void)
 		goto cleanup;
 	if (test_sesmand_rejects_missing_authorization(helper.socket_path) != 0)
 		goto cleanup;
-	if (test_sesmand_rejects_explicit_reconnect_request(helper.socket_path) != 0)
+	if (test_sesmand_requires_authorization_for_explicit_reconnect(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_invalid_authorization(helper.socket_path) != 0)
 		goto cleanup;
