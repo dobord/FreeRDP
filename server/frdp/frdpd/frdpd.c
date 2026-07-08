@@ -1426,6 +1426,7 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	context->has_posix_account = result.has_posix_account;
 	memcpy(context->authorization_id, result.authorization_id, sizeof(context->authorization_id));
 	result.pam_user = NULL;
+	frdpd_auth_result_cleanup(&result);
 
 	WLog_INFO(TAG, "correlation_id=%s PAM accepted RDP login for %s from %s",
 	          context->correlation_id,
