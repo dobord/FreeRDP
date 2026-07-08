@@ -1040,7 +1040,7 @@ static void prune_consumed_auth_tokens(unsigned long long now)
     for (size_t x = 0; x < MAX_CONSUMED_AUTH_TOKENS; x++) {
         if (consumed_auth_tokens[x].nonce[0] != '\0' &&
             consumed_auth_tokens[x].expires_at < now) {
-            memset(&consumed_auth_tokens[x], 0, sizeof(consumed_auth_tokens[x]));
+            SecureZeroMemory(&consumed_auth_tokens[x], sizeof(consumed_auth_tokens[x]));
         }
     }
 }
@@ -1117,12 +1117,17 @@ static int validate_and_consume_authorization(const char *authorization_id, cons
 {
     char nonce[37] = {0};
     unsigned long long expires_at = 0;
+    int rc = -1;
 
     if (frdp_auth_token_verify(authorization_id, user, rhost, correlation_id, uid, gid,
                                groups, group_count, has_posix_account, nonce, sizeof(nonce),
                                &expires_at) != 0)
-        return -1;
-    return consume_auth_token_nonce(nonce, expires_at);
+        goto cleanup;
+    rc = consume_auth_token_nonce(nonce, expires_at);
+
+cleanup:
+    SecureZeroMemory(nonce, sizeof(nonce));
+    return rc;
 }
 
 static void reap_exited_sessions(void)
