@@ -1089,9 +1089,9 @@ static void frdpd_auth_result_cleanup(frdpdAuthResult* result)
 	result->uid = (uid_t)-1;
 	result->gid = (gid_t)-1;
 	result->group_count = 0;
-	memset(result->groups, 0, sizeof(result->groups));
+	SecureZeroMemory(result->groups, sizeof(result->groups));
 	result->has_posix_account = FALSE;
-	memset(result->authorization_id, 0, sizeof(result->authorization_id));
+	SecureZeroMemory(result->authorization_id, sizeof(result->authorization_id));
 }
 
 static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPeerContext* context,
@@ -1188,9 +1188,9 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 	context->uid = (uid_t)-1;
 	context->gid = (gid_t)-1;
 	context->group_count = 0;
-	memset(context->groups, 0, sizeof(context->groups));
+	SecureZeroMemory(context->groups, sizeof(context->groups));
 	context->has_posix_account = FALSE;
-	memset(context->authorization_id, 0, sizeof(context->authorization_id));
+	SecureZeroMemory(context->authorization_id, sizeof(context->authorization_id));
 	free(context->pam_user);
 	context->pam_user = NULL;
 }
