@@ -22,6 +22,8 @@
 #endif
 #include <unistd.h>
 
+#include <winpr/crt.h>
+
 #include "../ipc/frdp-ipc.h"
 
 extern void crypto_base64_decode(const char *enc_data, size_t length, unsigned char **dec_data,
@@ -212,6 +214,7 @@ static int run_account_groups_test(const char *user)
     struct passwd *pwd = NULL;
     uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
     uint32_t group_count = 0;
+    int rc = 0;
 
     if (!user || (user[0] == '\0'))
         return 2;
@@ -225,12 +228,16 @@ static int run_account_groups_test(const char *user)
     if (lookup_posix_groups(pwd->pw_name, pwd->pw_gid, groups, &group_count) != 0)
     {
         fprintf(stderr, "POSIX group lookup failed\n");
-        return 3;
+        rc = 3;
+        goto cleanup;
     }
 
     printf("%s uid=%d gid=%d group_count=%u\n", pwd->pw_name, (int)pwd->pw_uid,
            (int)pwd->pw_gid, (unsigned int)group_count);
-    return 0;
+
+cleanup:
+    SecureZeroMemory(groups, sizeof(groups));
+    return rc;
 }
 
 static int decode_input_token(const char *token_b64, gss_buffer_desc *input_token)
@@ -270,6 +277,7 @@ static int run_decode_token_test(const char *token_b64)
     for (size_t x = 0; x < input_token.length; x++)
         printf("%02x", ((const unsigned char *)input_token.value)[x]);
     printf("\n");
+    SecureZeroMemory(input_token.value, input_token.length);
     free(input_token.value);
     return 0;
 }
@@ -646,6 +654,7 @@ int main(int argc, char **argv)
             {
                 printf("POSIX group lookup failed for mapped user: %s\n", pwd->pw_name);
                 rc = 1;
+                SecureZeroMemory(groups, sizeof(groups));
                 gss_release_buffer(&min_stat, &name_buf);
                 goto cleanup;
             }
@@ -653,6 +662,7 @@ int main(int argc, char **argv)
                    pwd->pw_name, (int)pwd->pw_uid, (int)pwd->pw_gid,
                    (unsigned int)group_count,
                    mapping ? mapping : "unknown");
+            SecureZeroMemory(groups, sizeof(groups));
         } else if (normalized_user[0] != '\0') {
             printf("No POSIX account found for normalized user: %s\n", normalized_user);
         } else {
@@ -672,6 +682,8 @@ cleanup:
         gss_release_cred(&min_stat, &delegated_cred);
     if (output_token.length > 0)
         gss_release_buffer(&min_stat, &output_token);
+    if (input_token.value && (input_token.length > 0))
+        SecureZeroMemory(input_token.value, input_token.length);
     free(input_token.value);
     return rc;
 }
