@@ -894,13 +894,15 @@ static DWORD WINAPI frdpd_session_close_retry_thread(LPVOID arg)
 		frdpSessionRequest request = { 0 };
 		frdpSessionResponse response = { 0 };
 
-			(void)frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
-			                            retry->correlation_id);
-			(void)frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id),
-			                            retry->session_id);
-			(void)frdpd_copy_ipc_string(request.user, sizeof(request.user), retry->user);
-			closed = frdpd_session_ipc_request(retry->socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST,
-			                                  &request, sizeof(request), &response);
+		(void)frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
+		                            retry->correlation_id);
+		(void)frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id),
+		                            retry->session_id);
+		(void)frdpd_copy_ipc_string(request.user, sizeof(request.user), retry->user);
+		closed = frdpd_session_ipc_request(retry->socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST,
+		                                  &request, sizeof(request), &response);
+		SecureZeroMemory(&request, sizeof(request));
+		SecureZeroMemory(&response, sizeof(response));
 		if (!closed)
 			Sleep(1000);
 	}
@@ -916,6 +918,7 @@ static DWORD WINAPI frdpd_session_close_retry_thread(LPVOID arg)
 		          frdpd_log_value(retry->session_id, log_session_id, sizeof(log_session_id),
 		                          "unknown"));
 
+	SecureZeroMemory(retry, sizeof(*retry));
 	free(retry);
 	return 0;
 }
