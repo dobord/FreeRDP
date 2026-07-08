@@ -194,6 +194,7 @@ fail:
 	if (fd >= 0)
 		(void)frdp_ipc_close(fd);
 	frdpd_auth_clear_locked_secret(&request_password_secret);
+	SecureZeroMemory(&response, sizeof(response));
 	free(user);
 	free(domain);
 	free(pam_user);
