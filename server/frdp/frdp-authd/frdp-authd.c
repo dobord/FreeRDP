@@ -276,6 +276,7 @@ static int send_auth_response(int fd, int success, const char *error,
                               int has_posix_account)
 {
     frdpAuthResponse resp;
+    int rc = -1;
 
     memset(&resp, 0, sizeof(resp));
     resp.success = success;
@@ -286,14 +287,18 @@ static int send_auth_response(int fd, int success, const char *error,
     resp.uid = (uint64_t)uid;
     resp.gid = (uint64_t)gid;
     if (group_count > FRDP_IPC_MAX_AUTH_GROUPS)
-        return -1;
+        goto fail;
     if (groups && (group_count <= FRDP_IPC_MAX_AUTH_GROUPS)) {
         resp.group_count = group_count;
         memcpy(resp.groups, groups, group_count * sizeof(resp.groups[0]));
     }
     resp.has_posix_account = has_posix_account ? 1 : 0;
 
-    return frdp_ipc_send_auth_response(fd, &resp);
+    rc = frdp_ipc_send_auth_response(fd, &resp);
+
+fail:
+    clear_secret((char *)&resp, sizeof(resp));
+    return rc;
 }
 
 static int verify_peer(int fd)
@@ -667,6 +672,8 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                                            authenticated ? groups : NULL,
                                            authenticated ? group_count : 0,
                                            authenticated ? 1 : 0);
+                    clear_secret(authorization_id, sizeof(authorization_id));
+                    clear_secret((char *)groups, sizeof(groups));
                 }
                 wipe_locked_secret(&password_secret);
                 wipe_locked_secret(&request_password_secret);
