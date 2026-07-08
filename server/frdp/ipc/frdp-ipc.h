@@ -25,7 +25,8 @@ typedef enum {
     FRDP_IPC_SESSION_REQUEST_V2 = 14,
     FRDP_IPC_SESSION_RELOAD_REQUEST = 15,
     FRDP_IPC_SESSION_RELOAD_RESPONSE = 16,
-    FRDP_IPC_SESSION_REQUEST_V3 = 17
+    FRDP_IPC_SESSION_REQUEST_V3 = 17,
+    FRDP_IPC_SESSION_DISCONNECT_REQUEST = 18
 } frdpIpcMessageType;
 
 typedef enum {
@@ -59,6 +60,7 @@ typedef struct {
     (64U + 64U + 64U + 128U + 192U + 8U + 8U + 4U + \
      (FRDP_IPC_MAX_AUTH_GROUPS * 8U) + 4U + 4U + 4U + 4U)
 #define FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE (64U + 64U + 64U + 128U + 4U + 4U + 4U)
+#define FRDP_IPC_SESSION_DISCONNECT_REQUEST_WIRE_SIZE FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE
 #define FRDP_IPC_SESSION_RESPONSE_WIRE_SIZE (4U + 64U + 32U + 108U + 128U)
 #define FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE (64U + 64U + 32U + 16U + 4U)
 #define FRDP_IPC_SESSION_LIST_RESPONSE_WIRE_SIZE \
@@ -247,6 +249,7 @@ int frdp_ipc_send_session_request_v3(int fd, const frdpSessionRequestV3 *request
 int frdp_ipc_recv_session_request_v3_payload(int fd, frdpSessionRequestV3 *request,
                                              uint32_t payload_len);
 int frdp_ipc_send_session_close_request(int fd, const frdpSessionRequest *request);
+int frdp_ipc_send_session_disconnect_request(int fd, const frdpSessionRequest *request);
 int frdp_ipc_recv_session_close_request_payload(int fd, frdpSessionRequest *request,
                                                 uint32_t payload_len);
 int frdp_ipc_send_session_response(int fd, const frdpSessionResponse *response);

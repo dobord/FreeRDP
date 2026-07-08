@@ -195,17 +195,31 @@ for ((i = 0; i < FRDP_SESSION_TIMEOUT; i++)); do
 	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
 		>"$FRDP_ARTIFACT_DIR/session-list-after.txt" 2>&1 || list_status=$?
 	if [[ $list_status -eq 0 ]]; then
-		if grep -q '^No active sessions$' "$FRDP_ARTIFACT_DIR/session-list-after.txt"; then
-			log "managed RDP session was cleaned after client disconnect"
-			exit 0
-		fi
-		if ! awk -v id="$session_id" 'NR > 1 && $1 == id { found = 1 } END { exit found ? 0 : 1 }' \
+		if awk -v id="$session_id" 'NR > 1 && $1 == id && $4 == "disconnected" { found = 1 }
+			END { exit found ? 0 : 1 }' \
 			"$FRDP_ARTIFACT_DIR/session-list-after.txt"; then
-			log "managed RDP session was cleaned after client disconnect"
-			exit 0
+			log "managed RDP session detached after client disconnect"
+			break
 		fi
 	fi
 	sleep 1
 done
 
-fail "managed session $session_id was not cleaned after disconnect"
+if ! awk -v id="$session_id" 'NR > 1 && $1 == id && $4 == "disconnected" { found = 1 }
+	END { exit found ? 0 : 1 }' "$FRDP_ARTIFACT_DIR/session-list-after.txt"; then
+	fail "managed session $session_id did not become disconnected after client disconnect"
+fi
+
+frdpctl kill-session "$session_id" --socket "$FRDP_SESSION_SOCKET" \
+	>"$FRDP_ARTIFACT_DIR/session-kill.txt" 2>&1 || fail "failed to kill detached session $session_id"
+for ((i = 0; i < FRDP_SESSION_TIMEOUT; i++)); do
+	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
+		>"$FRDP_ARTIFACT_DIR/session-list-cleanup.txt" 2>&1 || true
+	if grep -q '^No active sessions$' "$FRDP_ARTIFACT_DIR/session-list-cleanup.txt"; then
+		log "managed RDP session was cleaned after explicit kill-session"
+		exit 0
+	fi
+	sleep 1
+done
+
+fail "managed session $session_id was not cleaned after explicit kill-session"

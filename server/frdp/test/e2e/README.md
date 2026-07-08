@@ -15,7 +15,7 @@ xfreerdp
 | Profile | What is real | Assertions |
 |---|---|---|
 | `component` | Built FRDP binaries and focused CTest suite | Config/channel policy, IPC primitives, `frdpctl`, helper stop handling, malformed requests against real `frdp-authd` and `frdp-sesmand` processes |
-| `local` | TLS, NLA/CredSSP, local `pam_unix`, helper IPC, managed Xvfb session | Valid authentication succeeds; wrong password and locked account fail; a full RDP client creates a session; disconnect removes it |
+| `local` | TLS, NLA/CredSSP, local `pam_unix`, helper IPC, managed Xvfb session | Valid authentication succeeds; wrong password and locked account fail; a full RDP client creates a session; disconnect detaches it for reconnect; explicit `kill-session` removes it |
 | `samba` | Provisioned Samba AD DC, DNS/Kerberos/LDAP, `adcli` machine join, `sssd-ad`, PAM, RDP | Domain user success, wrong password failure, disabled AD user failure, NSS lookup, managed RDP session lifecycle |
 | `freeipa` | Official FreeIPA server image, LDAP identity, Kerberos password authentication through SSSD, PAM, RDP | IPA user success, wrong password failure, disabled IPA principal failure, NSS lookup, managed RDP session lifecycle |
 

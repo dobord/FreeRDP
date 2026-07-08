@@ -841,6 +841,49 @@ cleanup:
 	return rc;
 }
 
+static int test_session_disconnect_request_uses_explicit_wire_format(void)
+{
+	int fds[2] = { -1, -1 };
+	frdpSessionRequest request = { 0 };
+	frdpSessionRequest decoded = { 0 };
+	frdpIpcHeader header = { 0 };
+	uint8_t raw[FRDP_IPC_SESSION_DISCONNECT_REQUEST_WIRE_SIZE] = { 0 };
+	int rc = -1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	snprintf(request.correlation_id, sizeof(request.correlation_id), "corr");
+	snprintf(request.session_id, sizeof(request.session_id), "session");
+	snprintf(request.user, sizeof(request.user), "alice");
+	snprintf(request.rhost, sizeof(request.rhost), "203.0.113.12");
+	if (frdp_ipc_send_session_disconnect_request(fds[0], &request) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_SESSION_DISCONNECT_REQUEST) ||
+	    (header.payload_len != FRDP_IPC_SESSION_DISCONNECT_REQUEST_WIRE_SIZE))
+		goto cleanup;
+	if (frdp_ipc_recv(fds[1], raw, sizeof(raw)) != (int)sizeof(raw))
+		goto cleanup;
+	if (frdp_ipc_send(fds[1], raw, sizeof(raw)) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_session_close_request_payload(fds[0], &decoded, sizeof(raw)) != 0)
+		goto cleanup;
+	if ((strcmp(decoded.correlation_id, request.correlation_id) != 0) ||
+	    (strcmp(decoded.session_id, request.session_id) != 0) ||
+	    (strcmp(decoded.user, request.user) != 0) ||
+	    (strcmp(decoded.rhost, request.rhost) != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
 static int test_session_list_response_uses_explicit_wire_format(void)
 {
 	int fds[2] = { -1, -1 };
@@ -1349,6 +1392,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_session_response_uses_explicit_wire_format() != 0)
 		return -1;
 	if (test_session_close_request_uses_explicit_wire_format() != 0)
+		return -1;
+	if (test_session_disconnect_request_uses_explicit_wire_format() != 0)
 		return -1;
 	if (test_session_list_response_uses_explicit_wire_format() != 0)
 		return -1;

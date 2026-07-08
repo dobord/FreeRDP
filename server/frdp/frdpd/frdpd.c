@@ -234,6 +234,12 @@ static BOOL frdpd_session_ipc_request(const char* socket_path, frdpIpcMessageTyp
 		    (frdp_ipc_send_session_close_request(fd, (const frdpSessionRequest*)request) != 0))
 			goto fail;
 	}
+	else if (type == FRDP_IPC_SESSION_DISCONNECT_REQUEST)
+	{
+		if ((request_size != sizeof(frdpSessionRequest)) ||
+		    (frdp_ipc_send_session_disconnect_request(fd, (const frdpSessionRequest*)request) != 0))
+			goto fail;
+	}
 	else if ((frdp_ipc_send_header(fd, type, (UINT32)request_size) < 0) ||
 	         (frdp_ipc_send(fd, request, request_size) < 0))
 	{
@@ -1169,6 +1175,57 @@ cleanup:
 	return ok;
 }
 
+static BOOL frdpd_disconnect_managed_session(const frdpdServerConfig* config,
+                                             frdpdPeerContext* context)
+{
+	frdpSessionRequest request = { 0 };
+	frdpSessionResponse response = { 0 };
+	char log_error[FRDPD_LOG_STRING_SIZE] = { 0 };
+	char log_session_id[FRDPD_LOG_STRING_SIZE] = { 0 };
+	BOOL detached = FALSE;
+
+	if (!config || !context || !context->managed_session_open || !config->session_socket ||
+	    (config->session_socket[0] == '\0'))
+		return TRUE;
+
+	if (!frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
+	                          context->correlation_id) ||
+	    !frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id),
+	                          context->session_id) ||
+	    !frdpd_copy_ipc_string(request.user, sizeof(request.user), context->pam_user))
+	{
+		WLog_WARN(TAG, "correlation_id=%s unable to build session disconnect request",
+		          context->correlation_id);
+		goto cleanup;
+	}
+
+	detached = frdpd_session_ipc_request(config->session_socket,
+	                                     FRDP_IPC_SESSION_DISCONNECT_REQUEST, &request,
+	                                     sizeof(request), &response);
+	if (!detached)
+	{
+		WLog_WARN(TAG, "correlation_id=%s failed to detach managed session_id=%s: %s",
+		          context->correlation_id,
+		          frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)),
+		          frdpd_log_value(response.error[0] ? response.error : NULL, log_error,
+		                          sizeof(log_error), "IPC failure"));
+		goto cleanup;
+	}
+
+	WLog_INFO(TAG, "correlation_id=%s detached managed session_id=%s", context->correlation_id,
+	          frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)));
+	context->managed_session_open = FALSE;
+	frdpd_reset_framebuffer_state(context);
+	context->session_id[0] = '\0';
+	context->session_display[0] = '\0';
+	context->agent_socket[0] = '\0';
+
+cleanup:
+	SecureZeroMemory(&request, sizeof(request));
+	SecureZeroMemory(&response, sizeof(response));
+	return detached;
+}
+
 static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 {
 	frdpdPeerContext* context = (frdpdPeerContext*)ctx;
@@ -1183,7 +1240,8 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 		context->vcm = NULL;
 	}
 
-	(void)frdpd_close_managed_session(config, context, TRUE);
+	if (!frdpd_disconnect_managed_session(config, context))
+		(void)frdpd_close_managed_session(config, context, TRUE);
 	frdpd_reset_framebuffer_state(context);
 	context->uid = (uid_t)-1;
 	context->gid = (gid_t)-1;

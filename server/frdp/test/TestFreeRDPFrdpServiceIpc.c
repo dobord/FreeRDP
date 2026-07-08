@@ -769,6 +769,27 @@ cleanup:
 	return rc;
 }
 
+static int test_sesmand_rejects_unknown_disconnect_session(const char* socket_path)
+{
+	frdpSessionRequest request = { 0 };
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if (fd < 0)
+		return -1;
+	snprintf(request.correlation_id, sizeof(request.correlation_id),
+	         "22222222-2222-4222-8222-222222222222");
+	snprintf(request.session_id, sizeof(request.session_id),
+	         "44444444-4444-4444-8444-444444444444");
+	if (frdp_ipc_send_session_disconnect_request(fd, &request) != 0)
+		goto cleanup;
+	rc = receive_session_response(fd, 0, "unknown session");
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
 static int test_sesmand_rejects_unterminated_request(const char* socket_path)
 {
 	frdpSessionRequest request = { 0 };
@@ -1245,6 +1266,8 @@ static int test_sesmand_component(void)
 	if (test_sesmand_list_empty(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_unknown_session(helper.socket_path) != 0)
+		goto cleanup;
+	if (test_sesmand_rejects_unknown_disconnect_session(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_unterminated_request(helper.socket_path) != 0)
 		goto cleanup;

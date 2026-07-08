@@ -144,6 +144,8 @@ foreach(expected
         "list_status=$?"
         "awk -v id=\"$session_id\""
         "xwd -display \"$display_name\" -root"
-        "managed RDP session was cleaned after client disconnect")
+        "managed RDP session detached after client disconnect"
+        "frdpctl kill-session \"$session_id\" --socket"
+        "managed RDP session was cleaned after explicit kill-session")
   expect_contains("${session_smoke}" "${expected}" "E2E session smoke script")
 endforeach()

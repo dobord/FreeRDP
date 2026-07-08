@@ -692,7 +692,8 @@ cleanup:
     return rc;
 }
 
-int frdp_ipc_send_session_close_request(int fd, const frdpSessionRequest *request)
+static int frdp_ipc_send_session_control_request(int fd, frdpIpcMessageType type,
+                                                 const frdpSessionRequest *request)
 {
     uint8_t wire[FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE] = {0};
     size_t offset = 0;
@@ -716,13 +717,23 @@ int frdp_ipc_send_session_close_request(int fd, const frdpSessionRequest *reques
     offset += 4U;
     frdp_ipc_write_u32_le(&wire[offset], request->color_depth);
 
-    if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_CLOSE_REQUEST, sizeof(wire)) != 0)
+    if (frdp_ipc_send_header(fd, type, sizeof(wire)) != 0)
         goto cleanup;
     rc = frdp_ipc_send(fd, wire, sizeof(wire));
 
 cleanup:
     frdp_ipc_clear_secret(wire, sizeof(wire));
     return rc;
+}
+
+int frdp_ipc_send_session_close_request(int fd, const frdpSessionRequest *request)
+{
+    return frdp_ipc_send_session_control_request(fd, FRDP_IPC_SESSION_CLOSE_REQUEST, request);
+}
+
+int frdp_ipc_send_session_disconnect_request(int fd, const frdpSessionRequest *request)
+{
+    return frdp_ipc_send_session_control_request(fd, FRDP_IPC_SESSION_DISCONNECT_REQUEST, request);
 }
 
 int frdp_ipc_recv_session_close_request_payload(int fd, frdpSessionRequest *request,

@@ -1232,7 +1232,8 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
         uid = (uid_t)req_v3.uid;
         gid = (gid_t)req_v3.gid;
         has_posix_account = req_v3.has_posix_account;
-    } else if (type == FRDP_IPC_SESSION_CLOSE_REQUEST) {
+    } else if ((type == FRDP_IPC_SESSION_CLOSE_REQUEST) ||
+               (type == FRDP_IPC_SESSION_DISCONNECT_REQUEST)) {
         if (frdp_ipc_recv_session_close_request_payload(fd, &req, payload_len) != 0)
             goto cleanup;
     } else {
@@ -1327,6 +1328,43 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
             }
         }
         rc = send_status;
+        goto cleanup;
+    }
+
+    if (type == FRDP_IPC_SESSION_DISCONNECT_REQUEST) {
+        const int idx = find_session_by_id(session_id);
+        int send_status = -1;
+
+        if (idx < 0) {
+            rc = send_session_response(fd, 0, NULL, NULL, NULL, "unknown session");
+            goto cleanup;
+        }
+        if (sessions[idx].state != FRDP_SESMAND_SESSION_ACTIVE ||
+            !frdp_sesmand_session_state_can_transition(sessions[idx].state,
+                                                       FRDP_SESMAND_SESSION_DISCONNECTED)) {
+            rc = send_session_response(fd, 0, NULL, NULL, NULL, "session not disconnectable");
+            goto cleanup;
+        }
+        char escaped_correlation_id[256] = {0};
+        char escaped_session_id[256] = {0};
+        char escaped_user[256] = {0};
+
+        sessions[idx].state = FRDP_SESMAND_SESSION_DISCONNECTED;
+        send_status = send_session_response(fd, 1, session_id, NULL, sessions[idx].agent_socket,
+                                            NULL);
+        if (send_status != 0) {
+            sessions[idx].state = FRDP_SESMAND_SESSION_ACTIVE;
+            rc = send_status;
+            goto cleanup;
+        }
+
+        escape_log_field(correlation_id[0] ? correlation_id : "unknown", escaped_correlation_id,
+                         sizeof(escaped_correlation_id));
+        escape_log_field(session_id, escaped_session_id, sizeof(escaped_session_id));
+        escape_log_field(sessions[idx].user, escaped_user, sizeof(escaped_user));
+        syslog(LOG_INFO, "correlation_id=%s disconnected session_id=%s user=%s",
+               escaped_correlation_id, escaped_session_id, escaped_user);
+        rc = 0;
         goto cleanup;
     }
 
@@ -1508,7 +1546,9 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
         } else if (((hdr.type == FRDP_IPC_SESSION_REQUEST_V3) &&
                     (hdr.payload_len == FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE)) ||
                    ((hdr.type == FRDP_IPC_SESSION_CLOSE_REQUEST) &&
-                    (hdr.payload_len == FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE))) {
+                    (hdr.payload_len == FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE)) ||
+                   ((hdr.type == FRDP_IPC_SESSION_DISCONNECT_REQUEST) &&
+                    (hdr.payload_len == FRDP_IPC_SESSION_DISCONNECT_REQUEST_WIRE_SIZE))) {
             (void)handle_session_request(cfd, hdr.type, hdr.payload_len);
         } else {
             send_session_response(cfd, 0, NULL, NULL, NULL, "unsupported IPC request");
