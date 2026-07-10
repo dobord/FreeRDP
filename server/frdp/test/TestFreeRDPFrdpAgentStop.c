@@ -187,6 +187,20 @@ static int send_agent_resize(const char* socket_path, uint32_t width, uint32_t h
 	return 0;
 }
 
+static int send_agent_heartbeat(int fd)
+{
+	frdpAgentHeartbeat request = { 0 };
+	frdpAgentHeartbeat response = { 0 };
+	snprintf(request.session_id, sizeof(request.session_id), "%s", TEST_SESSION_ID);
+	request.nonce = UINT64_C(0x0102030405060708);
+	if (frdp_ipc_exchange_agent_heartbeat(fd, &request, &response, 1000) != 0)
+		return -1;
+	if ((response.nonce != request.nonce) ||
+	    (strcmp(response.session_id, request.session_id) != 0))
+		return -1;
+	return 0;
+}
+
 static int send_agent_frame_request(const char* socket_path, uint32_t width, uint32_t height)
 {
 	uint8_t* pixels = NULL;
@@ -259,6 +273,7 @@ int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 	char socket_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
 	int control_fd = -1;
 	int ready_pipe[2] = { -1, -1 };
+	int heartbeat_fds[2] = { -1, -1 };
 	pid_t pid = -1;
 	int status = 0;
 	int rc = -1;
@@ -267,6 +282,8 @@ int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 
 	if (pipe(ready_pipe) != 0)
 		return -1;
+	if (socketpair(AF_UNIX, SOCK_SEQPACKET, 0, heartbeat_fds) != 0)
+		goto cleanup;
 	control_fd =
 	    create_control_socket(socket_dir, sizeof(socket_dir), socket_path, sizeof(socket_path));
 	if (control_fd < 0)
@@ -280,15 +297,19 @@ int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 		char control_fd_str[32] = { 0 };
 		char ready_fd[32] = { 0 };
 		char display[32] = { 0 };
+		char heartbeat_fd[32] = { 0 };
 
 		setpgid(0, 0);
 		close(ready_pipe[0]);
+		close(heartbeat_fds[0]);
 		snprintf(ready_fd, sizeof(ready_fd), "%d", ready_pipe[1]);
 		if (choose_display(display, sizeof(display)) != 0)
 			_exit(126);
 		snprintf(control_fd_str, sizeof(control_fd_str), "%d", control_fd);
 		setenv("FRDP_AGENT_READY_FD", ready_fd, 1);
 		setenv("FRDP_AGENT_CONTROL_FD", control_fd_str, 1);
+		snprintf(heartbeat_fd, sizeof(heartbeat_fd), "%d", heartbeat_fds[1]);
+		setenv("FRDP_AGENT_HEARTBEAT_FD", heartbeat_fd, 1);
 		setenv("DISPLAY", display, 1);
 		setenv("FRDP_DISPLAY", display, 1);
 		setenv("FRDP_GEOMETRY", "64x64x24", 1);
@@ -300,9 +321,13 @@ int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 
 	close(ready_pipe[1]);
 	ready_pipe[1] = -1;
+	close(heartbeat_fds[1]);
+	heartbeat_fds[1] = -1;
 	close(control_fd);
 	control_fd = -1;
 	if (wait_for_ready(ready_pipe[0]) != 0)
+		goto cleanup;
+	if (send_agent_heartbeat(heartbeat_fds[0]) != 0)
 		goto cleanup;
 	if (send_agent_resize(socket_path, 64, 64, geteuid() == 0) != 0)
 		goto cleanup;
@@ -329,6 +354,10 @@ cleanup:
 		close(ready_pipe[0]);
 	if (ready_pipe[1] >= 0)
 		close(ready_pipe[1]);
+	if (heartbeat_fds[0] >= 0)
+		close(heartbeat_fds[0]);
+	if (heartbeat_fds[1] >= 0)
+		close(heartbeat_fds[1]);
 	if (pid > 0)
 	{
 		kill(-pid, SIGTERM);

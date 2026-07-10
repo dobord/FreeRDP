@@ -64,6 +64,12 @@ static int test_default_blocklist(void)
 		return -1;
 	if (config.session_resources.memory_max_mb != 0)
 		return -1;
+	if (config.session_heartbeat.interval_ms != FRDP_SESSION_HEARTBEAT_DEFAULT_INTERVAL_MS)
+		return -1;
+	if (config.session_heartbeat.timeout_ms != FRDP_SESSION_HEARTBEAT_DEFAULT_TIMEOUT_MS)
+		return -1;
+	if (config.session_heartbeat.failure_threshold != FRDP_SESSION_HEARTBEAT_DEFAULT_FAILURES)
+		return -1;
 	if (config.channels.static_mode != FRDP_CHANNEL_FILTER_BLOCKLIST)
 		return -1;
 	if (config.channels.dynamic_mode != FRDP_CHANNEL_FILTER_BLOCKLIST)
@@ -220,6 +226,23 @@ static int test_session_resource_policy(void)
 	if (config.session_resources.max_processes != 0)
 		return -1;
 	if (config.session_resources.memory_max_mb != 0)
+		return -1;
+	return 0;
+}
+
+static int test_session_heartbeat_policy(void)
+{
+	frdpConfig config = { 0 };
+
+	if (load_config_body("frdp-session-heartbeat.toml",
+	                     "[session]\nagent_heartbeat_interval_ms = 2500\n"
+	                     "agent_heartbeat_timeout_ms = 750\n"
+	                     "agent_heartbeat_failures = 4\n",
+	                     &config) != 0)
+		return -1;
+	if ((config.session_heartbeat.interval_ms != 2500) ||
+	    (config.session_heartbeat.timeout_ms != 750) ||
+	    (config.session_heartbeat.failure_threshold != 4))
 		return -1;
 	return 0;
 }
@@ -739,6 +762,40 @@ static int test_invalid_channel_config(void)
 	if (expect_load_failure("frdp-too-large-session-memory-max.toml",
 	                        "[session]\nmemory_max_mb = 1048577\n") != 0)
 		return -1;
+	if (expect_load_failure("frdp-small-heartbeat-interval.toml",
+	                        "[session]\nagent_heartbeat_interval_ms = 999\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-large-heartbeat-interval.toml",
+	                        "[session]\nagent_heartbeat_interval_ms = 60001\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-small-heartbeat-timeout.toml",
+	                        "[session]\nagent_heartbeat_timeout_ms = 499\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-large-heartbeat-timeout.toml",
+	                        "[session]\nagent_heartbeat_timeout_ms = 5001\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-heartbeat-timeout-over-interval.toml",
+	                        "[session]\nagent_heartbeat_interval_ms = 1000\n"
+	                        "agent_heartbeat_timeout_ms = 1001\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-zero-heartbeat-failures.toml",
+	                        "[session]\nagent_heartbeat_failures = 2\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-large-heartbeat-failures.toml",
+	                        "[session]\nagent_heartbeat_failures = 11\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-heartbeat-interval.toml",
+	                        "[session]\nagent_heartbeat_interval_ms = 1000\n"
+	                        "agent_heartbeat_interval_ms = 2000\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-heartbeat-timeout.toml",
+	                        "[session]\nagent_heartbeat_timeout_ms = 500\n"
+	                        "agent_heartbeat_timeout_ms = 600\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-heartbeat-failures.toml",
+	                        "[session]\nagent_heartbeat_failures = 3\n"
+	                        "agent_heartbeat_failures = 4\n") != 0)
+		return -1;
 	if (expect_load_failure("frdp-duplicate-max-connections.toml",
 	                        "[server]\nmax_connections = 1\nmax_connections = 2\n") != 0)
 		return -1;
@@ -938,6 +995,8 @@ int TestFreeRDPFrdpConfig(int argc, char* argv[])
 	if (test_server_auth_session_fields() != 0)
 		return -1;
 	if (test_session_resource_policy() != 0)
+		return -1;
+	if (test_session_heartbeat_policy() != 0)
 		return -1;
 	if (test_sample_config() != 0)
 		return -1;

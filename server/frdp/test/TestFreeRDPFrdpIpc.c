@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +11,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -421,6 +423,7 @@ static int test_payload_decoders_reject_invalid_arguments(void)
 	frdpAgentInputEvent input = { 0 };
 	frdpAgentFrameRequest frame_request = { 0 };
 	frdpAgentResizeRequest resize_request = { 0 };
+	frdpAgentHeartbeat heartbeat = { 0 };
 
 	errno = 0;
 	if (expect_einval(frdp_ipc_recv_auth_request_v2_payload(
@@ -494,6 +497,18 @@ static int test_payload_decoders_reject_invalid_arguments(void)
 	errno = 0;
 	if (expect_einval(frdp_ipc_recv_agent_resize_request_payload(
 	        -1, NULL, FRDP_IPC_AGENT_RESIZE_REQUEST_WIRE_SIZE)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_agent_heartbeat_request_payload(
+	        -1, &heartbeat, FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE - 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_agent_heartbeat_request_payload(
+	        -1, &heartbeat, FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE + 1U)) != 0)
+		return -1;
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_agent_heartbeat_request_payload(
+	        -1, NULL, FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE)) != 0)
 		return -1;
 	return 0;
 }
@@ -1018,11 +1033,14 @@ static int test_agent_messages_use_explicit_wire_format(void)
 	frdpAgentResizeRequest decoded_resize_request = { 0 };
 	frdpAgentResizeResponse resize_response = { 0 };
 	frdpAgentResizeResponse decoded_resize_response = { 0 };
+	frdpAgentHeartbeat heartbeat = { 0 };
+	frdpAgentHeartbeat decoded_heartbeat = { 0 };
 	uint8_t input_raw[FRDP_IPC_AGENT_INPUT_WIRE_SIZE] = { 0 };
 	uint8_t frame_request_raw[FRDP_IPC_AGENT_FRAME_REQUEST_WIRE_SIZE] = { 0 };
 	uint8_t frame_response_raw[FRDP_IPC_AGENT_FRAME_RESPONSE_WIRE_SIZE] = { 0 };
 	uint8_t resize_request_raw[FRDP_IPC_AGENT_RESIZE_REQUEST_WIRE_SIZE] = { 0 };
 	uint8_t resize_response_raw[FRDP_IPC_AGENT_RESIZE_RESPONSE_WIRE_SIZE] = { 0 };
+	uint8_t heartbeat_raw[FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE] = { 0 };
 	const size_t input_session_offset = sizeof(input.correlation_id);
 	const size_t input_type_offset = input_session_offset + sizeof(input.session_id);
 	const size_t input_flags_offset = input_type_offset + 4U;
@@ -1277,9 +1295,113 @@ static int test_agent_messages_use_explicit_wire_format(void)
 	    (strcmp(decoded_resize_response.error, resize_response.error) != 0))
 		goto cleanup;
 
+	snprintf(heartbeat.session_id, sizeof(heartbeat.session_id), "session");
+	heartbeat.nonce = UINT64_C(0x0102030405060708);
+	if (frdp_ipc_send_agent_heartbeat_request(fds[0], &heartbeat) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_AGENT_HEARTBEAT_REQUEST) ||
+	    (header.payload_len != FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE))
+		goto cleanup;
+	if (frdp_ipc_recv(fds[1], heartbeat_raw, sizeof(heartbeat_raw)) !=
+	    (int)sizeof(heartbeat_raw))
+		goto cleanup;
+	if ((memcmp(heartbeat_raw, "session", 7) != 0) ||
+	    (heartbeat_raw[sizeof(heartbeat.session_id)] != 0x08U) ||
+	    (heartbeat_raw[sizeof(heartbeat.session_id) + 7U] != 0x01U))
+		goto cleanup;
+	if (frdp_ipc_send(fds[1], heartbeat_raw, sizeof(heartbeat_raw)) != 0 ||
+	    frdp_ipc_recv_agent_heartbeat_request_payload(
+	        fds[0], &decoded_heartbeat, sizeof(heartbeat_raw)) != 0)
+		goto cleanup;
+	if ((strcmp(decoded_heartbeat.session_id, heartbeat.session_id) != 0) ||
+	    (decoded_heartbeat.nonce != heartbeat.nonce))
+		goto cleanup;
+	if (frdp_ipc_send_agent_heartbeat_response(fds[1], &heartbeat) != 0 ||
+	    frdp_ipc_recv_agent_heartbeat_response(fds[0], &decoded_heartbeat) != 0)
+		goto cleanup;
+	if ((strcmp(decoded_heartbeat.session_id, heartbeat.session_id) != 0) ||
+	    (decoded_heartbeat.nonce != heartbeat.nonce))
+		goto cleanup;
+
 	rc = 0;
 
 cleanup:
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
+static uint64_t test_monotonic_ms(void)
+{
+	struct timespec now = { 0 };
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+		return 0;
+	return ((uint64_t)now.tv_sec * 1000U) + ((uint64_t)now.tv_nsec / 1000000U);
+}
+
+static int test_agent_heartbeat_exchange_has_absolute_deadline(void)
+{
+	int fds[2] = { -1, -1 };
+	frdpAgentHeartbeat request = { 0 };
+	frdpAgentHeartbeat response = { 0 };
+	pid_t child = -1;
+	uint64_t started_ms = 0;
+	uint64_t elapsed_ms = 0;
+	int rc = -1;
+
+	if (socketpair(AF_UNIX, SOCK_SEQPACKET, 0, fds) != 0)
+		return -1;
+	child = fork();
+	if (child < 0)
+		goto cleanup;
+	if (child == 0)
+	{
+		frdpAgentHeartbeat child_request = { 0 };
+
+		close(fds[0]);
+		if (frdp_ipc_recv_agent_heartbeat_request_packet(fds[1], &child_request) != 0)
+			_exit(1);
+		usleep(150000);
+		if (frdp_ipc_send_agent_heartbeat_response_packet(fds[1], &child_request) != 0)
+			_exit(1);
+		if (frdp_ipc_recv_agent_heartbeat_request_packet(fds[1], &child_request) != 0)
+			_exit(1);
+		if (frdp_ipc_send_agent_heartbeat_response_packet(fds[1], &child_request) != 0)
+			_exit(1);
+		_exit(0);
+	}
+	close(fds[1]);
+	fds[1] = -1;
+	snprintf(request.session_id, sizeof(request.session_id), "session");
+	request.nonce = 1;
+	started_ms = test_monotonic_ms();
+	if (started_ms == 0)
+		goto cleanup;
+	errno = 0;
+	if ((frdp_ipc_exchange_agent_heartbeat(fds[0], &request, &response, 100) != -1) ||
+	    (errno != ETIMEDOUT))
+		goto cleanup;
+	elapsed_ms = test_monotonic_ms() - started_ms;
+	if ((elapsed_ms < 80U) || (elapsed_ms > 500U))
+		goto cleanup;
+	request.nonce = 2;
+	if ((frdp_ipc_exchange_agent_heartbeat(fds[0], &request, &response, 500) != 0) ||
+	    (response.nonce != request.nonce) ||
+	    (strcmp(response.session_id, request.session_id) != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (child > 0)
+	{
+		(void)kill(child, SIGKILL);
+		(void)waitpid(child, NULL, 0);
+	}
 	if (fds[0] >= 0)
 		close(fds[0]);
 	if (fds[1] >= 0)
@@ -1400,6 +1522,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_session_reload_response_uses_explicit_wire_format() != 0)
 		return -1;
 	if (test_agent_messages_use_explicit_wire_format() != 0)
+		return -1;
+	if (test_agent_heartbeat_exchange_has_absolute_deadline() != 0)
 		return -1;
 	if (test_auth_token_binds_posix_account() != 0)
 		return -1;

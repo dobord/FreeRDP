@@ -15,6 +15,9 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -194,6 +197,29 @@ static int wait_for_process_gone(pid_t pid)
 		usleep(100000);
 	}
 	return -1;
+}
+
+static int open_process_pidfd(pid_t pid)
+{
+#if defined(__linux__) && defined(SYS_pidfd_open)
+	return (int)syscall(SYS_pidfd_open, pid, 0U);
+#else
+	(void)pid;
+	errno = ENOTSUP;
+	return -1;
+#endif
+}
+
+static int signal_process_pidfd(int pidfd, int signal_number)
+{
+#if defined(__linux__) && defined(SYS_pidfd_send_signal)
+	return (int)syscall(SYS_pidfd_send_signal, pidfd, signal_number, NULL, 0U);
+#else
+	(void)pidfd;
+	(void)signal_number;
+	errno = ENOTSUP;
+	return -1;
+#endif
 }
 
 static int prepend_binary_dirs_to_path(const char* first_binary, const char* second_binary,
@@ -1312,6 +1338,29 @@ static int write_sesmand_config(const char* path, const char* pam_service, uint3
 	return fclose(fp);
 }
 
+static int write_sesmand_heartbeat_config(const char* path, const char* pam_service,
+                                          uint32_t interval_ms, uint32_t timeout_ms,
+                                          uint32_t failures)
+{
+	FILE* fp = NULL;
+
+	if (!path || !pam_service)
+		return -1;
+	fp = fopen(path, "wb");
+	if (!fp)
+		return -1;
+	if (fprintf(fp, "[auth]\npam_service = \"%s\"\n"
+	                "[session]\nagent_heartbeat_interval_ms = %" PRIu32 "\n"
+	                "agent_heartbeat_timeout_ms = %" PRIu32 "\n"
+	                "agent_heartbeat_failures = %" PRIu32 "\n",
+	            pam_service, interval_ms, timeout_ms, failures) < 0)
+	{
+		fclose(fp);
+		return -1;
+	}
+	return fclose(fp);
+}
+
 static int write_sesmand_config_body(const char* path, const char* body)
 {
 	FILE* fp = NULL;
@@ -1699,6 +1748,159 @@ cleanup:
 #endif
 }
 
+static int test_sesmand_agent_heartbeat_cleanup(void)
+{
+#ifndef FRDP_XVFB_EXECUTABLE
+	printf("frdp-sesmand heartbeat cleanup skipped: Xvfb unavailable\n");
+	return 0;
+#else
+	static const char pam_service[] = "common-session-noninteractive";
+	static const char rhost[] = "127.0.0.1";
+	frdpTestHelper helper = { .pid = -1 };
+	frdpSessionResponse opened = { 0 };
+	frdpSessionListResponse list = { 0 };
+	char dir[1024] = { 0 };
+	char config_path[1024] = { 0 };
+	char key_path[1024] = { 0 };
+	char metadata_name[96] = { 0 };
+	char metadata_path[1024] = { 0 };
+	char reservation_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
+	char user[64] = { 0 };
+	uint64_t uid = 0;
+	uint64_t gid = 0;
+	uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+	uint32_t group_count = 0;
+	int32_t agent_pid = -1;
+	int agent_pidfd = -1;
+	int blocked_fd = -1;
+	int display_number = 0;
+	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
+	char* saved_path = NULL;
+	int helper_started = 0;
+	int rc = -1;
+	const char* stage = "prerequisites";
+
+	if (previous_key_path && !saved_key_path)
+		return -1;
+	if ((access("/etc/pam.d/common-session-noninteractive", R_OK) != 0) ||
+	    (access(FRDP_XVFB_EXECUTABLE, X_OK) != 0))
+	{
+		printf("frdp-sesmand heartbeat cleanup skipped: PAM/Xvfb prerequisite unavailable\n");
+		rc = 0;
+		goto cleanup;
+	}
+	if (make_runtime_dir(dir, sizeof(dir), "frdp-sesmand-heartbeat") != 0)
+		goto cleanup;
+	if ((snprintf(config_path, sizeof(config_path), "%s/frdpd.toml", dir) >=
+	     (int)sizeof(config_path)) ||
+	    (snprintf(key_path, sizeof(key_path), "%s/auth-token.key", dir) >= (int)sizeof(key_path)))
+		goto cleanup;
+	stage = "environment";
+	if ((setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0) ||
+	    (prepend_binary_dirs_to_path(FRDP_SESSION_AGENT_BINARY, FRDP_XVFB_EXECUTABLE,
+	                                 &saved_path) != 0))
+		goto cleanup;
+	stage = "config";
+	if (write_sesmand_heartbeat_config(config_path, pam_service, 1000, 500, 3) != 0)
+		goto cleanup;
+	stage = "identity";
+	if (lookup_current_user(user, sizeof(user), &uid, &gid, groups, &group_count) != 0)
+		goto cleanup;
+	stage = "helper-start";
+	if (start_helper_with_config(FRDP_SESMAND_BINARY, "frdp-sesmand-heartbeat", config_path,
+	                             &helper) != 0)
+		goto cleanup;
+	helper_started = 1;
+	restore_path(saved_path);
+	saved_path = NULL;
+	stage = "open";
+	if (request_live_session(helper.socket_path, user, rhost, "heartbeat-open", NULL, uid, gid,
+	                         groups, group_count, &opened) != 0 ||
+	    list_single_session(helper.socket_path, &opened, user, "active", -1, &agent_pid) != 0)
+		goto cleanup;
+	agent_pidfd = open_process_pidfd((pid_t)agent_pid);
+	if ((agent_pidfd < 0) && ((errno == ENOSYS) || (errno == ENOTSUP)))
+	{
+		printf("frdp-sesmand heartbeat cleanup skipped: pidfd unavailable\n");
+		rc = 0;
+		goto cleanup;
+	}
+	if (agent_pidfd < 0)
+		goto cleanup;
+	if ((sscanf(opened.display, ":%d", &display_number) != 1) ||
+	    (frdp_sesmand_session_metadata_filename(metadata_name, sizeof(metadata_name),
+	                                             opened.session_id) != 0) ||
+	    (snprintf(metadata_path, sizeof(metadata_path), "%s/%s", helper.dir, metadata_name) >=
+	     (int)sizeof(metadata_path)) ||
+	    (frdp_sesmand_display_reservation_path(reservation_path, sizeof(reservation_path),
+	                                           helper.dir, display_number) != 0) ||
+	    (access(metadata_path, F_OK) != 0) || (access(opened.agent_socket, F_OK) != 0) ||
+	    (access(reservation_path, F_OK) != 0))
+		goto cleanup;
+	stage = "control-contention";
+	blocked_fd = frdp_ipc_connect(opened.agent_socket);
+	if ((blocked_fd < 0) ||
+	    (frdp_ipc_send_header(blocked_fd, FRDP_IPC_AGENT_FRAME_REQUEST,
+	                          FRDP_IPC_AGENT_FRAME_REQUEST_WIRE_SIZE) != 0))
+		goto cleanup;
+	usleep(3000000);
+	frdp_ipc_close(blocked_fd);
+	blocked_fd = -1;
+	if (list_single_session(helper.socket_path, &opened, user, "active", agent_pid, NULL) != 0)
+		goto cleanup;
+	stage = "agent-sigstop";
+	if (signal_process_pidfd(agent_pidfd, SIGSTOP) != 0)
+		goto cleanup;
+	stage = "heartbeat-cleanup";
+	for (int attempt = 0; attempt < 50; attempt++)
+	{
+		if ((receive_sesmand_list(helper.socket_path, &list) == 0) && (list.count == 0))
+			break;
+		usleep(100000);
+	}
+	if ((list.count != 0) || (wait_for_process_gone((pid_t)agent_pid) != 0) ||
+	    (access(metadata_path, F_OK) == 0) || (errno != ENOENT) ||
+	    (access(opened.agent_socket, F_OK) == 0) || (errno != ENOENT) ||
+	    (access(reservation_path, F_OK) == 0) || (errno != ENOENT))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (rc != 0)
+		fprintf(stderr, "agent heartbeat cleanup failed at stage: %s\n", stage);
+	if (saved_path)
+		restore_path(saved_path);
+	if (blocked_fd >= 0)
+		frdp_ipc_close(blocked_fd);
+	if (agent_pidfd >= 0)
+		(void)signal_process_pidfd(agent_pidfd, SIGCONT);
+	if (helper_started && (stop_helper(&helper) != 0))
+		rc = -1;
+	if (agent_pidfd >= 0)
+	{
+		(void)signal_process_pidfd(agent_pidfd, SIGKILL);
+		close(agent_pidfd);
+	}
+	if (saved_key_path)
+	{
+		(void)setenv(FRDP_AUTH_TOKEN_KEY_ENV, saved_key_path, 1);
+		free(saved_key_path);
+	}
+	else
+		unsetenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	unlink(metadata_path);
+	unlink(opened.agent_socket);
+	unlink(reservation_path);
+	unlink(key_path);
+	unlink(config_path);
+	if (dir[0] != '\0')
+		rmdir(dir);
+	SecureZeroMemory(&opened, sizeof(opened));
+	return rc;
+#endif
+}
+
 static int test_sesmand_reload_config(void)
 {
 	frdpTestHelper helper;
@@ -2058,6 +2260,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_sesmand_crash_restart_reconciliation() != 0)
 	{
 		printf("frdp-sesmand crash restart reconciliation test failed\n");
+		return -1;
+	}
+	if (test_sesmand_agent_heartbeat_cleanup() != 0)
+	{
+		printf("frdp-sesmand agent heartbeat cleanup test failed\n");
 		return -1;
 	}
 	if (test_sesmand_reload_config() != 0)

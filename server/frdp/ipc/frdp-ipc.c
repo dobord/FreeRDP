@@ -8,6 +8,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <string.h>
 #include <errno.h>
 #include <stdio.h>
@@ -70,12 +71,12 @@ static int frdp_ipc_validate_peer(int fd)
     return 0;
 }
 
-static int frdp_ipc_set_timeouts(int fd)
+static int frdp_ipc_set_timeouts(int fd, uint32_t timeout_ms)
 {
     struct timeval timeout;
 
-    timeout.tv_sec = 10;
-    timeout.tv_usec = 0;
+    timeout.tv_sec = (time_t)(timeout_ms / 1000U);
+    timeout.tv_usec = (suseconds_t)((timeout_ms % 1000U) * 1000U);
     if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0)
         return -1;
     if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0)
@@ -283,12 +284,41 @@ int frdp_ipc_rate_limiter_allow(frdpIpcRateLimiter *limiter, uint64_t peer_uid)
 /* Connect to a UNIX domain socket and return a file descriptor */
 int frdp_ipc_connect(const char *socket_path)
 {
+    return frdp_ipc_connect_timeout(socket_path, 10000U);
+}
+
+static int frdp_ipc_monotonic_ms(uint64_t *value)
+{
+    struct timespec now = {0};
+
+    if (!value) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+        return -1;
+    *value = ((uint64_t)now.tv_sec * 1000U) + ((uint64_t)now.tv_nsec / 1000000U);
+    return 0;
+}
+
+int frdp_ipc_connect_timeout(const char *socket_path, uint32_t timeout_ms)
+{
+    uint64_t deadline_ms = 0;
+
+    if ((timeout_ms == 0) || (timeout_ms > 600000U)) {
+        errno = EINVAL;
+        return -1;
+    }
     if (frdp_ipc_validate_socket_path(socket_path) != 0) {
         errno = EACCES;
         return -1;
     }
+    if (frdp_ipc_monotonic_ms(&deadline_ms) != 0)
+        return -1;
+    deadline_ms += timeout_ms;
 
     int fd = -1;
+    int status_flags = -1;
 
 #ifdef SOCK_CLOEXEC
     fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -303,7 +333,8 @@ int frdp_ipc_connect(const char *socket_path)
         errno = saved;
         return -1;
     }
-    if (frdp_ipc_set_timeouts(fd) != 0) {
+    status_flags = fcntl(fd, F_GETFL);
+    if ((status_flags < 0) || (fcntl(fd, F_SETFL, status_flags | O_NONBLOCK) != 0)) {
         int saved = errno;
         close(fd);
         errno = saved;
@@ -313,7 +344,53 @@ int frdp_ipc_connect(const char *socket_path)
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
-    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        if ((errno != EINPROGRESS) && (errno != EAGAIN)) {
+            int saved = errno;
+            close(fd);
+            errno = saved;
+            return -1;
+        }
+        struct pollfd pfd = { .fd = fd, .events = POLLOUT };
+        int poll_status = 0;
+
+        do {
+            uint64_t now_ms = 0;
+            int remaining_ms = 0;
+
+            if (frdp_ipc_monotonic_ms(&now_ms) != 0) {
+                int saved = errno;
+                close(fd);
+                errno = saved;
+                return -1;
+            }
+            if (now_ms >= deadline_ms) {
+                close(fd);
+                errno = ETIMEDOUT;
+                return -1;
+            }
+            remaining_ms = (int)(deadline_ms - now_ms);
+            poll_status = poll(&pfd, 1, remaining_ms);
+        } while ((poll_status < 0) && (errno == EINTR));
+        if (poll_status <= 0) {
+            int saved = (poll_status == 0) ? ETIMEDOUT : errno;
+            close(fd);
+            errno = saved;
+            return -1;
+        }
+        int socket_error = 0;
+        socklen_t socket_error_size = sizeof(socket_error);
+
+        if ((getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_size) != 0) ||
+            (socket_error != 0)) {
+            int saved = (socket_error != 0) ? socket_error : errno;
+            close(fd);
+            errno = saved;
+            return -1;
+        }
+    }
+    if ((fcntl(fd, F_SETFL, status_flags) != 0) ||
+        (frdp_ipc_set_timeouts(fd, timeout_ms) != 0)) {
         int saved = errno;
         close(fd);
         errno = saved;
@@ -1350,6 +1427,224 @@ int frdp_ipc_recv_agent_resize_response(int fd, frdpAgentResizeResponse *respons
 
 cleanup:
     frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+static int frdp_ipc_send_agent_heartbeat(int fd, frdpIpcMessageType type,
+                                         const frdpAgentHeartbeat *heartbeat)
+{
+    uint8_t wire[FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE] = {0};
+
+    if (!heartbeat) {
+        errno = EINVAL;
+        return -1;
+    }
+    memcpy(wire, heartbeat->session_id, sizeof(heartbeat->session_id));
+    frdp_ipc_write_u64_le(&wire[sizeof(heartbeat->session_id)], heartbeat->nonce);
+    if (frdp_ipc_send_header(fd, type, sizeof(wire)) != 0)
+        return -1;
+    return frdp_ipc_send(fd, wire, sizeof(wire));
+}
+
+static int frdp_ipc_recv_agent_heartbeat_payload(int fd, frdpAgentHeartbeat *heartbeat,
+                                                 uint32_t payload_len)
+{
+    uint8_t wire[FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE] = {0};
+
+    if (!heartbeat || (payload_len != sizeof(wire))) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        return -1;
+    memset(heartbeat, 0, sizeof(*heartbeat));
+    memcpy(heartbeat->session_id, wire, sizeof(heartbeat->session_id));
+    heartbeat->nonce = frdp_ipc_read_u64_le(&wire[sizeof(heartbeat->session_id)]);
+    return 0;
+}
+
+int frdp_ipc_send_agent_heartbeat_request(int fd, const frdpAgentHeartbeat *heartbeat)
+{
+    return frdp_ipc_send_agent_heartbeat(fd, FRDP_IPC_AGENT_HEARTBEAT_REQUEST, heartbeat);
+}
+
+int frdp_ipc_recv_agent_heartbeat_request_payload(int fd, frdpAgentHeartbeat *heartbeat,
+                                                  uint32_t payload_len)
+{
+    return frdp_ipc_recv_agent_heartbeat_payload(fd, heartbeat, payload_len);
+}
+
+int frdp_ipc_send_agent_heartbeat_response(int fd, const frdpAgentHeartbeat *heartbeat)
+{
+    return frdp_ipc_send_agent_heartbeat(fd, FRDP_IPC_AGENT_HEARTBEAT_RESPONSE, heartbeat);
+}
+
+int frdp_ipc_recv_agent_heartbeat_response(int fd, frdpAgentHeartbeat *heartbeat)
+{
+    frdpIpcHeader header = { .type = FRDP_IPC_INVALID, .payload_len = 0 };
+
+    if (!heartbeat) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
+        return -1;
+    if ((header.type != FRDP_IPC_AGENT_HEARTBEAT_RESPONSE) ||
+        (header.payload_len != FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE)) {
+        errno = EINVAL;
+        return -1;
+    }
+    return frdp_ipc_recv_agent_heartbeat_payload(fd, heartbeat, header.payload_len);
+}
+
+static int frdp_ipc_wait_deadline(int fd, short events, uint64_t deadline_ms)
+{
+    struct pollfd pfd = { .fd = fd, .events = events };
+
+    for (;;) {
+        uint64_t now_ms = 0;
+        int poll_status = 0;
+
+        if (frdp_ipc_monotonic_ms(&now_ms) != 0)
+            return -1;
+        if (now_ms >= deadline_ms) {
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        poll_status = poll(&pfd, 1, (int)(deadline_ms - now_ms));
+        if (poll_status < 0) {
+            if (errno == EINTR)
+                continue;
+            return -1;
+        }
+        if (poll_status == 0) {
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        if ((pfd.revents & events) != 0)
+            return 0;
+        errno = ECONNRESET;
+        return -1;
+    }
+}
+
+static void frdp_ipc_encode_agent_heartbeat_packet(uint8_t *wire, frdpIpcMessageType type,
+                                                   const frdpAgentHeartbeat *heartbeat)
+{
+    memset(wire, 0, 8U + FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE);
+    frdp_ipc_write_u32_le(&wire[0], (uint32_t)type);
+    frdp_ipc_write_u32_le(&wire[4], FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE);
+    memcpy(&wire[8], heartbeat->session_id, sizeof(heartbeat->session_id));
+    frdp_ipc_write_u64_le(&wire[8U + sizeof(heartbeat->session_id)], heartbeat->nonce);
+}
+
+static int frdp_ipc_decode_agent_heartbeat_packet(const uint8_t *wire, size_t wire_size,
+                                                   frdpIpcMessageType expected_type,
+                                                   frdpAgentHeartbeat *heartbeat)
+{
+    if (!wire || !heartbeat || (wire_size != (8U + FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE)) ||
+        (frdp_ipc_read_u32_le(&wire[0]) != (uint32_t)expected_type) ||
+        (frdp_ipc_read_u32_le(&wire[4]) != FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE)) {
+        errno = EINVAL;
+        return -1;
+    }
+    memset(heartbeat, 0, sizeof(*heartbeat));
+    memcpy(heartbeat->session_id, &wire[8], sizeof(heartbeat->session_id));
+    heartbeat->nonce = frdp_ipc_read_u64_le(&wire[8U + sizeof(heartbeat->session_id)]);
+    return 0;
+}
+
+static int frdp_ipc_send_agent_heartbeat_packet(int fd, frdpIpcMessageType type,
+                                                 const frdpAgentHeartbeat *heartbeat)
+{
+    uint8_t wire[8U + FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE] = {0};
+    ssize_t count = 0;
+
+    if (!heartbeat) {
+        errno = EINVAL;
+        return -1;
+    }
+    frdp_ipc_encode_agent_heartbeat_packet(wire, type, heartbeat);
+#ifdef MSG_NOSIGNAL
+    count = send(fd, wire, sizeof(wire), MSG_NOSIGNAL);
+#else
+    count = send(fd, wire, sizeof(wire), 0);
+#endif
+    if (count != (ssize_t)sizeof(wire)) {
+        if (count >= 0)
+            errno = EIO;
+        return -1;
+    }
+    return 0;
+}
+
+static int frdp_ipc_recv_agent_heartbeat_packet(int fd, frdpIpcMessageType expected_type,
+                                                 frdpAgentHeartbeat *heartbeat)
+{
+    uint8_t wire[8U + FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE + 1U] = {0};
+    const ssize_t count = recv(fd, wire, sizeof(wire), 0);
+
+    if (count < 0)
+        return -1;
+    if (count != (ssize_t)(8U + FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE)) {
+        errno = EINVAL;
+        return -1;
+    }
+    return frdp_ipc_decode_agent_heartbeat_packet(wire, (size_t)count, expected_type, heartbeat);
+}
+
+int frdp_ipc_recv_agent_heartbeat_request_packet(int fd, frdpAgentHeartbeat *heartbeat)
+{
+    return frdp_ipc_recv_agent_heartbeat_packet(fd, FRDP_IPC_AGENT_HEARTBEAT_REQUEST, heartbeat);
+}
+
+int frdp_ipc_send_agent_heartbeat_response_packet(int fd, const frdpAgentHeartbeat *heartbeat)
+{
+    return frdp_ipc_send_agent_heartbeat_packet(fd, FRDP_IPC_AGENT_HEARTBEAT_RESPONSE, heartbeat);
+}
+
+int frdp_ipc_exchange_agent_heartbeat(int fd, const frdpAgentHeartbeat *request,
+                                      frdpAgentHeartbeat *response, uint32_t timeout_ms)
+{
+    uint64_t deadline_ms = 0;
+    int status_flags = -1;
+    int rc = -1;
+    int saved = 0;
+
+    if (!request || !response || (timeout_ms == 0) || (timeout_ms > 600000U)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_monotonic_ms(&deadline_ms) != 0)
+        return -1;
+    deadline_ms += timeout_ms;
+    status_flags = fcntl(fd, F_GETFL);
+    if ((status_flags < 0) || (fcntl(fd, F_SETFL, status_flags | O_NONBLOCK) != 0))
+        return -1;
+
+    if ((frdp_ipc_wait_deadline(fd, POLLOUT, deadline_ms) != 0) ||
+        (frdp_ipc_send_agent_heartbeat_packet(fd, FRDP_IPC_AGENT_HEARTBEAT_REQUEST, request) != 0))
+        goto cleanup;
+    for (;;) {
+        if (frdp_ipc_wait_deadline(fd, POLLIN, deadline_ms) != 0)
+            goto cleanup;
+        if (frdp_ipc_recv_agent_heartbeat_packet(fd, FRDP_IPC_AGENT_HEARTBEAT_RESPONSE,
+                                                  response) != 0)
+            goto cleanup;
+        if ((response->nonce == request->nonce) &&
+            (memcmp(response->session_id, request->session_id, sizeof(response->session_id)) == 0))
+            break;
+    }
+    rc = 0;
+
+cleanup:
+    saved = errno;
+    if (fcntl(fd, F_SETFL, status_flags) != 0) {
+        if (rc == 0)
+            saved = errno;
+        rc = -1;
+    }
+    errno = saved;
     return rc;
 }
 

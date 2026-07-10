@@ -25,6 +25,8 @@
 #include <string.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <errno.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -48,6 +50,7 @@
 #define FRDP_AGENT_FRAME_TILE_MAX 120U
 #define FRDP_AGENT_DAMAGE_EVENT_LIMIT 256U
 #define FRDP_AGENT_DISPLAY_SIZE_MAX 8192U
+#define FRDP_AGENT_CONTROL_STALL_MS 10000U
 
 typedef struct {
     Display *display;
@@ -66,6 +69,21 @@ typedef struct {
 static volatile int g_x11_resize_error = 0;
 static volatile int g_x11_keyboard_error = 0;
 static volatile sig_atomic_t g_stop_requested = 0;
+static _Atomic uint64_t g_control_progress_ms = 0;
+
+static uint64_t agent_monotonic_ms(void)
+{
+    struct timespec now = { 0 };
+
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+        return 0;
+    return ((uint64_t)now.tv_sec * 1000U) + ((uint64_t)now.tv_nsec / 1000000U);
+}
+
+static void note_control_progress(void)
+{
+    atomic_store_explicit(&g_control_progress_ms, agent_monotonic_ms(), memory_order_release);
+}
 
 static void agent_signal_handler(int signum)
 {
@@ -911,6 +929,11 @@ static int parse_control_fd(void)
     return parse_env_fd("FRDP_AGENT_CONTROL_FD");
 }
 
+static int parse_heartbeat_fd(void)
+{
+    return parse_env_fd("FRDP_AGENT_HEARTBEAT_FD");
+}
+
 static int parse_ready_fd(void)
 {
     return parse_env_fd("FRDP_AGENT_READY_FD");
@@ -1238,6 +1261,42 @@ static int handle_frame_message(int fd, frdpAgentFrameState *frame_state, uint32
     return rc;
 }
 
+typedef struct {
+    int fd;
+    char session_id[64];
+} frdpAgentHeartbeatThreadContext;
+
+static void *heartbeat_thread_main(void *arg)
+{
+    frdpAgentHeartbeatThreadContext *context = (frdpAgentHeartbeatThreadContext *)arg;
+
+    if (!context || (set_control_timeouts(context->fd) != 0))
+        return NULL;
+    for (;;) {
+        frdpAgentHeartbeat heartbeat = { 0 };
+
+        if (frdp_ipc_recv_agent_heartbeat_request_packet(context->fd, &heartbeat) != 0) {
+            if ((errno == EINTR) || (errno == EAGAIN) || (errno == EWOULDBLOCK))
+                continue;
+            break;
+        }
+        heartbeat.session_id[sizeof(heartbeat.session_id) - 1] = '\0';
+        const uint64_t now_ms = agent_monotonic_ms();
+        const uint64_t progress_ms =
+            atomic_load_explicit(&g_control_progress_ms, memory_order_acquire);
+
+        if ((heartbeat.nonce == 0) ||
+            (strcmp(heartbeat.session_id, context->session_id) != 0))
+            break;
+        if ((now_ms == 0) || (progress_ms == 0) || (now_ms < progress_ms) ||
+            ((now_ms - progress_ms) > FRDP_AGENT_CONTROL_STALL_MS))
+            continue;
+        if (frdp_ipc_send_agent_heartbeat_response_packet(context->fd, &heartbeat) != 0)
+            break;
+    }
+    return NULL;
+}
+
 static int handle_control_client(int fd, frdpAgentFrameState *frame_state, const char *correlation_id,
                                   const char *session_id)
 {
@@ -1274,6 +1333,7 @@ static int wait_for_backend_exit(pid_t pid, int control_fd, frdpAgentFrameState 
         *stop_requested = 0;
 
     while (1) {
+        note_control_progress();
         if (g_stop_requested) {
             if (stop_requested)
                 *stop_requested = 1;
@@ -1436,6 +1496,18 @@ int main(int argc, char **argv)
         closelog();
         return 1;
     }
+    int heartbeat_fd = parse_heartbeat_fd();
+    if (heartbeat_fd >= 0 && set_cloexec(heartbeat_fd) != 0) {
+        syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to mark heartbeat fd close-on-exec",
+               escaped_correlation_id, escaped_session_id);
+        if (ready_fd >= 0)
+            close(ready_fd);
+        if (control_fd >= 0)
+            close(control_fd);
+        close(heartbeat_fd);
+        closelog();
+        return 1;
+    }
 
     /* Determine display and geometry from environment. */
     const char *display = getenv("DISPLAY");
@@ -1466,6 +1538,8 @@ int main(int argc, char **argv)
             close(ready_fd);
         if (control_fd >= 0)
             close(control_fd);
+        if (heartbeat_fd >= 0)
+            close(heartbeat_fd);
         closelog();
         return 1;
     }
@@ -1479,6 +1553,8 @@ int main(int argc, char **argv)
             close(ready_fd);
         if (control_fd >= 0)
             close(control_fd);
+        if (heartbeat_fd >= 0)
+            close(heartbeat_fd);
         closelog();
         return 1;
     }
@@ -1486,6 +1562,8 @@ int main(int argc, char **argv)
         close(exec_pipe[0]);
         if (control_fd >= 0)
             close(control_fd);
+        if (heartbeat_fd >= 0)
+            close(heartbeat_fd);
         if (ready_fd >= 0)
             close(ready_fd);
         /* Child: execute Xvfb.  Provide display and geometry. */
@@ -1504,6 +1582,8 @@ int main(int argc, char **argv)
             close(ready_fd);
         if (control_fd >= 0)
             close(control_fd);
+        if (heartbeat_fd >= 0)
+            close(heartbeat_fd);
         closelog();
         return 1;
     }
@@ -1522,6 +1602,8 @@ int main(int argc, char **argv)
             close(ready_fd);
         if (control_fd >= 0)
             close(control_fd);
+        if (heartbeat_fd >= 0)
+            close(heartbeat_fd);
         closelog();
         return 1;
     }
@@ -1538,8 +1620,36 @@ int main(int argc, char **argv)
             close(ready_fd);
         if (control_fd >= 0)
             close(control_fd);
+        if (heartbeat_fd >= 0)
+            close(heartbeat_fd);
         closelog();
         return 1;
+    }
+    pthread_t heartbeat_thread;
+    int heartbeat_thread_started = 0;
+    frdpAgentHeartbeatThreadContext heartbeat_context = { .fd = heartbeat_fd };
+
+    snprintf(heartbeat_context.session_id, sizeof(heartbeat_context.session_id), "%s", session_id);
+    note_control_progress();
+    if (heartbeat_fd >= 0) {
+        if (pthread_create(&heartbeat_thread, NULL, heartbeat_thread_main, &heartbeat_context) != 0) {
+            syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to start heartbeat thread",
+                   escaped_correlation_id, escaped_session_id);
+            frame_state_uninit(&frame_state);
+            XCloseDisplay(xdisplay);
+            kill(pid, SIGTERM);
+            usleep(200000);
+            kill(pid, SIGKILL);
+            waitpid(pid, NULL, 0);
+            if (ready_fd >= 0)
+                close(ready_fd);
+            if (control_fd >= 0)
+                close(control_fd);
+            close(heartbeat_fd);
+            closelog();
+            return 1;
+        }
+        heartbeat_thread_started = 1;
     }
     if (notify_agent_ready(&ready_fd) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to report agent readiness",
@@ -1552,6 +1662,12 @@ int main(int argc, char **argv)
         waitpid(pid, NULL, 0);
         if (control_fd >= 0)
             close(control_fd);
+        if (heartbeat_thread_started) {
+            shutdown(heartbeat_fd, SHUT_RDWR);
+            (void)pthread_join(heartbeat_thread, NULL);
+        }
+        if (heartbeat_fd >= 0)
+            close(heartbeat_fd);
         closelog();
         return 1;
     }
@@ -1573,6 +1689,12 @@ int main(int argc, char **argv)
     }
     if (control_fd >= 0)
         close(control_fd);
+    if (heartbeat_thread_started) {
+        shutdown(heartbeat_fd, SHUT_RDWR);
+        (void)pthread_join(heartbeat_thread, NULL);
+    }
+    if (heartbeat_fd >= 0)
+        close(heartbeat_fd);
     if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s display server exited with status %d",
                escaped_correlation_id, escaped_session_id, WEXITSTATUS(status));

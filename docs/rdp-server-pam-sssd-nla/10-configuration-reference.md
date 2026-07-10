@@ -24,7 +24,10 @@ This document describes the configuration options available in `frdpd.toml` (see
 - `session_socket` (path): Absolute Unix socket path for the `frdp-sesmand` IPC service in normal server startup. Relative paths and unsafe socket locations are rejected. The installed helper unit listens on `/run/frdp-sesmand/sesmand.sock`. After authentication and static-channel policy checks pass, `frdpd` sends session open and close requests to `frdp-sesmand` and fails the login closed if session creation fails.
 - `max_processes` (integer): Optional POSIX `RLIMIT_NPROC` guard applied by `frdp-sesmand` to newly launched `frdp-session-agent` children before `exec`. Valid range `0..1048576`; `0` or omission means unlimited. This is a process-count guard, not a replacement for per-session systemd cgroup ownership.
 - `memory_max_mb` (integer): Optional POSIX `RLIMIT_AS` address-space guard, in MiB, applied by `frdp-sesmand` to newly launched `frdp-session-agent` children before `exec`. Valid range `0..1048576`; `0` or omission means unlimited. Production CPU/memory accounting through logind/systemd scopes remains open.
-- Other session lifecycle fields remain planned. Unknown `[session]` keys are rejected until the daemon enforces them.
+- `agent_heartbeat_interval_ms` (integer): Interval between agent supervision probes. Default `5000`; valid range `1000..60000`.
+- `agent_heartbeat_timeout_ms` (integer): Absolute connect/send/receive deadline for one probe. Default `500`; valid range `500..5000` and it must not exceed `agent_heartbeat_interval_ms`.
+- `agent_heartbeat_failures` (integer): Consecutive failed probes before `frdp-sesmand` cleans the managed process group and session artifacts. Default `3`; valid range `3..10`. A successful probe resets the counter; the lower bound allows a transient control-path operation to finish without destroying a healthy session.
+- Unknown `[session]` keys are rejected until the daemon enforces them.
 
 ## [channels]
 

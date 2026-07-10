@@ -50,7 +50,7 @@ static void fuzz_header_decode(const uint8_t* data, size_t size)
 
 static int selector_uses_message_stream(uint32_t selector)
 {
-	switch (selector % 12U)
+	switch (selector % 14U)
 	{
 		case 1:
 		case 4:
@@ -58,6 +58,7 @@ static int selector_uses_message_stream(uint32_t selector)
 		case 6:
 		case 9:
 		case 11:
+		case 13:
 			return 1;
 		default:
 			return 0;
@@ -75,7 +76,7 @@ static void fuzz_payload_decode(const uint8_t* data, size_t size, const uint8_t*
 	if (feed_socket(feed, feed_size, fds) != 0)
 		return;
 
-	switch (selector % 12U)
+	switch (selector % 14U)
 	{
 		case 0:
 		{
@@ -143,10 +144,22 @@ static void fuzz_payload_decode(const uint8_t* data, size_t size, const uint8_t*
 			(void)frdp_ipc_recv_agent_resize_request_payload(fds[1], &request, declared_len);
 			break;
 		}
-		default:
+		case 11:
 		{
 			frdpAgentResizeResponse response = { 0 };
 			(void)frdp_ipc_recv_agent_resize_response(fds[1], &response);
+			break;
+		}
+		case 12:
+		{
+			frdpAgentHeartbeat heartbeat = { 0 };
+			(void)frdp_ipc_recv_agent_heartbeat_request_payload(fds[1], &heartbeat, declared_len);
+			break;
+		}
+		default:
+		{
+			frdpAgentHeartbeat heartbeat = { 0 };
+			(void)frdp_ipc_recv_agent_heartbeat_response(fds[1], &heartbeat);
 			break;
 		}
 	}
@@ -167,7 +180,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* Data, size_t Size)
 	declared_len = read_u32(Data, Size, 0);
 	payload = (Size > 4U) ? &Data[4] : Data;
 	payload_size = (Size > 4U) ? Size - 4U : 0;
-	for (uint32_t selector = 0; selector < 12U; selector++)
+	for (uint32_t selector = 0; selector < 14U; selector++)
 		fuzz_payload_decode(Data, Size, payload, payload_size, declared_len, selector);
 
 	return 0;

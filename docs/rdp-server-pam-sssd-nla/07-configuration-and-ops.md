@@ -27,6 +27,9 @@ session_socket = "/run/frdp-sesmand/sesmand.sock"
 # Optional POSIX guards for new session-agent children; 0 or omission means unlimited.
 # max_processes = 256
 # memory_max_mb = 4096
+# agent_heartbeat_interval_ms = 5000
+# agent_heartbeat_timeout_ms = 500
+# agent_heartbeat_failures = 3
 
 # [channels]
 # Channel filtering defaults to blocklist mode with empty lists.

@@ -78,6 +78,10 @@ typedef struct {
     uint64_t display_reservation_ino;
     uint64_t metadata_dev;
     uint64_t metadata_ino;
+    uint64_t heartbeat_next_ms;
+    uint64_t heartbeat_nonce;
+    uint32_t heartbeat_failures;
+    int heartbeat_fd;
 } session;
 
 #define MAX_SESSIONS 64
@@ -87,6 +91,12 @@ static int session_count = 0;
 static int next_display = FRDP_SESMAND_DISPLAY_MIN;
 static char g_pam_service[64] = "frdpd";
 static frdpSessionResourcePolicy g_session_resource_policy = {0};
+static frdpSessionHeartbeatPolicy g_session_heartbeat_policy = {
+    .interval_ms = FRDP_SESSION_HEARTBEAT_DEFAULT_INTERVAL_MS,
+    .timeout_ms = FRDP_SESSION_HEARTBEAT_DEFAULT_TIMEOUT_MS,
+    .failure_threshold = FRDP_SESSION_HEARTBEAT_DEFAULT_FAILURES
+};
+static int g_heartbeat_cursor = 0;
 static char g_config_path[1024] = {0};
 static char g_agent_socket_dir[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
 static volatile sig_atomic_t g_stop_requested = 0;
@@ -280,14 +290,14 @@ static int wait_for_agent_ready(int fd, pid_t pid, pid_t pgid)
     return -1;
 }
 
-static void close_child_fds_except(int keep_a, int keep_b)
+static void close_child_fds_except(int keep_a, int keep_b, int keep_c)
 {
     long max_fd = sysconf(_SC_OPEN_MAX);
 
     if (max_fd < 0 || max_fd > 65536)
         max_fd = 65536;
     for (int fd = 3; fd < max_fd; fd++) {
-        if (fd == keep_a || fd == keep_b)
+        if (fd == keep_a || fd == keep_b || fd == keep_c)
             continue;
         close(fd);
     }
@@ -304,6 +314,35 @@ static int set_fd_cloexec(int fd, int enabled)
     else
         flags &= ~FD_CLOEXEC;
     return fcntl(fd, F_SETFD, flags);
+}
+
+static int create_cloexec_socketpair(int fds[2])
+{
+    if (!fds) {
+        errno = EINVAL;
+        return -1;
+    }
+    fds[0] = -1;
+    fds[1] = -1;
+#ifdef SOCK_CLOEXEC
+    if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, fds) == 0)
+        return 0;
+    if ((errno != EINVAL) && (errno != EPROTONOSUPPORT))
+        return -1;
+#endif
+    if (socketpair(AF_UNIX, SOCK_SEQPACKET, 0, fds) != 0)
+        return -1;
+    if ((set_fd_cloexec(fds[0], 1) != 0) || (set_fd_cloexec(fds[1], 1) != 0)) {
+        const int saved = errno;
+
+        close(fds[0]);
+        close(fds[1]);
+        fds[0] = -1;
+        fds[1] = -1;
+        errno = saved;
+        return -1;
+    }
+    return 0;
 }
 
 static int create_cloexec_pipe(int pipefd[2])
@@ -439,6 +478,101 @@ static int persist_session_state(session* s, frdpSesmandSessionState state)
     return (persist_session_metadata(s) == 0) ? -1 : -2;
 }
 
+static uint64_t monotonic_time_ms(void)
+{
+    struct timespec now = { 0 };
+
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+        return 0;
+    return ((uint64_t)now.tv_sec * 1000U) + ((uint64_t)now.tv_nsec / 1000000U);
+}
+
+static int heartbeat_session(session* s)
+{
+    frdpAgentHeartbeat request = { 0 };
+    frdpAgentHeartbeat response = { 0 };
+    char session_id[FRDP_SESMAND_SESSION_ID_SIZE] = { 0 };
+    int rc = -1;
+
+    if (!s || (s->heartbeat_fd < 0))
+        return -1;
+    session_id_to_string(s, session_id, sizeof(session_id));
+    snprintf(request.session_id, sizeof(request.session_id), "%s", session_id);
+    s->heartbeat_nonce++;
+    if (s->heartbeat_nonce == 0)
+        s->heartbeat_nonce++;
+    request.nonce = s->heartbeat_nonce;
+    if (frdp_ipc_exchange_agent_heartbeat(s->heartbeat_fd, &request, &response,
+                                          g_session_heartbeat_policy.timeout_ms) != 0)
+        goto out;
+    response.session_id[sizeof(response.session_id) - 1] = '\0';
+    if ((response.nonce != request.nonce) ||
+        (strcmp(response.session_id, request.session_id) != 0))
+        goto out;
+    rc = 0;
+out:
+    return rc;
+}
+
+static void supervise_sessions(void)
+{
+    const uint64_t now = monotonic_time_ms();
+    unsigned int checked = 0;
+    int remaining = session_count;
+
+    if (now == 0)
+        return;
+    while ((session_count > 0) && (remaining-- > 0) && (checked < 1U)) {
+        const int idx = g_heartbeat_cursor % session_count;
+        session* s = &sessions[idx];
+
+        g_heartbeat_cursor = (idx + 1) % session_count;
+        if ((s->heartbeat_next_ms != 0) && (now < s->heartbeat_next_ms)) {
+            continue;
+        }
+        checked++;
+        s->heartbeat_next_ms = now + g_session_heartbeat_policy.interval_ms;
+        if (heartbeat_session(s) == 0) {
+            s->heartbeat_failures = 0;
+            continue;
+        }
+        s->heartbeat_failures++;
+        if (s->heartbeat_failures < g_session_heartbeat_policy.failure_threshold)
+            continue;
+        {
+            char session_id[FRDP_SESMAND_SESSION_ID_SIZE] = { 0 };
+            char escaped_session_id[256] = { 0 };
+            char escaped_user[256] = { 0 };
+
+            session_id_to_string(s, session_id, sizeof(session_id));
+            escape_log_field(session_id, escaped_session_id, sizeof(escaped_session_id));
+            escape_log_field(s->user, escaped_user, sizeof(escaped_user));
+            syslog(LOG_ERR, "session_id=%s user=%s agent heartbeat failed %" PRIu32
+                            " consecutive times; cleaning session",
+                   escaped_session_id, escaped_user, s->heartbeat_failures);
+        }
+        cleanup_session(idx);
+        g_heartbeat_cursor = (session_count > 0) ? (idx % session_count) : 0;
+    }
+}
+
+static int heartbeat_poll_timeout_ms(void)
+{
+    const uint64_t now = monotonic_time_ms();
+    uint64_t nearest_ms = 1000U;
+
+    if (now == 0)
+        return 1000;
+    for (int idx = 0; idx < session_count; idx++) {
+        if ((sessions[idx].heartbeat_next_ms == 0) ||
+            (sessions[idx].heartbeat_next_ms <= now))
+            return 0;
+        if ((sessions[idx].heartbeat_next_ms - now) < nearest_ms)
+            nearest_ms = sessions[idx].heartbeat_next_ms - now;
+    }
+    return (int)nearest_ms;
+}
+
 static int path_exists_or_unknown(const char *path)
 {
     struct stat st;
@@ -545,6 +679,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     char agent_fd_str[16] = {0};
     char ready_fd_str[16] = {0};
     int exec_pipe[2] = {-1, -1};
+    int heartbeat_pair[2] = {-1, -1};
     int agent_fd = -1;
     int display_reservation_fd = -1;
     gid_t native_groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
@@ -622,7 +757,12 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
              normalize_dimension(desktop_width, 1024),
              normalize_dimension(desktop_height, 768), normalize_color_depth(color_depth));
 
-    if (create_cloexec_pipe(exec_pipe) != 0) {
+    if ((create_cloexec_pipe(exec_pipe) != 0) ||
+        (create_cloexec_socketpair(heartbeat_pair) != 0)) {
+        if (exec_pipe[0] >= 0)
+            close(exec_pipe[0]);
+        if (exec_pipe[1] >= 0)
+            close(exec_pipe[1]);
         destroy_agent_socket(&agent_fd, agent_socket_path);
         release_display_reservation(&display_reservation_fd, display_reservation_path);
         pam_close_session(pamh, 0);
@@ -634,6 +774,8 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     if (pid < 0) {
         close(exec_pipe[0]);
         close(exec_pipe[1]);
+        close(heartbeat_pair[0]);
+        close(heartbeat_pair[1]);
         destroy_agent_socket(&agent_fd, agent_socket_path);
         release_display_reservation(&display_reservation_fd, display_reservation_path);
         pam_close_session(pamh, 0);
@@ -643,8 +785,11 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     }
     if (pid == 0) {
         close(exec_pipe[0]);
-        close_child_fds_except(exec_pipe[1], agent_fd);
+        close(heartbeat_pair[0]);
+        close_child_fds_except(exec_pipe[1], agent_fd, heartbeat_pair[1]);
         if (set_fd_cloexec(exec_pipe[1], 0) != 0)
+            child_exec_failed(exec_pipe[1]);
+        if (set_fd_cloexec(heartbeat_pair[1], 0) != 0)
             child_exec_failed(exec_pipe[1]);
         /* Child: create a new process group for the session and drop privileges. */
         if (setpgid(0, 0) != 0)
@@ -658,6 +803,8 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
         setenv("FRDP_SESSION_ID", new_session_id, 1);
         snprintf(ready_fd_str, sizeof(ready_fd_str), "%d", exec_pipe[1]);
         setenv("FRDP_AGENT_READY_FD", ready_fd_str, 1);
+        snprintf(agent_fd_str, sizeof(agent_fd_str), "%d", heartbeat_pair[1]);
+        setenv("FRDP_AGENT_HEARTBEAT_FD", agent_fd_str, 1);
         if (correlation_id && correlation_id[0])
             setenv("FRDP_CORRELATION_ID", correlation_id, 1);
         if (rhost && rhost[0])
@@ -679,12 +826,15 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 
     close(exec_pipe[1]);
     exec_pipe[1] = -1;
+    close(heartbeat_pair[1]);
+    heartbeat_pair[1] = -1;
     if (agent_fd >= 0) {
         close(agent_fd);
         agent_fd = -1;
     }
     if (wait_for_agent_ready(exec_pipe[0], pid, pid) != 0) {
         close(exec_pipe[0]);
+        close(heartbeat_pair[0]);
         destroy_agent_socket(&agent_fd, agent_socket_path);
         release_display_reservation(&display_reservation_fd, display_reservation_path);
         pam_close_session(pamh, 0);
@@ -700,6 +850,8 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 
     memset(s, 0, sizeof(*s));
     s->display_reservation_fd = -1;
+    s->heartbeat_fd = heartbeat_pair[0];
+    heartbeat_pair[0] = -1;
     strncpy(s->user, user, sizeof(s->user) - 1);
     s->user[sizeof(s->user) - 1] = '\0';
     s->uid = uid;
@@ -711,6 +863,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     s->credentials_established = credentials_established;
     s->state = FRDP_SESMAND_SESSION_ACTIVE;
     s->display_number = display;
+    s->heartbeat_next_ms = monotonic_time_ms() + g_session_heartbeat_policy.interval_ms;
     s->display_reservation_fd = display_reservation_fd;
     display_reservation_fd = -1;
     snprintf(s->display_reservation, sizeof(s->display_reservation), "%s",
@@ -818,6 +971,10 @@ static void cleanup_session(int idx)
     }
     if (cleanup.mark_dead)
         s->state = FRDP_SESMAND_SESSION_DEAD;
+    if (s->heartbeat_fd >= 0) {
+        frdp_ipc_close(s->heartbeat_fd);
+        s->heartbeat_fd = -1;
+    }
     if (durable_cleanup_complete && (s->metadata_dev != 0) && (s->metadata_ino != 0)) {
         char session_id[FRDP_SESMAND_SESSION_ID_SIZE] = { 0 };
 
@@ -1041,12 +1198,13 @@ static int copy_config_path(const char *path)
 
 static int load_configured_sesmand_policy(const char *config_path, char *service,
                                           size_t service_size,
-                                          frdpSessionResourcePolicy *resource_policy)
+                                          frdpSessionResourcePolicy *resource_policy,
+                                          frdpSessionHeartbeatPolicy *heartbeat_policy)
 {
     frdpConfig config;
     int rc = 0;
 
-    if (!config_path || !service || service_size == 0 || !resource_policy)
+    if (!config_path || !service || service_size == 0 || !resource_policy || !heartbeat_policy)
         return -1;
     if (frdp_config_load(config_path, &config) != 0)
         return -1;
@@ -1058,17 +1216,26 @@ static int load_configured_sesmand_policy(const char *config_path, char *service
     if (!(rc >= 0 && (size_t)rc < service_size))
         return -1;
     *resource_policy = config.session_resources;
+    *heartbeat_policy = config.session_heartbeat;
     return 0;
 }
 
 static int apply_sesmand_policy(const char *pam_service,
-                                const frdpSessionResourcePolicy *resource_policy)
+                                const frdpSessionResourcePolicy *resource_policy,
+                                const frdpSessionHeartbeatPolicy *heartbeat_policy)
 {
-    if (!resource_policy)
+    const uint64_t now = monotonic_time_ms();
+
+    if (!resource_policy || !heartbeat_policy)
         return -1;
     if (set_pam_service_name(pam_service) != 0)
         return -1;
     g_session_resource_policy = *resource_policy;
+    g_session_heartbeat_policy = *heartbeat_policy;
+    for (int idx = 0; idx < session_count; idx++) {
+        sessions[idx].heartbeat_failures = 0;
+        sessions[idx].heartbeat_next_ms = now + g_session_heartbeat_policy.interval_ms;
+    }
     return 0;
 }
 
@@ -1076,6 +1243,7 @@ static int reload_configured_sesmand_policy(char *error, size_t error_size)
 {
     char pam_service[sizeof(g_pam_service)] = {0};
     frdpSessionResourcePolicy resource_policy = {0};
+    frdpSessionHeartbeatPolicy heartbeat_policy = {0};
 
     if (g_config_path[0] == '\0') {
         if (error && error_size > 0)
@@ -1083,12 +1251,12 @@ static int reload_configured_sesmand_policy(char *error, size_t error_size)
         return -1;
     }
     if (load_configured_sesmand_policy(g_config_path, pam_service, sizeof(pam_service),
-                                       &resource_policy) != 0) {
+                                       &resource_policy, &heartbeat_policy) != 0) {
         if (error && error_size > 0)
             snprintf(error, error_size, "%s", "config reload failed");
         return -1;
     }
-    if (apply_sesmand_policy(pam_service, &resource_policy) != 0) {
+    if (apply_sesmand_policy(pam_service, &resource_policy, &heartbeat_policy) != 0) {
         if (error && error_size > 0)
             snprintf(error, error_size, "%s", "invalid session policy");
         return -1;
@@ -1569,11 +1737,13 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
     if (config_path) {
         char configured_service[sizeof(g_pam_service)] = {0};
         frdpSessionResourcePolicy resource_policy = {0};
+        frdpSessionHeartbeatPolicy heartbeat_policy = {0};
 
         if (copy_config_path(config_path) != 0 ||
             load_configured_sesmand_policy(config_path, configured_service,
-                                           sizeof(configured_service), &resource_policy) != 0 ||
-            apply_sesmand_policy(configured_service, &resource_policy) != 0) {
+                                           sizeof(configured_service), &resource_policy,
+                                           &heartbeat_policy) != 0 ||
+            apply_sesmand_policy(configured_service, &resource_policy, &heartbeat_policy) != 0) {
             fprintf(stderr, "failed to load frdp-sesmand config\n");
             return -1;
         }
@@ -1649,10 +1819,11 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
         int poll_status = 0;
 
         reap_exited_sessions();
+        supervise_sessions();
         memset(&pfd, 0, sizeof(pfd));
         pfd.fd = fd;
         pfd.events = POLLIN;
-        poll_status = poll(&pfd, 1, 1000);
+        poll_status = poll(&pfd, 1, heartbeat_poll_timeout_ms());
         if (poll_status < 0) {
             if (errno == EINTR)
                 continue;

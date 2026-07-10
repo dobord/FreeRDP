@@ -4,6 +4,15 @@
 
 #define FRDP_CONFIG_MAX_CHANNELS 31
 #define FRDP_CONFIG_CHANNEL_NAME_SIZE 9
+#define FRDP_SESSION_HEARTBEAT_DEFAULT_INTERVAL_MS 5000U
+#define FRDP_SESSION_HEARTBEAT_DEFAULT_TIMEOUT_MS 500U
+#define FRDP_SESSION_HEARTBEAT_DEFAULT_FAILURES 3U
+#define FRDP_SESSION_HEARTBEAT_MIN_INTERVAL_MS 1000U
+#define FRDP_SESSION_HEARTBEAT_MAX_INTERVAL_MS 60000U
+#define FRDP_SESSION_HEARTBEAT_MIN_TIMEOUT_MS 500U
+#define FRDP_SESSION_HEARTBEAT_MAX_TIMEOUT_MS 5000U
+#define FRDP_SESSION_HEARTBEAT_MAX_FAILURES 10U
+#define FRDP_SESSION_HEARTBEAT_MIN_FAILURES 3U
 
 typedef enum {
     FRDP_CHANNEL_FILTER_BLOCKLIST = 0,
@@ -47,6 +56,12 @@ typedef struct {
 } frdpSessionResourcePolicy;
 
 typedef struct {
+    uint32_t interval_ms;
+    uint32_t timeout_ms;
+    uint32_t failure_threshold;
+} frdpSessionHeartbeatPolicy;
+
+typedef struct {
     int enabled;
 } frdpAuditPolicy;
 
@@ -66,6 +81,7 @@ typedef struct {
     char accepted_spn[256];
     char session_socket[108];
     frdpSessionResourcePolicy session_resources;
+    frdpSessionHeartbeatPolicy session_heartbeat;
     frdpChannelPolicy channels;
     frdpClipboardPolicy clipboard;
     frdpAuditPolicy audit;

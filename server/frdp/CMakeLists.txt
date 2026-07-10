@@ -3,6 +3,7 @@
 
 find_package(PAM REQUIRED)
 find_package(X11 REQUIRED)
+find_package(Threads REQUIRED)
 
 if(NOT X11_XTest_FOUND)
   message(FATAL_ERROR "XTest is required for frdp-session-agent input injection")
@@ -102,7 +103,7 @@ add_executable(frdp-session-agent
     frdp-session-agent/frdp-session-agent.c
     $<TARGET_OBJECTS:frdp-ipc>)
 target_include_directories(frdp-session-agent SYSTEM PRIVATE ${X11_INCLUDE_DIR} ${X11_XTest_INCLUDE_PATH} ${X11_Xdamage_INCLUDE_PATH} ${X11_Xrandr_INCLUDE_PATH})
-target_link_libraries(frdp-session-agent PRIVATE winpr ${X11_LIBRARIES} ${X11_XTest_LIB} ${X11_Xdamage_LIB} ${X11_Xrandr_LIB} ${UUID_LIBRARY})
+target_link_libraries(frdp-session-agent PRIVATE winpr Threads::Threads ${X11_LIBRARIES} ${X11_XTest_LIB} ${X11_Xdamage_LIB} ${X11_Xrandr_LIB} ${UUID_LIBRARY})
 frdp_apply_strict_warnings(frdp-session-agent)
 installwithrpath(TARGETS frdp-session-agent DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)
 set_property(TARGET frdp-session-agent PROPERTY FOLDER "Server/frdp")

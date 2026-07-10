@@ -26,7 +26,9 @@ typedef enum {
     FRDP_IPC_SESSION_RELOAD_REQUEST = 15,
     FRDP_IPC_SESSION_RELOAD_RESPONSE = 16,
     FRDP_IPC_SESSION_REQUEST_V3 = 17,
-    FRDP_IPC_SESSION_DISCONNECT_REQUEST = 18
+    FRDP_IPC_SESSION_DISCONNECT_REQUEST = 18,
+    FRDP_IPC_AGENT_HEARTBEAT_REQUEST = 19,
+    FRDP_IPC_AGENT_HEARTBEAT_RESPONSE = 20
 } frdpIpcMessageType;
 
 typedef enum {
@@ -72,6 +74,7 @@ typedef struct {
     (64U + 64U + 4U + 4U + 4U + 4U + 4U + 4U + 4U + 4U + 4U + 128U)
 #define FRDP_IPC_AGENT_RESIZE_REQUEST_WIRE_SIZE (64U + 64U + 4U + 4U + 4U)
 #define FRDP_IPC_AGENT_RESIZE_RESPONSE_WIRE_SIZE (64U + 64U + 4U + 4U + 4U + 128U)
+#define FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE (64U + 8U)
 #define FRDP_IPC_RATE_LIMIT_WINDOW_SECONDS 10U
 #define FRDP_IPC_RATE_LIMIT_MAX_REQUESTS 64U
 #define FRDP_IPC_RATE_LIMIT_MAX_PEERS 16U
@@ -228,8 +231,14 @@ typedef struct {
     char error[128];
 } frdpAgentResizeResponse;
 
+typedef struct {
+    char session_id[64];
+    uint64_t nonce;
+} frdpAgentHeartbeat;
+
 /* Connect to a UNIX domain socket at socket_path and return the fd, or -1 on error */
 int frdp_ipc_connect(const char *socket_path);
+int frdp_ipc_connect_timeout(const char *socket_path, uint32_t timeout_ms);
 
 /* Send len bytes of data on fd. Returns 0 on success, -1 on error */
 int frdp_ipc_send(int fd, const void *buf, size_t len);
@@ -271,6 +280,15 @@ int frdp_ipc_recv_agent_resize_request_payload(int fd, frdpAgentResizeRequest *r
                                                uint32_t payload_len);
 int frdp_ipc_send_agent_resize_response(int fd, const frdpAgentResizeResponse *response);
 int frdp_ipc_recv_agent_resize_response(int fd, frdpAgentResizeResponse *response);
+int frdp_ipc_send_agent_heartbeat_request(int fd, const frdpAgentHeartbeat *heartbeat);
+int frdp_ipc_recv_agent_heartbeat_request_payload(int fd, frdpAgentHeartbeat *heartbeat,
+                                                  uint32_t payload_len);
+int frdp_ipc_send_agent_heartbeat_response(int fd, const frdpAgentHeartbeat *heartbeat);
+int frdp_ipc_recv_agent_heartbeat_response(int fd, frdpAgentHeartbeat *heartbeat);
+int frdp_ipc_recv_agent_heartbeat_request_packet(int fd, frdpAgentHeartbeat *heartbeat);
+int frdp_ipc_send_agent_heartbeat_response_packet(int fd, const frdpAgentHeartbeat *heartbeat);
+int frdp_ipc_exchange_agent_heartbeat(int fd, const frdpAgentHeartbeat *request,
+                                      frdpAgentHeartbeat *response, uint32_t timeout_ms);
 
 /* Close a previously opened fd */
 int frdp_ipc_close(int fd);

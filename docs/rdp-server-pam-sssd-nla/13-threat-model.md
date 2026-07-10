@@ -35,6 +35,7 @@ working checklist for design, implementation, and test gates.
 | PAM handle/session state | High | Owns account/session policy and cleanup obligations. |
 | POSIX uid/gid/group vector | High | Determines privilege drop and session ownership. |
 | Agent control socket | High | Root-only channel for input, framebuffer, and resize requests. |
+| Agent heartbeat channel | High | Private inherited session-manager/agent `SOCK_SEQPACKET` socketpair, not exposed in the runtime directory. |
 | Display reservation and Xvfb/Xorg runtime files | High | Collision or stale cleanup bugs can cross sessions. |
 | TLS private key and runtime config | High | Controls network identity and security policy. |
 | Clipboard/audio/device channel data | Medium to High | May exfiltrate corporate or user data. |
@@ -69,7 +70,7 @@ working checklist for design, implementation, and test gates.
 | Helper socket spoofing or live-socket replacement | Absolute socket path validation, peer credential checks, live-socket collision guard, stale same-owner cleanup checks | Package/user ownership validation across distros and restart reconciliation |
 | Pre-auth resource allocation | Normal helper topology opens sessions after auth and static channel policy checks | Real client E2E proof that denied logins and denied channels allocate no desktop resources |
 | Channel-based data exfiltration | Static channel filter, guarded `drdynvc`, dynamic policy parser/hook, disabled-by-default clipboard policy parser | Runtime `cliprdr` implementation, DVC transport policy, audio/device handler policy and interoperability tests |
-| Agent control abuse | Root peer credential validation, session/correlation id validation, bounded frame metadata, focused non-root rejection/root smoke coverage | Broader Xvfb input/frame tests, agent heartbeat/supervision, richer channel policy profile |
+| Agent control or supervision abuse | Root peer credential validation on the data socket, session/correlation id validation, bounded frame metadata, private inherited heartbeat socketpair, atomic main-loop progress watchdog, nonce echo with absolute deadlines and consecutive-failure cleanup, focused non-root rejection/root smoke coverage | Broader Xvfb input/frame tests, direct authd supervision, richer channel policy profile |
 | Display/session collision or stale cleanup | FRDP-owned display reservations, versioned atomic session metadata, pidfd-pinned PID/start-time/effective-UID plus PGID verification, pidfd-directed agent shutdown with required group disappearance, inode-bound socket/reservation cleanup, fail-closed malformed state, and a live sesmand `SIGKILL`/restart reconciliation gate | Restart cleans rather than restores sessions; lost PAM handles cannot be closed by the replacement manager, and logind/cgroup ownership is still required for full process/PAM reconciliation |
 | Parser or wire-format memory corruption | Explicit little-endian IPC codecs, payload size checks, focused fuzzers for config/auth-token/IPC/frame/input/display/session policy | Sustained corpora and broader selected RDP input fuzzing |
 | Audit log injection or correlation loss | Correlation ids across auth/session/agent path, escaping for client and IPC supplied fields | Structured audit config and useful channel handler audit events |
