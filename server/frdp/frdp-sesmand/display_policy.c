@@ -1,4 +1,5 @@
 #include "display_policy.h"
+#include "process_identity.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -9,65 +10,6 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
-
-static int process_start_ticks(pid_t pid, unsigned long long *start_ticks)
-{
-#ifdef __linux__
-    char path[64] = {0};
-    char stat_text[4096] = {0};
-    char *cursor = NULL;
-    char *comm_end = NULL;
-    ssize_t bytes = 0;
-    int fd = -1;
-
-    if (pid <= 0 || !start_ticks ||
-        snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid) >= (int)sizeof(path))
-        return -1;
-    fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0)
-        return (errno == ENOENT || errno == ESRCH) ? 1 : -1;
-    bytes = read(fd, stat_text, sizeof(stat_text) - 1U);
-    close(fd);
-    if (bytes <= 0)
-        return -1;
-    stat_text[bytes] = '\0';
-    comm_end = strrchr(stat_text, ')');
-    if (!comm_end || comm_end[1] != ' ')
-        return -1;
-    cursor = comm_end + 2;
-    for (unsigned int field = 3; field <= 22; field++) {
-        char *token_end = NULL;
-
-        while (*cursor == ' ')
-            cursor++;
-        if (*cursor == '\0')
-            return -1;
-        token_end = cursor;
-        while (*token_end != '\0' && *token_end != ' ' && *token_end != '\n')
-            token_end++;
-        if (field == 22) {
-            char *parsed_end = NULL;
-            unsigned long long value = 0;
-            const char saved = *token_end;
-
-            *token_end = '\0';
-            errno = 0;
-            value = strtoull(cursor, &parsed_end, 10);
-            *token_end = saved;
-            if (errno != 0 || !parsed_end || parsed_end != token_end || value == 0)
-                return -1;
-            *start_ticks = value;
-            return 0;
-        }
-        cursor = token_end;
-    }
-    return -1;
-#else
-    (void)pid;
-    (void)start_ticks;
-    return -1;
-#endif
-}
 
 int frdp_sesmand_display_number_is_valid(int display)
 {
@@ -121,7 +63,8 @@ int frdp_sesmand_display_reservation_create(int display, const char *dir, int *r
         return -1;
     }
 #ifdef __linux__
-    if (process_start_ticks(getpid(), &start_ticks) != 0 ||
+    if (frdp_sesmand_process_identity_read(getpid(), &start_ticks, NULL) !=
+            FRDP_SESMAND_PROCESS_IDENTITY_OK ||
         dprintf(fd, "v2 %ld %llu\n", (long)getpid(), start_ticks) < 0 || fsync(fd) != 0) {
 #else
     if (dprintf(fd, "%ld\n", (long)getpid()) < 0 || fsync(fd) != 0) {
@@ -216,13 +159,15 @@ int frdp_sesmand_display_reservation_reconcile_stale(const char *dir, int displa
     }
     if (version == 2) {
         unsigned long long current_start_ticks = 0;
-        const int process_status = process_start_ticks((pid_t)pid, &current_start_ticks);
+        const frdpSesmandProcessIdentityResult process_status =
+            frdp_sesmand_process_identity_read((pid_t)pid, &current_start_ticks, NULL);
 
-        if (process_status < 0) {
+        if (process_status == FRDP_SESMAND_PROCESS_IDENTITY_ERROR) {
             close(fd);
             return 0;
         }
-        stale = (process_status > 0) || (current_start_ticks != recorded_start_ticks);
+        stale = (process_status == FRDP_SESMAND_PROCESS_IDENTITY_MISSING) ||
+                (current_start_ticks != recorded_start_ticks);
     } else {
         if (kill((pid_t)pid, 0) == 0 || errno == EPERM) {
             close(fd);

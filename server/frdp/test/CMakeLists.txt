@@ -8,7 +8,8 @@ set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFree
                          TestFreeRDPFrdpHelperStop.c TestFreeRDPFrdpServiceIpc.c
                          TestFreeRDPFrdpAuthdPam.c
                          TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpInputPolicy.c
-                         TestFreeRDPFrdpDisplayPolicy.c TestFreeRDPFrdpSessionState.c
+                         TestFreeRDPFrdpDisplayPolicy.c TestFreeRDPFrdpProcessIdentity.c
+                         TestFreeRDPFrdpSessionState.c
                          TestFreeRDPFrdpSessionCleanup.c TestFreeRDPFrdpSessionDisconnect.c
                          TestFreeRDPFrdpSessionIdentity.c TestFreeRDPFrdpSessionReconnect.c
                          TestFreeRDPFrdpSessionResources.c TestFreeRDPFrdpSesmandPam.c
@@ -42,6 +43,8 @@ add_executable(${MODULE_NAME}
     ../frdp-session-agent/input_policy.h
     ../frdp-sesmand/display_policy.c
     ../frdp-sesmand/display_policy.h
+    ../frdp-sesmand/process_identity.c
+    ../frdp-sesmand/process_identity.h
     ../frdp-sesmand/session_cleanup.c
     ../frdp-sesmand/session_cleanup.h
     ../frdp-sesmand/session_disconnect.c
@@ -265,7 +268,9 @@ if(BUILD_FUZZERS)
   add_executable(${FRDP_DISPLAY_POLICY_FUZZER}
       TestFuzzFreeRDPFrdpDisplayPolicy.c
       ../frdp-sesmand/display_policy.c
-      ../frdp-sesmand/display_policy.h)
+      ../frdp-sesmand/display_policy.h
+      ../frdp-sesmand/process_identity.c
+      ../frdp-sesmand/process_identity.h)
   target_include_directories(${FRDP_DISPLAY_POLICY_FUZZER} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
   target_link_libraries(${FRDP_DISPLAY_POLICY_FUZZER} PUBLIC fuzzer_config winpr)
   set_target_properties(${FRDP_DISPLAY_POLICY_FUZZER}

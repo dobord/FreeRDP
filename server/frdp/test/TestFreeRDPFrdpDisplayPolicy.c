@@ -1,4 +1,5 @@
 #include "frdp-sesmand/display_policy.h"
+#include "frdp-sesmand/process_identity.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -187,6 +188,16 @@ static int write_text_file(const char *path, const char *text)
     return close(fd);
 }
 
+static int write_identity_file(const char* path, pid_t pid, unsigned long long start_ticks)
+{
+    char text[128] = { 0 };
+
+    if (snprintf(text, sizeof(text), "v2 %ld %llu\n", (long)pid, start_ticks) >=
+        (int)sizeof(text))
+        return -1;
+    return write_text_file(path, text);
+}
+
 static int expect_malformed_reservation_kept(const char *dir, const char *path, const char *text)
 {
     if (write_text_file(path, text) != 0)
@@ -311,6 +322,152 @@ cleanup:
     return rc;
 }
 
+static int test_reconcile_keeps_live_identity_reservation(void)
+{
+#ifdef __linux__
+    char dir[128] = { 0 };
+    char path[128] = { 0 };
+    unsigned long long start_ticks = 0;
+    int rc = -1;
+
+    if (make_test_dir(dir, sizeof(dir)) != 0)
+        return -1;
+    if (frdp_sesmand_display_reservation_path(path, sizeof(path), dir,
+                                              FRDP_SESMAND_DISPLAY_MIN) != 0)
+        goto cleanup;
+    if (frdp_sesmand_process_identity_read(getpid(), &start_ticks, NULL) !=
+        FRDP_SESMAND_PROCESS_IDENTITY_OK)
+        goto cleanup;
+    if (write_identity_file(path, getpid(), start_ticks) != 0)
+        goto cleanup;
+    if (frdp_sesmand_display_reservation_reconcile_stale(dir, FRDP_SESMAND_DISPLAY_MIN) != 0)
+        goto cleanup;
+    if (access(path, F_OK) != 0)
+        goto cleanup;
+    rc = 0;
+
+cleanup:
+    if (path[0] != '\0')
+        unlink(path);
+    if (dir[0] != '\0')
+        rmdir(dir);
+    return rc;
+#else
+    return 0;
+#endif
+}
+
+static int test_reconcile_removes_dead_identity_reservation(void)
+{
+#ifdef __linux__
+    char dir[128] = { 0 };
+    char path[128] = { 0 };
+    unsigned long long start_ticks = 0;
+    pid_t child = -1;
+    pid_t dead_pid = -1;
+    int child_pipe[2] = { -1, -1 };
+    int status = 0;
+    int rc = -1;
+
+    if (make_test_dir(dir, sizeof(dir)) != 0)
+        return -1;
+    if (frdp_sesmand_display_reservation_path(path, sizeof(path), dir,
+                                              FRDP_SESMAND_DISPLAY_MIN) != 0)
+        goto cleanup;
+    if (pipe(child_pipe) != 0)
+        goto cleanup;
+    child = fork();
+    if (child < 0)
+        goto cleanup;
+    if (child == 0) {
+        char byte = 0;
+
+        close(child_pipe[1]);
+        (void)read(child_pipe[0], &byte, sizeof(byte));
+        close(child_pipe[0]);
+        _exit(0);
+    }
+    close(child_pipe[0]);
+    child_pipe[0] = -1;
+    if (frdp_sesmand_process_identity_read(child, &start_ticks, NULL) !=
+        FRDP_SESMAND_PROCESS_IDENTITY_OK)
+        goto cleanup;
+    dead_pid = child;
+    close(child_pipe[1]);
+    child_pipe[1] = -1;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        goto cleanup;
+    child = -1;
+    if (write_identity_file(path, dead_pid, start_ticks) != 0)
+        goto cleanup;
+    if (frdp_sesmand_display_reservation_reconcile_stale(dir, FRDP_SESMAND_DISPLAY_MIN) != 1)
+        goto cleanup;
+    if (access(path, F_OK) == 0 || errno != ENOENT)
+        goto cleanup;
+    rc = 0;
+
+cleanup:
+    if (child_pipe[0] >= 0)
+        close(child_pipe[0]);
+    if (child_pipe[1] >= 0)
+        close(child_pipe[1]);
+    if (child > 0)
+        waitpid(child, &status, 0);
+    if (path[0] != '\0')
+        unlink(path);
+    if (dir[0] != '\0')
+        rmdir(dir);
+    return rc;
+#else
+    return 0;
+#endif
+}
+
+static int test_reconcile_pid_one_policy(void)
+{
+    char dir[128] = { 0 };
+    char path[128] = { 0 };
+    int rc = -1;
+
+    if (make_test_dir(dir, sizeof(dir)) != 0)
+        return -1;
+    if (frdp_sesmand_display_reservation_path(path, sizeof(path), dir,
+                                              FRDP_SESMAND_DISPLAY_MIN) != 0)
+        goto cleanup;
+#ifdef __linux__
+    {
+        unsigned long long start_ticks = 0;
+        const frdpSesmandProcessIdentityResult identity_result =
+            frdp_sesmand_process_identity_read((pid_t)1, &start_ticks, NULL);
+
+        if (identity_result == FRDP_SESMAND_PROCESS_IDENTITY_OK) {
+            if (write_identity_file(path, (pid_t)1, start_ticks) != 0)
+                goto cleanup;
+            if (frdp_sesmand_display_reservation_reconcile_stale(
+                    dir, FRDP_SESMAND_DISPLAY_MIN) != 0 ||
+                access(path, F_OK) != 0)
+                goto cleanup;
+            if (unlink(path) != 0)
+                goto cleanup;
+        }
+    }
+#endif
+    if (write_pid_file(path, 1) != 0)
+        goto cleanup;
+    if (frdp_sesmand_display_reservation_reconcile_stale(dir, FRDP_SESMAND_DISPLAY_MIN) != -1)
+        goto cleanup;
+    if (access(path, F_OK) != 0)
+        goto cleanup;
+    rc = 0;
+
+cleanup:
+    if (path[0] != '\0')
+        unlink(path);
+    if (dir[0] != '\0')
+        rmdir(dir);
+    return rc;
+}
+
 static int test_reconcile_removes_reused_pid_reservation(void)
 {
 #ifdef __linux__
@@ -377,6 +534,18 @@ int TestFreeRDPFrdpDisplayPolicy(int argc, char *argv[])
     }
     if (test_reconcile_keeps_live_reservation() != 0) {
         fprintf(stderr, "display reservation live reconciliation failed\n");
+        return -1;
+    }
+    if (test_reconcile_keeps_live_identity_reservation() != 0) {
+        fprintf(stderr, "display v2 reservation live reconciliation failed\n");
+        return -1;
+    }
+    if (test_reconcile_removes_dead_identity_reservation() != 0) {
+        fprintf(stderr, "display v2 reservation dead reconciliation failed\n");
+        return -1;
+    }
+    if (test_reconcile_pid_one_policy() != 0) {
+        fprintf(stderr, "display reservation PID 1 policy failed\n");
         return -1;
     }
     if (test_reconcile_removes_reused_pid_reservation() != 0) {
