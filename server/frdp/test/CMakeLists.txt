@@ -12,7 +12,8 @@ set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFree
                          TestFreeRDPFrdpSessionState.c
                          TestFreeRDPFrdpSessionCleanup.c TestFreeRDPFrdpSessionDisconnect.c
                          TestFreeRDPFrdpSessionIdentity.c TestFreeRDPFrdpSessionReconnect.c
-                         TestFreeRDPFrdpSessionResources.c TestFreeRDPFrdpSesmandPam.c
+                         TestFreeRDPFrdpSessionMetadata.c TestFreeRDPFrdpSessionResources.c
+                         TestFreeRDPFrdpSesmandPam.c
                          TestFreeRDPFrdpPam.c)
 find_program(XVFB_EXECUTABLE Xvfb)
 if(XVFB_EXECUTABLE)
@@ -51,6 +52,8 @@ add_executable(${MODULE_NAME}
     ../frdp-sesmand/session_disconnect.h
     ../frdp-sesmand/session_identity.c
     ../frdp-sesmand/session_identity.h
+    ../frdp-sesmand/session_metadata.c
+    ../frdp-sesmand/session_metadata.h
     ../frdp-sesmand/session_reconnect.c
     ../frdp-sesmand/session_reconnect.h
     ../frdp-sesmand/session_resources.c

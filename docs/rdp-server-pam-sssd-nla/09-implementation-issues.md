@@ -109,6 +109,7 @@ distro CI and full distro policy validation remain open.
 
 ## Build observations
 
+- A versioned fixed-width session-metadata store now has focused coverage for strict record validation, trusted-directory and regular `0600` file checks, exact-length decode, atomic create/update with file and directory synchronization, stale temporary-file cleanup, malformed/symlink fail-closed behavior, and same-inode removal. The store is not yet wired into the live session lifecycle, so durable restart reconciliation remains open.
 - `TestFreeRDPFrdpProcessIdentity` covers the shared Linux PID/start-time/owner-UID reader, while `TestFreeRDPFrdpDisplayPolicy` explicitly covers live and dead v2 reservation owners plus the conservative legacy and exact-identity PID 1 policies.
 - The integrated `frdpd` target and helper targets build successfully in `/tmp/opencode/freerdp-current-build`.
 - The isolated `server` component install check succeeds for FRDP binaries/config when unrelated shadow/proxy server targets are disabled.

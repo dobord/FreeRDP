@@ -1,0 +1,175 @@
+#define _GNU_SOURCE
+
+#include "frdp-sesmand/session_metadata.h"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+typedef struct
+{
+	const frdpSesmandSessionMetadata* expected;
+	uint64_t file_dev;
+	uint64_t file_ino;
+	int count;
+} metadataVisitContext;
+
+static int make_test_dir(char* dir, size_t dir_size)
+{
+	const int rc = snprintf(dir, dir_size, "/tmp/frdp-session-metadata-XXXXXX");
+
+	if ((rc < 0) || ((size_t)rc >= dir_size) || !mkdtemp(dir) || (chmod(dir, 0700) != 0))
+		return -1;
+	return 0;
+}
+
+static int metadata_matches(const frdpSesmandSessionMetadata* left,
+                            const frdpSesmandSessionMetadata* right)
+{
+	return left && right && (strcmp(left->session_id, right->session_id) == 0) &&
+	       (left->uid == right->uid) && (left->agent_pid == right->agent_pid) &&
+	       (left->pgid == right->pgid) &&
+	       (left->agent_start_ticks == right->agent_start_ticks) &&
+	       (left->state == right->state) && (left->display_number == right->display_number) &&
+	       (left->agent_socket_dev == right->agent_socket_dev) &&
+	       (left->agent_socket_ino == right->agent_socket_ino) &&
+	       (left->display_reservation_dev == right->display_reservation_dev) &&
+	       (left->display_reservation_ino == right->display_reservation_ino);
+}
+
+static int visit_metadata(const frdpSesmandSessionMetadata* metadata, uint64_t file_dev,
+                          uint64_t file_ino, void* context)
+{
+	metadataVisitContext* visit = (metadataVisitContext*)context;
+
+	if (!visit || !metadata_matches(metadata, visit->expected) || (file_dev == 0) ||
+	    (file_ino == 0))
+		return -1;
+	visit->file_dev = file_dev;
+	visit->file_ino = file_ino;
+	visit->count++;
+	return 0;
+}
+
+static int write_file(const char* path, const void* data, size_t size)
+{
+	int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+	ssize_t written = 0;
+	int close_status = 0;
+
+	if (fd < 0)
+		return -1;
+	written = write(fd, data, size);
+	close_status = close(fd);
+	return ((written == (ssize_t)size) && (close_status == 0)) ? 0 : -1;
+}
+
+static int test_metadata_store(void)
+{
+	static const char session_id[] = "01234567-89ab-cdef-0123-456789abcdef";
+	frdpSesmandSessionMetadata metadata = { 0 };
+	metadataVisitContext visit = { 0 };
+	char dir[128] = { 0 };
+	char filename[96] = { 0 };
+	char path[256] = { 0 };
+	char temp_path[256] = { 0 };
+	uint64_t first_dev = 0;
+	uint64_t first_ino = 0;
+	uint64_t second_dev = 0;
+	uint64_t second_ino = 0;
+	int rc = -1;
+
+	if (make_test_dir(dir, sizeof(dir)) != 0)
+		return -1;
+	if (snprintf(metadata.session_id, sizeof(metadata.session_id), "%s", session_id) >=
+	    (int)sizeof(metadata.session_id))
+		goto out;
+	metadata.uid = geteuid();
+	metadata.agent_pid = (pid_t)1234;
+	metadata.pgid = metadata.agent_pid;
+	metadata.agent_start_ticks = 5678;
+	metadata.state = FRDP_SESMAND_SESSION_ACTIVE;
+	metadata.display_number = 100;
+	metadata.agent_socket_dev = 11;
+	metadata.agent_socket_ino = 12;
+	metadata.display_reservation_dev = 13;
+	metadata.display_reservation_ino = 14;
+	if (!frdp_sesmand_session_metadata_is_valid(&metadata) ||
+	    (frdp_sesmand_session_metadata_filename(filename, sizeof(filename), session_id) != 0) ||
+	    (snprintf(path, sizeof(path), "%s/%s", dir, filename) >= (int)sizeof(path)))
+		goto out;
+	if (frdp_sesmand_session_metadata_save(dir, &metadata, &first_dev, &first_ino) !=
+	    FRDP_SESMAND_SESSION_METADATA_SAVE_COMMITTED)
+		goto out;
+	visit.expected = &metadata;
+	if ((frdp_sesmand_session_metadata_visit(dir, visit_metadata, &visit) != 0) ||
+	    (visit.count != 1) || (visit.file_dev != first_dev) || (visit.file_ino != first_ino))
+		goto out;
+
+	metadata.state = FRDP_SESMAND_SESSION_DISCONNECTED;
+	if (frdp_sesmand_session_metadata_save(dir, &metadata, &second_dev, &second_ino) !=
+	        FRDP_SESMAND_SESSION_METADATA_SAVE_COMMITTED ||
+	    ((first_dev == second_dev) && (first_ino == second_ino)))
+		goto out;
+	if ((frdp_sesmand_session_metadata_remove(dir, session_id, first_dev, first_ino) == 0) ||
+	    (access(path, F_OK) != 0))
+		goto out;
+	memset(&visit, 0, sizeof(visit));
+	visit.expected = &metadata;
+	if ((frdp_sesmand_session_metadata_visit(dir, visit_metadata, &visit) != 0) ||
+	    (visit.count != 1) || (visit.file_dev != second_dev) || (visit.file_ino != second_ino))
+		goto out;
+
+	if (snprintf(temp_path, sizeof(temp_path), "%s/.frdp-session-tmp-stale", dir) >=
+	    (int)sizeof(temp_path) ||
+	    (write_file(temp_path, "stale", 5) != 0) ||
+	    (frdp_sesmand_session_metadata_visit(dir, visit_metadata, &visit) != 0) ||
+	    (access(temp_path, F_OK) == 0) || (errno != ENOENT))
+		goto out;
+	if (frdp_sesmand_session_metadata_remove(dir, session_id, second_dev, second_ino) != 0 ||
+	    (access(path, F_OK) == 0) || (errno != ENOENT))
+		goto out;
+	if ((write_file(path, "bad", 3) != 0) ||
+	    (frdp_sesmand_session_metadata_visit(dir, visit_metadata, &visit) == 0) ||
+	    (access(path, F_OK) != 0))
+		goto out;
+	unlink(path);
+	if ((symlink("/dev/null", path) != 0) ||
+	    (frdp_sesmand_session_metadata_visit(dir, visit_metadata, &visit) == 0) ||
+	    (lstat(path, &(struct stat){ 0 }) != 0))
+		goto out;
+	unlink(path);
+	if ((chmod(dir, 0770) != 0) ||
+	    (frdp_sesmand_session_metadata_save(dir, &metadata, &second_dev, &second_ino) !=
+	     FRDP_SESMAND_SESSION_METADATA_SAVE_ERROR) ||
+	    (chmod(dir, 0700) != 0))
+		goto out;
+	rc = 0;
+
+out:
+	unlink(temp_path);
+	unlink(path);
+	if (dir[0] != '\0')
+	{
+		chmod(dir, 0700);
+		rmdir(dir);
+	}
+	return rc;
+}
+
+int TestFreeRDPFrdpSessionMetadata(int argc, char* argv[])
+{
+	(void)argc;
+	(void)argv;
+
+	if (test_metadata_store() != 0)
+	{
+		fprintf(stderr, "session metadata store test failed\n");
+		return -1;
+	}
+	return 0;
+}
