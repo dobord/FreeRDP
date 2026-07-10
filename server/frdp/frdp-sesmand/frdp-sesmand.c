@@ -44,6 +44,7 @@
 #include "display_policy.h"
 #include "sesmand_pam.h"
 #include "session_cleanup.h"
+#include "session_disconnect.h"
 #include "session_reconnect.h"
 #include "session_resources.h"
 #include "session_state.h"
@@ -1339,9 +1340,8 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
             rc = send_session_response(fd, 0, NULL, NULL, NULL, "unknown session");
             goto cleanup;
         }
-        if (sessions[idx].state != FRDP_SESMAND_SESSION_ACTIVE ||
-            !frdp_sesmand_session_state_can_transition(sessions[idx].state,
-                                                       FRDP_SESMAND_SESSION_DISCONNECTED)) {
+        if (frdp_sesmand_session_disconnect_begin(&sessions[idx].state,
+                                                  sessions[idx].agent_socket[0] != '\0') != 0) {
             rc = send_session_response(fd, 0, NULL, NULL, NULL, "session not disconnectable");
             goto cleanup;
         }
@@ -1349,11 +1349,10 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
         char escaped_session_id[256] = {0};
         char escaped_user[256] = {0};
 
-        sessions[idx].state = FRDP_SESMAND_SESSION_DISCONNECTED;
         send_status = send_session_response(fd, 1, session_id, NULL, sessions[idx].agent_socket,
                                             NULL);
         if (send_status != 0) {
-            sessions[idx].state = FRDP_SESMAND_SESSION_ACTIVE;
+            (void)frdp_sesmand_session_disconnect_rollback(&sessions[idx].state);
             rc = send_status;
             goto cleanup;
         }
