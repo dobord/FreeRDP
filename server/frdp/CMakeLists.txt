@@ -81,6 +81,8 @@ add_executable(frdp-sesmand
     frdp-sesmand/session_metadata.h
     frdp-sesmand/session_reconnect.c
     frdp-sesmand/session_reconnect.h
+    frdp-sesmand/session_recovery.c
+    frdp-sesmand/session_recovery.h
     frdp-sesmand/session_resources.c
     frdp-sesmand/session_resources.h
     frdp-sesmand/session_state.c

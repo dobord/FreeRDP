@@ -42,11 +42,14 @@
 #include "../ipc/frdp-auth-token.h"
 #include "../ipc/frdp-ipc.h"
 #include "display_policy.h"
+#include "process_identity.h"
 #include "sesmand_pam.h"
 #include "session_cleanup.h"
 #include "session_disconnect.h"
 #include "session_identity.h"
+#include "session_metadata.h"
 #include "session_reconnect.h"
+#include "session_recovery.h"
 #include "session_resources.h"
 #include "session_state.h"
 
@@ -60,6 +63,7 @@ typedef struct {
     uuid_t id;
     pid_t agent_pid;
     pid_t pgid;
+    unsigned long long agent_start_ticks;
     time_t start_time;
     pam_handle_t *pamh;
     int credentials_established;
@@ -68,6 +72,12 @@ typedef struct {
     int display_reservation_fd;
     char display_reservation[sizeof(((struct sockaddr_un *)0)->sun_path)];
     char agent_socket[sizeof(((struct sockaddr_un *)0)->sun_path)];
+    uint64_t agent_socket_dev;
+    uint64_t agent_socket_ino;
+    uint64_t display_reservation_dev;
+    uint64_t display_reservation_ino;
+    uint64_t metadata_dev;
+    uint64_t metadata_ino;
 } session;
 
 #define MAX_SESSIONS 64
@@ -81,6 +91,15 @@ static char g_config_path[1024] = {0};
 static char g_agent_socket_dir[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
 static volatile sig_atomic_t g_stop_requested = 0;
 
+static int durable_session_metadata_enabled(void)
+{
+#ifdef __linux__
+    return g_agent_socket_dir[0] != '\0';
+#else
+    return 0;
+#endif
+}
+
 #define MAX_CONSUMED_AUTH_TOKENS 128
 
 typedef struct {
@@ -92,6 +111,7 @@ static consumedAuthToken consumed_auth_tokens[MAX_CONSUMED_AUTH_TOKENS];
 
 static int create_agent_socket(const char *socket_path);
 static void destroy_agent_socket(int *fd, const char *socket_path);
+static void cleanup_session(int idx);
 
 static void sesmand_signal_handler(int signum)
 {
@@ -178,7 +198,7 @@ static int build_agent_socket_path(char *dst, size_t dst_size, const char *sessi
     if (!dst || dst_size == 0 || !session_id || session_id[0] == '\0')
         return -1;
     dst[0] = '\0';
-    if (g_agent_socket_dir[0] == '\0')
+    if (!durable_session_metadata_enabled())
         return 0;
 
     rc = snprintf(dst, dst_size, "%s/agent-%s.sock", g_agent_socket_dir, session_id);
@@ -357,6 +377,66 @@ static void session_id_to_string(const session *s, char *dst, size_t dst_size)
         return;
     uuid_unparse_lower(s->id, uuid_str);
     snprintf(dst, dst_size, "%s", uuid_str);
+}
+
+static int capture_artifact_identity(const char* path, mode_t expected_type, uint64_t* dev,
+                                     uint64_t* ino)
+{
+    struct stat st = { 0 };
+
+    if (!path || !dev || !ino || (lstat(path, &st) != 0) ||
+        ((st.st_mode & S_IFMT) != expected_type) || (st.st_uid != geteuid()) ||
+        ((st.st_mode & 0777) != 0600))
+        return -1;
+    *dev = (uint64_t)st.st_dev;
+    *ino = (uint64_t)st.st_ino;
+    return ((*dev != 0) && (*ino != 0)) ? 0 : -1;
+}
+
+static int persist_session_metadata(session* s)
+{
+    frdpSesmandSessionMetadata metadata = { 0 };
+    char session_id[FRDP_SESMAND_SESSION_ID_SIZE] = { 0 };
+    uint64_t file_dev = 0;
+    uint64_t file_ino = 0;
+    frdpSesmandSessionMetadataSaveResult result = FRDP_SESMAND_SESSION_METADATA_SAVE_ERROR;
+
+    if (!s)
+        return -1;
+    if (g_agent_socket_dir[0] == '\0')
+        return 0;
+    session_id_to_string(s, session_id, sizeof(session_id));
+    snprintf(metadata.session_id, sizeof(metadata.session_id), "%s", session_id);
+    metadata.uid = s->uid;
+    metadata.agent_pid = s->agent_pid;
+    metadata.pgid = s->pgid;
+    metadata.agent_start_ticks = s->agent_start_ticks;
+    metadata.state = s->state;
+    metadata.display_number = s->display_number;
+    metadata.agent_socket_dev = s->agent_socket_dev;
+    metadata.agent_socket_ino = s->agent_socket_ino;
+    metadata.display_reservation_dev = s->display_reservation_dev;
+    metadata.display_reservation_ino = s->display_reservation_ino;
+    result = frdp_sesmand_session_metadata_save(g_agent_socket_dir, &metadata, &file_dev,
+                                                &file_ino);
+    if ((file_dev != 0) && (file_ino != 0)) {
+        s->metadata_dev = file_dev;
+        s->metadata_ino = file_ino;
+    }
+    return (result == FRDP_SESMAND_SESSION_METADATA_SAVE_COMMITTED) ? 0 : -1;
+}
+
+static int persist_session_state(session* s, frdpSesmandSessionState state)
+{
+    const frdpSesmandSessionState previous = s ? s->state : FRDP_SESMAND_SESSION_DEAD;
+
+    if (!s)
+        return -1;
+    s->state = state;
+    if (persist_session_metadata(s) == 0)
+        return 0;
+    s->state = previous;
+    return (persist_session_metadata(s) == 0) ? -1 : -2;
 }
 
 static int path_exists_or_unknown(const char *path)
@@ -614,8 +694,12 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     }
     close(exec_pipe[0]);
 
-    /* Parent: record session metadata. */
-    session *s = &sessions[session_count++];
+    /* Parent: record and durably persist session metadata before reporting success. */
+    session *s = &sessions[session_count];
+    uid_t agent_effective_uid = (uid_t)-1;
+
+    memset(s, 0, sizeof(*s));
+    s->display_reservation_fd = -1;
     strncpy(s->user, user, sizeof(s->user) - 1);
     s->user[sizeof(s->user) - 1] = '\0';
     s->uid = uid;
@@ -632,6 +716,22 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     snprintf(s->display_reservation, sizeof(s->display_reservation), "%s",
              display_reservation_path);
     snprintf(s->agent_socket, sizeof(s->agent_socket), "%s", agent_socket_path);
+    session_count++;
+    if (durable_session_metadata_enabled()) {
+        if ((frdp_sesmand_process_identity_read(s->agent_pid, &s->agent_start_ticks,
+                                                &agent_effective_uid) !=
+             FRDP_SESMAND_PROCESS_IDENTITY_OK) ||
+            (agent_effective_uid != s->uid) ||
+            (capture_artifact_identity(s->agent_socket, S_IFSOCK, &s->agent_socket_dev,
+                                       &s->agent_socket_ino) != 0) ||
+            (capture_artifact_identity(s->display_reservation, S_IFREG,
+                                       &s->display_reservation_dev,
+                                       &s->display_reservation_ino) != 0) ||
+            (persist_session_metadata(s) != 0)) {
+            cleanup_session(session_count - 1);
+            return -1;
+        }
+    }
     snprintf(session_id, session_id_size, "%s", new_session_id);
     snprintf(display_out, display_out_size, "%s", display_str);
     if (agent_socket_out && agent_socket_out_size > 0)
@@ -662,6 +762,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 static void cleanup_session(int idx)
 {
     session *s = &sessions[idx];
+    int durable_cleanup_complete = 1;
     frdpSesmandSessionCleanupPlan cleanup = {0};
     frdpSesmandSessionCleanupContext cleanup_context = {
         .state = s->state,
@@ -680,8 +781,10 @@ static void cleanup_session(int idx)
         cleanup.unlink_agent_socket = cleanup_context.has_agent_socket;
         cleanup.release_display_reservation = cleanup_context.has_display_reservation;
     }
-    if (cleanup.mark_stopping)
-        s->state = FRDP_SESMAND_SESSION_STOPPING;
+    if (cleanup.mark_stopping) {
+        if (persist_session_state(s, FRDP_SESMAND_SESSION_STOPPING) < 0)
+            s->state = FRDP_SESMAND_SESSION_STOPPING;
+    }
     /* Terminate the entire process group (agent + display backend). */
     if (cleanup.terminate_process_group) {
         kill(-s->pgid, SIGTERM);
@@ -697,12 +800,31 @@ static void cleanup_session(int idx)
         }
         pam_end(s->pamh, status);
     }
-    if (cleanup.unlink_agent_socket)
-        unlink(s->agent_socket);
-    if (cleanup.release_display_reservation)
+    if (cleanup.unlink_agent_socket) {
+        if ((s->agent_socket_dev != 0) && (s->agent_socket_ino != 0))
+            durable_cleanup_complete =
+                frdp_sesmand_session_unlink_artifact(
+                    s->agent_socket, s->agent_socket_dev, s->agent_socket_ino, S_IFSOCK) == 0;
+        else
+            unlink(s->agent_socket);
+    }
+    if (cleanup.release_display_reservation) {
         release_display_reservation(&s->display_reservation_fd, s->display_reservation);
+        if ((s->display_reservation_dev != 0) && (s->display_reservation_ino != 0) &&
+            (frdp_sesmand_session_unlink_artifact(
+                 s->display_reservation, s->display_reservation_dev,
+                 s->display_reservation_ino, S_IFREG) != 0))
+            durable_cleanup_complete = 0;
+    }
     if (cleanup.mark_dead)
         s->state = FRDP_SESMAND_SESSION_DEAD;
+    if (durable_cleanup_complete && (s->metadata_dev != 0) && (s->metadata_ino != 0)) {
+        char session_id[FRDP_SESMAND_SESSION_ID_SIZE] = { 0 };
+
+        session_id_to_string(s, session_id, sizeof(session_id));
+        (void)frdp_sesmand_session_metadata_remove(g_agent_socket_dir, session_id,
+                                                   s->metadata_dev, s->metadata_ino);
+    }
     if (idx < session_count - 1) {
         sessions[idx] = sessions[session_count - 1];
     }
@@ -1092,10 +1214,21 @@ static int reconnect_existing_session(int fd, const char *correlation_id,
 
     session_id_to_string(s, response_session_id, sizeof(response_session_id));
     snprintf(display, sizeof(display), ":%d", s->display_number);
+    rc = persist_session_state(s, FRDP_SESMAND_SESSION_ACTIVE);
+    if (rc != 0) {
+        if (rc == -2)
+            cleanup_session((int)selected);
+        return send_session_response(fd, 0, NULL, NULL, NULL,
+                                     "reconnect state persistence failed");
+    }
     rc = send_session_response(fd, 1, response_session_id, display, s->agent_socket, NULL);
-    if (rc != 0)
+    if (rc != 0) {
+        const int rollback = persist_session_state(s, FRDP_SESMAND_SESSION_DISCONNECTED);
+
+        if (rollback != 0)
+            cleanup_session((int)selected);
         return rc;
-    s->state = FRDP_SESMAND_SESSION_ACTIVE;
+    }
 
     escape_log_field(correlation_id && correlation_id[0] ? correlation_id : "unknown",
                      escaped_correlation_id, sizeof(escaped_correlation_id));
@@ -1363,6 +1496,15 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
             rc = send_session_response(fd, 0, NULL, NULL, NULL, "session not disconnectable");
             goto cleanup;
         }
+        if (persist_session_metadata(&sessions[idx]) != 0) {
+            const int rollback = frdp_sesmand_session_disconnect_rollback(&sessions[idx].state);
+
+            if ((rollback != 0) || (persist_session_metadata(&sessions[idx]) != 0))
+                cleanup_session(idx);
+            rc = send_session_response(fd, 0, NULL, NULL, NULL,
+                                       "disconnect state persistence failed");
+            goto cleanup;
+        }
         char escaped_correlation_id[256] = {0};
         char escaped_session_id[256] = {0};
         char escaped_user[256] = {0};
@@ -1370,7 +1512,9 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
         send_status = send_session_response(fd, 1, session_id, NULL, sessions[idx].agent_socket,
                                             NULL);
         if (send_status != 0) {
-            (void)frdp_sesmand_session_disconnect_rollback(&sessions[idx].state);
+            if ((frdp_sesmand_session_disconnect_rollback(&sessions[idx].state) != 0) ||
+                (persist_session_metadata(&sessions[idx]) != 0))
+                cleanup_session(idx);
             rc = send_status;
             goto cleanup;
         }
@@ -1454,6 +1598,10 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
         fprintf(stderr, "unable to derive agent socket directory from: %s\n", escaped_socket);
         return -1;
     }
+    if (durable_session_metadata_enabled() && !frdp_sesmand_session_recovery_supported()) {
+        fprintf(stderr, "pidfd support is required for durable session recovery\n");
+        return -1;
+    }
 
     fd = create_cloexec_unix_socket();
     if (fd < 0) {
@@ -1480,6 +1628,12 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
     }
     if (listen(fd, 5) < 0) {
         perror("listen");
+        close(fd);
+        unlink(socket_path);
+        return -1;
+    }
+    if (frdp_sesmand_session_reconcile_all(g_agent_socket_dir) != 0) {
+        fprintf(stderr, "failed to reconcile durable session metadata\n");
         close(fd);
         unlink(socket_path);
         return -1;

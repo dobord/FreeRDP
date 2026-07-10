@@ -1,5 +1,7 @@
 #include "ipc/frdp-auth-token.h"
 #include "ipc/frdp-ipc.h"
+#include "frdp-sesmand/display_policy.h"
+#include "frdp-sesmand/session_metadata.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -146,6 +148,52 @@ fail:
 static int start_helper(const char* binary, const char* name, frdpTestHelper* helper)
 {
 	return start_helper_with_config(binary, name, NULL, helper);
+}
+
+static int restart_helper_with_config(const char* binary, const char* config_path,
+                                      frdpTestHelper* helper)
+{
+	struct stat previous = { 0 };
+
+	if (!binary || !config_path || !helper || (helper->pid > 0) ||
+	    (lstat(helper->socket_path, &previous) != 0))
+		return -1;
+	helper->pid = fork();
+	if (helper->pid < 0)
+		return -1;
+	if (helper->pid == 0)
+	{
+		execl(binary, binary, "--config", config_path, "--socket", helper->socket_path,
+		      (char*)NULL);
+		_exit(127);
+	}
+	for (int attempt = 0; attempt < 100; attempt++)
+	{
+		struct stat current = { 0 };
+		const int stat_status = lstat(helper->socket_path, &current);
+
+		if ((stat_status == 0) && S_ISSOCK(current.st_mode) &&
+		    ((current.st_dev != previous.st_dev) || (current.st_ino != previous.st_ino)))
+			return 0;
+		if ((stat_status != 0) && (errno != ENOENT))
+			break;
+		usleep(100000);
+	}
+	kill(helper->pid, SIGKILL);
+	(void)waitpid(helper->pid, NULL, 0);
+	helper->pid = -1;
+	return -1;
+}
+
+static int wait_for_process_gone(pid_t pid)
+{
+	for (int attempt = 0; attempt < 50; attempt++)
+	{
+		if ((kill(pid, 0) != 0) && (errno == ESRCH))
+			return 0;
+		usleep(100000);
+	}
+	return -1;
 }
 
 static int prepend_binary_dirs_to_path(const char* first_binary, const char* second_binary,
@@ -1517,6 +1565,140 @@ cleanup:
 #endif
 }
 
+static int test_sesmand_crash_restart_reconciliation(void)
+{
+#ifndef FRDP_XVFB_EXECUTABLE
+	printf("frdp-sesmand crash reconciliation skipped: Xvfb unavailable\n");
+	return 0;
+#else
+	static const char pam_service[] = "common-session-noninteractive";
+	static const char rhost[] = "127.0.0.1";
+	frdpTestHelper helper = { .pid = -1 };
+	frdpSessionResponse opened = { 0 };
+	frdpSessionListResponse final_list = { 0 };
+	char dir[1024] = { 0 };
+	char config_path[1024] = { 0 };
+	char key_path[1024] = { 0 };
+	char metadata_name[96] = { 0 };
+	char metadata_path[1024] = { 0 };
+	char reservation_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
+	char user[64] = { 0 };
+	uint64_t uid = 0;
+	uint64_t gid = 0;
+	uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+	uint32_t group_count = 0;
+	int32_t agent_pid = -1;
+	int display_number = 0;
+	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
+	char* saved_path = NULL;
+	int helper_started = 0;
+	int rc = -1;
+	const char* stage = "prerequisites";
+
+	if (previous_key_path && !saved_key_path)
+		return -1;
+	if ((access("/etc/pam.d/common-session-noninteractive", R_OK) != 0) ||
+	    (access(FRDP_XVFB_EXECUTABLE, X_OK) != 0))
+	{
+		printf("frdp-sesmand crash reconciliation skipped: PAM/Xvfb prerequisite unavailable\n");
+		rc = 0;
+		goto cleanup;
+	}
+	if (make_runtime_dir(dir, sizeof(dir), "frdp-sesmand-crash-reconcile") != 0)
+		goto cleanup;
+	if ((snprintf(config_path, sizeof(config_path), "%s/frdpd.toml", dir) >=
+	     (int)sizeof(config_path)) ||
+	    (snprintf(key_path, sizeof(key_path), "%s/auth-token.key", dir) >= (int)sizeof(key_path)))
+		goto cleanup;
+	stage = "environment";
+	if ((setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0) ||
+	    (prepend_binary_dirs_to_path(FRDP_SESSION_AGENT_BINARY, FRDP_XVFB_EXECUTABLE,
+	                                 &saved_path) != 0))
+		goto cleanup;
+	stage = "config";
+	if (write_sesmand_config(config_path, pam_service, 0, 0) != 0)
+		goto cleanup;
+	stage = "identity";
+	if (lookup_current_user(user, sizeof(user), &uid, &gid, groups, &group_count) != 0)
+		goto cleanup;
+	stage = "helper-start";
+	if (start_helper_with_config(FRDP_SESMAND_BINARY, "frdp-sesmand-crash-reconcile",
+	                             config_path, &helper) != 0)
+		goto cleanup;
+	helper_started = 1;
+	restore_path(saved_path);
+	saved_path = NULL;
+	stage = "open";
+	if (request_live_session(helper.socket_path, user, rhost, "crash-open", NULL, uid, gid, groups,
+	                         group_count, &opened) != 0 ||
+	    list_single_session(helper.socket_path, &opened, user, "active", -1, &agent_pid) != 0)
+		goto cleanup;
+	if ((sscanf(opened.display, ":%d", &display_number) != 1) ||
+	    (frdp_sesmand_session_metadata_filename(metadata_name, sizeof(metadata_name),
+	                                             opened.session_id) != 0) ||
+	    (snprintf(metadata_path, sizeof(metadata_path), "%s/%s", helper.dir, metadata_name) >=
+	     (int)sizeof(metadata_path)) ||
+	    (frdp_sesmand_display_reservation_path(reservation_path, sizeof(reservation_path),
+	                                           helper.dir, display_number) != 0) ||
+	    (access(metadata_path, F_OK) != 0) || (access(opened.agent_socket, F_OK) != 0) ||
+	    (access(reservation_path, F_OK) != 0))
+		goto cleanup;
+	stage = "manager-sigkill";
+	if ((kill(helper.pid, SIGKILL) != 0) || (waitpid(helper.pid, NULL, 0) != helper.pid))
+		goto cleanup;
+	helper.pid = -1;
+	helper_started = 0;
+	if (kill((pid_t)agent_pid, 0) != 0)
+		goto cleanup;
+	stage = "manager-restart";
+	if (restart_helper_with_config(FRDP_SESMAND_BINARY, config_path, &helper) != 0)
+		goto cleanup;
+	helper_started = 1;
+	stage = "reconciled-list";
+	if ((receive_sesmand_list(helper.socket_path, &final_list) != 0) || (final_list.count != 0))
+		goto cleanup;
+	stage = "reconciled-artifacts";
+	if ((wait_for_process_gone((pid_t)agent_pid) != 0) || (access(metadata_path, F_OK) == 0) ||
+	    (errno != ENOENT) || (access(opened.agent_socket, F_OK) == 0) || (errno != ENOENT) ||
+	    (access(reservation_path, F_OK) == 0) || (errno != ENOENT))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (rc != 0)
+		fprintf(stderr, "crash restart reconciliation failed at stage: %s\n", stage);
+	if (saved_path)
+		restore_path(saved_path);
+	if (helper_started && (stop_helper(&helper) != 0))
+		rc = -1;
+	if ((agent_pid > 1) && (kill((pid_t)agent_pid, 0) == 0))
+	{
+		kill(-(pid_t)agent_pid, SIGKILL);
+		(void)wait_for_process_gone((pid_t)agent_pid);
+	}
+	if (saved_key_path)
+	{
+		(void)setenv(FRDP_AUTH_TOKEN_KEY_ENV, saved_key_path, 1);
+		free(saved_key_path);
+	}
+	else
+		unsetenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	unlink(metadata_path);
+	unlink(opened.agent_socket);
+	unlink(reservation_path);
+	unlink(helper.socket_path);
+	if (helper.dir[0] != '\0')
+		rmdir(helper.dir);
+	unlink(key_path);
+	unlink(config_path);
+	if (dir[0] != '\0')
+		rmdir(dir);
+	SecureZeroMemory(&opened, sizeof(opened));
+	return rc;
+#endif
+}
+
 static int test_sesmand_reload_config(void)
 {
 	frdpTestHelper helper;
@@ -1871,6 +2053,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_sesmand_live_reconnect_lifecycle() != 0)
 	{
 		printf("frdp-sesmand live reconnect lifecycle test failed\n");
+		return -1;
+	}
+	if (test_sesmand_crash_restart_reconciliation() != 0)
+	{
+		printf("frdp-sesmand crash restart reconciliation test failed\n");
 		return -1;
 	}
 	if (test_sesmand_reload_config() != 0)

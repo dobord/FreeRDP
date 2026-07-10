@@ -66,19 +66,68 @@ static int process_identity_parse_stat(char* text, pid_t expected_pid,
 	}
 	return -1;
 }
+
+static int process_identity_parse_effective_uid(char* text, uid_t* effective_uid)
+{
+	char* line = text;
+
+	while (line && (*line != '\0'))
+	{
+		char* next = strchr(line, '\n');
+
+		if (next)
+			*next = '\0';
+		if (strncmp(line, "Uid:", 4) == 0)
+		{
+			char* cursor = line + 4;
+
+			for (unsigned int field = 0; field < 4U; field++)
+			{
+				char* end = NULL;
+				unsigned long long value = 0;
+				uid_t converted = 0;
+
+				while ((*cursor == ' ') || (*cursor == '\t'))
+					cursor++;
+				if ((*cursor < '0') || (*cursor > '9'))
+					return -1;
+				errno = 0;
+				value = strtoull(cursor, &end, 10);
+				if ((errno != 0) || !end || (end == cursor) ||
+				    ((*end != ' ') && (*end != '\t') && (*end != '\0')))
+					return -1;
+				converted = (uid_t)value;
+				if (((unsigned long long)converted != value) || (converted == (uid_t)-1))
+					return -1;
+				if (field == 1U)
+					*effective_uid = converted;
+				cursor = end;
+			}
+			while ((*cursor == ' ') || (*cursor == '\t'))
+				cursor++;
+			return (*cursor == '\0') ? 0 : -1;
+		}
+		if (!next)
+			break;
+		line = next + 1;
+	}
+	return -1;
+}
 #endif
 
 frdpSesmandProcessIdentityResult frdp_sesmand_process_identity_read(
-    pid_t pid, unsigned long long* start_ticks, uid_t* owner_uid)
+    pid_t pid, unsigned long long* start_ticks, uid_t* effective_uid)
 {
 #ifdef __linux__
 	char pid_name[32] = { 0 };
 	char stat_text[4096] = { 0 };
+	char status_text[8192] = { 0 };
 	struct stat process_stat = { 0 };
 	ssize_t bytes = 0;
 	int process_fd = -1;
 	int proc_fd = -1;
 	int stat_fd = -1;
+	int status_fd = -1;
 	frdpSesmandProcessIdentityResult result = FRDP_SESMAND_PROCESS_IDENTITY_ERROR;
 
 	if ((pid <= 0) || !start_ticks ||
@@ -110,11 +159,29 @@ frdpSesmandProcessIdentityResult frdp_sesmand_process_identity_read(
 	stat_text[bytes] = '\0';
 	if (process_identity_parse_stat(stat_text, pid, start_ticks) != 0)
 		goto out;
-	if (owner_uid)
-		*owner_uid = process_stat.st_uid;
+	if (effective_uid)
+	{
+		status_fd = openat(process_fd, "status", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+		if (status_fd < 0)
+		{
+			result = process_identity_open_error();
+			goto out;
+		}
+		do
+		{
+			bytes = read(status_fd, status_text, sizeof(status_text) - 1U);
+		} while ((bytes < 0) && (errno == EINTR));
+		if (bytes <= 0)
+			goto out;
+		status_text[bytes] = '\0';
+		if (process_identity_parse_effective_uid(status_text, effective_uid) != 0)
+			goto out;
+	}
 	result = FRDP_SESMAND_PROCESS_IDENTITY_OK;
 
 out:
+	if (status_fd >= 0)
+		close(status_fd);
 	if (stat_fd >= 0)
 		close(stat_fd);
 	if (process_fd >= 0)
@@ -124,7 +191,7 @@ out:
 #else
 	(void)pid;
 	(void)start_ticks;
-	(void)owner_uid;
+	(void)effective_uid;
 	return FRDP_SESMAND_PROCESS_IDENTITY_ERROR;
 #endif
 }

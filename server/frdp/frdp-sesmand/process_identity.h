@@ -11,6 +11,6 @@ typedef enum
 } frdpSesmandProcessIdentityResult;
 
 frdpSesmandProcessIdentityResult frdp_sesmand_process_identity_read(
-    pid_t pid, unsigned long long* start_ticks, uid_t* owner_uid);
+    pid_t pid, unsigned long long* start_ticks, uid_t* effective_uid);
 
 #endif
