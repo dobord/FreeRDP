@@ -17,6 +17,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <winpr/crt.h>
+
 #ifndef FRDPD_BINARY
 #error "FRDPD_BINARY is not defined"
 #endif
@@ -144,6 +146,50 @@ fail:
 static int start_helper(const char* binary, const char* name, frdpTestHelper* helper)
 {
 	return start_helper_with_config(binary, name, NULL, helper);
+}
+
+static int prepend_binary_dirs_to_path(const char* first_binary, const char* second_binary,
+                                       char** saved_path)
+{
+	char first_dir[1024] = { 0 };
+	char second_dir[1024] = { 0 };
+	char updated_path[4096] = { 0 };
+	char* first_slash = NULL;
+	char* second_slash = NULL;
+	const char* current_path = getenv("PATH");
+
+	if (!first_binary || !second_binary || !saved_path || !current_path ||
+	    (snprintf(first_dir, sizeof(first_dir), "%s", first_binary) >= (int)sizeof(first_dir)) ||
+	    (snprintf(second_dir, sizeof(second_dir), "%s", second_binary) >= (int)sizeof(second_dir)))
+		return -1;
+	*saved_path = strdup(current_path);
+	if (!*saved_path)
+		return -1;
+	first_slash = strrchr(first_dir, '/');
+	second_slash = strrchr(second_dir, '/');
+	if (!first_slash || (first_slash == first_dir) || !second_slash || (second_slash == second_dir))
+		goto fail;
+	*first_slash = '\0';
+	*second_slash = '\0';
+	if (snprintf(updated_path, sizeof(updated_path), "%s:%s:%s", first_dir, second_dir,
+	             current_path) >= (int)sizeof(updated_path))
+		goto fail;
+	if (setenv("PATH", updated_path, 1) != 0)
+		goto fail;
+	return 0;
+
+fail:
+	free(*saved_path);
+	*saved_path = NULL;
+	return -1;
+}
+
+static void restore_path(char* saved_path)
+{
+	if (!saved_path)
+		return;
+	(void)setenv("PATH", saved_path, 1);
+	free(saved_path);
 }
 
 static int stop_helper(frdpTestHelper* helper)
@@ -347,6 +393,18 @@ static int receive_session_response(int fd, int expected_success, const char* ex
 		        expected_error);
 		return -1;
 	}
+	return 0;
+}
+
+static int receive_session_success(int fd, frdpSessionResponse* response)
+{
+	if (!response || (frdp_ipc_recv_session_response(fd, response) != 0) ||
+	    (response->success != 1) ||
+	    !memchr(response->session_id, '\0', sizeof(response->session_id)) ||
+	    !memchr(response->display, '\0', sizeof(response->display)) ||
+	    !memchr(response->agent_socket, '\0', sizeof(response->agent_socket)) ||
+	    !memchr(response->error, '\0', sizeof(response->error)) || (response->error[0] != '\0'))
+		return -1;
 	return 0;
 }
 
@@ -691,6 +749,37 @@ static int test_sesmand_list_empty(const char* socket_path)
 		goto cleanup;
 	if ((response.success != 1) || (response.count != 0))
 		goto cleanup;
+	rc = 0;
+
+cleanup:
+	frdp_ipc_close(fd);
+	return rc;
+}
+
+static int receive_sesmand_list(const char* socket_path, frdpSessionListResponse* response)
+{
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if ((fd < 0) || !response)
+		return -1;
+	memset(response, 0, sizeof(*response));
+	if (send_header(fd, FRDP_IPC_SESSION_LIST_REQUEST, 0) != 0)
+		goto cleanup;
+	if ((frdp_ipc_recv_session_list_response(fd, response) != 0) || (response->success != 1) ||
+	    (response->count > FRDP_IPC_MAX_SESSION_LIST_ENTRIES) ||
+	    !memchr(response->error, '\0', sizeof(response->error)) || (response->error[0] != '\0'))
+		goto cleanup;
+	for (uint32_t x = 0; x < response->count; x++)
+	{
+		const frdpSessionListEntry* entry = &response->entries[x];
+
+		if (!memchr(entry->session_id, '\0', sizeof(entry->session_id)) ||
+		    !memchr(entry->user, '\0', sizeof(entry->user)) ||
+		    !memchr(entry->display, '\0', sizeof(entry->display)) ||
+		    !memchr(entry->state, '\0', sizeof(entry->state)))
+			goto cleanup;
+	}
 	rc = 0;
 
 cleanup:
@@ -1192,6 +1281,242 @@ static int write_sesmand_config_body(const char* path, const char* body)
 	return fclose(fp);
 }
 
+static int request_live_session(const char* socket_path, const char* user, const char* rhost,
+                                const char* correlation_id, const char* requested_session_id,
+                                uint64_t uid, uint64_t gid, const uint64_t* groups,
+                                uint32_t group_count, frdpSessionResponse* response)
+{
+	frdpSessionRequestV3 request = { 0 };
+	char token[192] = { 0 };
+	int fd = -1;
+	int rc = -1;
+
+	if (!socket_path || !user || !rhost || !correlation_id || !groups || (group_count == 0) ||
+	    !response)
+		return -1;
+	if (frdp_auth_token_create(user, rhost, correlation_id, uid, gid, groups, group_count, 1, token,
+	                           sizeof(token)) != 0)
+		goto cleanup;
+	if ((snprintf(request.correlation_id, sizeof(request.correlation_id), "%s", correlation_id) >=
+	     (int)sizeof(request.correlation_id)) ||
+	    (snprintf(request.user, sizeof(request.user), "%s", user) >= (int)sizeof(request.user)) ||
+	    (snprintf(request.rhost, sizeof(request.rhost), "%s", rhost) >=
+	     (int)sizeof(request.rhost)) ||
+	    (snprintf(request.authorization_id, sizeof(request.authorization_id), "%s", token) >=
+	     (int)sizeof(request.authorization_id)))
+		goto cleanup;
+	if (requested_session_id && (snprintf(request.session_id, sizeof(request.session_id), "%s",
+	                                      requested_session_id) >= (int)sizeof(request.session_id)))
+		goto cleanup;
+	request.uid = uid;
+	request.gid = gid;
+	request.group_count = group_count;
+	memcpy(request.groups, groups, group_count * sizeof(groups[0]));
+	request.has_posix_account = 1;
+	request.desktop_width = 800;
+	request.desktop_height = 600;
+	request.color_depth = 24;
+	fd = frdp_ipc_connect(socket_path);
+	if ((fd < 0) || (frdp_ipc_send_session_request_v3(fd, &request) != 0))
+		goto cleanup;
+	rc = receive_session_success(fd, response);
+
+cleanup:
+	if (fd >= 0)
+		frdp_ipc_close(fd);
+	SecureZeroMemory(&request, sizeof(request));
+	SecureZeroMemory(token, sizeof(token));
+	return rc;
+}
+
+static int request_session_control(const char* socket_path, frdpIpcMessageType type,
+                                   const char* correlation_id, const char* session_id,
+                                   const char* user, frdpSessionResponse* response)
+{
+	frdpSessionRequest request = { 0 };
+	int fd = -1;
+	int rc = -1;
+
+	if (!socket_path || !correlation_id || !session_id || !user || !response)
+		return -1;
+	if ((snprintf(request.correlation_id, sizeof(request.correlation_id), "%s", correlation_id) >=
+	     (int)sizeof(request.correlation_id)) ||
+	    (snprintf(request.session_id, sizeof(request.session_id), "%s", session_id) >=
+	     (int)sizeof(request.session_id)) ||
+	    (snprintf(request.user, sizeof(request.user), "%s", user) >= (int)sizeof(request.user)))
+		return -1;
+	fd = frdp_ipc_connect(socket_path);
+	if (fd < 0)
+		goto cleanup;
+	if (type == FRDP_IPC_SESSION_DISCONNECT_REQUEST)
+		rc = frdp_ipc_send_session_disconnect_request(fd, &request);
+	else if (type == FRDP_IPC_SESSION_CLOSE_REQUEST)
+		rc = frdp_ipc_send_session_close_request(fd, &request);
+	else
+		goto cleanup;
+	if (rc != 0)
+		goto cleanup;
+	rc = receive_session_success(fd, response);
+
+cleanup:
+	if (fd >= 0)
+		frdp_ipc_close(fd);
+	SecureZeroMemory(&request, sizeof(request));
+	return rc;
+}
+
+static int list_single_session(const char* socket_path, const frdpSessionResponse* expected,
+                               const char* user, const char* state, int32_t expected_agent_pid,
+                               int32_t* agent_pid)
+{
+	frdpSessionListResponse list = { 0 };
+	const frdpSessionListEntry* entry = &list.entries[0];
+
+	if (!expected || !user || !state || (receive_sesmand_list(socket_path, &list) != 0) ||
+	    (list.count != 1) || (strcmp(entry->session_id, expected->session_id) != 0) ||
+	    (strcmp(entry->user, user) != 0) || (strcmp(entry->display, expected->display) != 0) ||
+	    (strcmp(entry->state, state) != 0) || (entry->agent_pid <= 0) ||
+	    ((expected_agent_pid > 0) && (entry->agent_pid != expected_agent_pid)))
+		return -1;
+	if (agent_pid)
+		*agent_pid = entry->agent_pid;
+	return 0;
+}
+
+static int test_sesmand_live_reconnect_lifecycle(void)
+{
+#ifndef FRDP_XVFB_EXECUTABLE
+	printf("frdp-sesmand live reconnect lifecycle skipped: Xvfb unavailable\n");
+	return 0;
+#else
+	static const char pam_service[] = "common-session-noninteractive";
+	static const char rhost[] = "127.0.0.1";
+	frdpTestHelper helper = { .pid = -1 };
+	frdpSessionResponse opened = { 0 };
+	frdpSessionResponse detached = { 0 };
+	frdpSessionResponse reconnected = { 0 };
+	frdpSessionResponse closed = { 0 };
+	frdpSessionListResponse final_list = { 0 };
+	char dir[1024] = { 0 };
+	char config_path[1024] = { 0 };
+	char key_path[1024] = { 0 };
+	char user[64] = { 0 };
+	uint64_t uid = 0;
+	uint64_t gid = 0;
+	uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+	uint32_t group_count = 0;
+	int32_t agent_pid = -1;
+	struct stat socket_st = { 0 };
+	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
+	char* saved_path = NULL;
+	int helper_started = 0;
+	int rc = -1;
+	const char* stage = "prerequisites";
+
+	if (previous_key_path && !saved_key_path)
+		return -1;
+	if ((access("/etc/pam.d/common-session-noninteractive", R_OK) != 0) ||
+	    (access(FRDP_XVFB_EXECUTABLE, X_OK) != 0))
+	{
+		printf(
+		    "frdp-sesmand live reconnect lifecycle skipped: PAM/Xvfb prerequisite unavailable\n");
+		rc = 0;
+		goto cleanup;
+	}
+	if (make_runtime_dir(dir, sizeof(dir), "frdp-sesmand-live-lifecycle") != 0)
+		goto cleanup;
+	if ((snprintf(config_path, sizeof(config_path), "%s/frdpd.toml", dir) >=
+	     (int)sizeof(config_path)) ||
+	    (snprintf(key_path, sizeof(key_path), "%s/auth-token.key", dir) >= (int)sizeof(key_path)))
+		goto cleanup;
+	stage = "environment";
+	if ((setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0) ||
+	    (prepend_binary_dirs_to_path(FRDP_SESSION_AGENT_BINARY, FRDP_XVFB_EXECUTABLE,
+	                                 &saved_path) != 0))
+		goto cleanup;
+	stage = "config";
+	if (write_sesmand_config(config_path, pam_service, 0, 0) != 0)
+		goto cleanup;
+	stage = "identity";
+	if (lookup_current_user(user, sizeof(user), &uid, &gid, groups, &group_count) != 0)
+		goto cleanup;
+	stage = "helper-start";
+	if (start_helper_with_config(FRDP_SESMAND_BINARY, "frdp-sesmand-live-lifecycle", config_path,
+	                             &helper) != 0)
+		goto cleanup;
+	helper_started = 1;
+	restore_path(saved_path);
+	saved_path = NULL;
+
+	stage = "open";
+	if (request_live_session(helper.socket_path, user, rhost, "live-open", NULL, uid, gid, groups,
+	                         group_count, &opened) != 0 ||
+	    (opened.session_id[0] == '\0') || (opened.display[0] == '\0') ||
+	    (opened.agent_socket[0] == '\0') || (lstat(opened.agent_socket, &socket_st) != 0) ||
+	    !S_ISSOCK(socket_st.st_mode))
+		goto cleanup;
+	stage = "list-active";
+	if (list_single_session(helper.socket_path, &opened, user, "active", -1, &agent_pid) != 0)
+		goto cleanup;
+	stage = "detach";
+	if (request_session_control(helper.socket_path, FRDP_IPC_SESSION_DISCONNECT_REQUEST,
+	                            "live-detach", opened.session_id, user, &detached) != 0 ||
+	    (strcmp(detached.session_id, opened.session_id) != 0) ||
+	    (strcmp(detached.agent_socket, opened.agent_socket) != 0))
+		goto cleanup;
+	stage = "list-disconnected";
+	if (list_single_session(helper.socket_path, &opened, user, "disconnected", agent_pid, NULL) !=
+	    0)
+		goto cleanup;
+	stage = "implicit-reconnect";
+	if (request_live_session(helper.socket_path, user, rhost, "live-reconnect", NULL, uid, gid,
+	                         groups, group_count, &reconnected) != 0 ||
+	    (strcmp(reconnected.session_id, opened.session_id) != 0) ||
+	    (strcmp(reconnected.display, opened.display) != 0) ||
+	    (strcmp(reconnected.agent_socket, opened.agent_socket) != 0))
+		goto cleanup;
+	stage = "list-reactivated";
+	if (list_single_session(helper.socket_path, &opened, user, "active", agent_pid, NULL) != 0)
+		goto cleanup;
+	stage = "hard-close";
+	if (request_session_control(helper.socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST, "live-close",
+	                            opened.session_id, user, &closed) != 0 ||
+	    (strcmp(closed.session_id, opened.session_id) != 0))
+		goto cleanup;
+	stage = "cleanup";
+	if ((receive_sesmand_list(helper.socket_path, &final_list) != 0) || (final_list.count != 0) ||
+	    (lstat(opened.agent_socket, &socket_st) == 0) || (errno != ENOENT) ||
+	    (kill((pid_t)agent_pid, 0) == 0) || (errno != ESRCH))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (rc != 0)
+		fprintf(stderr, "live reconnect lifecycle failed at stage: %s\n", stage);
+	if (saved_path)
+		restore_path(saved_path);
+	if (helper_started && (stop_helper(&helper) != 0))
+		rc = -1;
+	if (saved_key_path)
+	{
+		(void)setenv(FRDP_AUTH_TOKEN_KEY_ENV, saved_key_path, 1);
+		free(saved_key_path);
+	}
+	else
+		unsetenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	unlink(key_path);
+	unlink(config_path);
+	if (dir[0] != '\0')
+		rmdir(dir);
+	SecureZeroMemory(&opened, sizeof(opened));
+	SecureZeroMemory(&detached, sizeof(detached));
+	SecureZeroMemory(&reconnected, sizeof(reconnected));
+	SecureZeroMemory(&closed, sizeof(closed));
+	return rc;
+#endif
+}
+
 static int test_sesmand_reload_config(void)
 {
 	frdpTestHelper helper;
@@ -1541,6 +1866,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_sesmand_rejects_posix_groups_mismatch() != 0)
 	{
 		printf("frdp-sesmand POSIX groups mismatch test failed\n");
+		return -1;
+	}
+	if (test_sesmand_live_reconnect_lifecycle() != 0)
+	{
+		printf("frdp-sesmand live reconnect lifecycle test failed\n");
 		return -1;
 	}
 	if (test_sesmand_reload_config() != 0)

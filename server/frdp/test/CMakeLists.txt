@@ -71,6 +71,9 @@ target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CM
                                                    FRDP_AUTHD_BINARY="$<TARGET_FILE:frdp-authd>"
                                                    FRDP_SESMAND_BINARY="$<TARGET_FILE:frdp-sesmand>"
                                                    FRDP_SESSION_AGENT_BINARY="$<TARGET_FILE:frdp-session-agent>")
+if(XVFB_EXECUTABLE)
+  target_compile_definitions(${MODULE_NAME} PRIVATE FRDP_XVFB_EXECUTABLE="${XVFB_EXECUTABLE}")
+endif()
 
 set_target_properties(${MODULE_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${TESTING_OUTPUT_DIRECTORY}")
 
