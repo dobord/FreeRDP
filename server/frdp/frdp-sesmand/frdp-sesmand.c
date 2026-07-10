@@ -55,6 +55,7 @@
  * X servers. */
 typedef struct {
     char user[64];
+    uid_t uid;
     uuid_t id;
     pid_t agent_pid;
     pid_t pgid;
@@ -618,6 +619,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     session *s = &sessions[session_count++];
     strncpy(s->user, user, sizeof(s->user) - 1);
     s->user[sizeof(s->user) - 1] = '\0';
+    s->uid = uid;
     uuid_copy(s->id, new_id);
     s->agent_pid = pid;
     s->pgid = pid; /* child's pgid equals pid since setpgid called with 0 */
@@ -1038,7 +1040,8 @@ static int find_session_by_id(const char *session_id)
 }
 
 static int reconnect_existing_session(int fd, const char *correlation_id,
-                                      const char *requested_session_id, const char *user)
+                                      const char *requested_session_id, const char *user,
+                                      uid_t uid)
 {
     frdpSesmandReconnectCandidate candidates[MAX_SESSIONS];
     char candidate_ids[MAX_SESSIONS][64];
@@ -1049,10 +1052,15 @@ static int reconnect_existing_session(int fd, const char *correlation_id,
     char escaped_correlation_id[256] = {0};
     char escaped_session_id[256] = {0};
     char escaped_user[256] = {0};
+    frdpSesmandReconnectResult selection = FRDP_SESMAND_RECONNECT_ERROR;
+    const int explicit_reconnect = requested_session_id && requested_session_id[0] != '\0';
     int rc = -1;
 
-    if (session_count <= 0)
+    if (session_count <= 0) {
+        if (!explicit_reconnect)
+            return FRDP_SESMAND_RECONNECT_NOT_FOUND;
         return send_session_response(fd, 0, NULL, NULL, NULL, "reconnect target not found");
+    }
 
     memset(candidates, 0, sizeof(candidates));
     memset(candidate_ids, 0, sizeof(candidate_ids));
@@ -1060,14 +1068,22 @@ static int reconnect_existing_session(int fd, const char *correlation_id,
         session_id_to_string(&sessions[x], candidate_ids[x], sizeof(candidate_ids[x]));
         candidates[x].session_id = candidate_ids[x];
         candidates[x].user = sessions[x].user;
+        candidates[x].uid = (uint64_t)sessions[x].uid;
         candidates[x].state = sessions[x].state;
         candidates[x].start_time = (unsigned long long)sessions[x].start_time;
     }
 
-    if (frdp_sesmand_reconnect_select(candidates, (size_t)session_count,
-                                      requested_session_id, user, &selected) != 0 ||
-        selected >= (size_t)session_count)
+    selection = frdp_sesmand_reconnect_select(candidates, (size_t)session_count,
+                                               requested_session_id, user, (uint64_t)uid,
+                                               &selected);
+    if (selection == FRDP_SESMAND_RECONNECT_NOT_FOUND) {
+        if (!explicit_reconnect)
+            return selection;
         return send_session_response(fd, 0, NULL, NULL, NULL, "reconnect target not found");
+    }
+    if (selection != FRDP_SESMAND_RECONNECT_SELECTED || selected >= (size_t)session_count)
+        return send_session_response(fd, 0, NULL, NULL, NULL,
+                                     "reconnect target is ambiguous");
 
     s = &sessions[selected];
     if ((s->state != FRDP_SESMAND_SESSION_DISCONNECTED) || (s->agent_socket[0] == '\0'))
@@ -1293,9 +1309,12 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
             goto cleanup;
         }
         if (session_id[0] != '\0') {
-            rc = reconnect_existing_session(fd, correlation_id, session_id, user);
+            rc = reconnect_existing_session(fd, correlation_id, session_id, user, uid);
             goto cleanup;
         }
+        rc = reconnect_existing_session(fd, correlation_id, NULL, user, uid);
+        if (rc != FRDP_SESMAND_RECONNECT_NOT_FOUND)
+            goto cleanup;
         if (open_session(user, uid, gid, req_v3.groups, req_v3.group_count, rhost,
                          correlation_id, req.desktop_width, req.desktop_height, req.color_depth,
                          response_session_id, sizeof(response_session_id), display,

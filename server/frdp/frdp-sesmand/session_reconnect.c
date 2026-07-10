@@ -24,9 +24,9 @@ static int candidate_is_valid(const frdpSesmandReconnectCandidate* candidate)
 	       frdp_sesmand_session_state_is_valid(candidate->state);
 }
 
-int frdp_sesmand_reconnect_select(const frdpSesmandReconnectCandidate* candidates,
-                                  size_t candidate_count, const char* requested_session_id,
-                                  const char* user, size_t* selected_index)
+frdpSesmandReconnectResult frdp_sesmand_reconnect_select(
+    const frdpSesmandReconnectCandidate* candidates, size_t candidate_count,
+    const char* requested_session_id, const char* user, uint64_t uid, size_t* selected_index)
 {
 	size_t selected = 0;
 	int found = 0;
@@ -34,7 +34,7 @@ int frdp_sesmand_reconnect_select(const frdpSesmandReconnectCandidate* candidate
 	const int has_session_id = !string_is_empty(requested_session_id);
 
 	if (!selected_index || !candidates || (candidate_count == 0) || string_is_empty(user))
-		return -1;
+		return FRDP_SESMAND_RECONNECT_ERROR;
 
 	*selected_index = 0;
 	for (size_t x = 0; x < candidate_count; x++)
@@ -42,14 +42,14 @@ int frdp_sesmand_reconnect_select(const frdpSesmandReconnectCandidate* candidate
 		const frdpSesmandReconnectCandidate* candidate = &candidates[x];
 
 		if (!candidate_is_valid(candidate) || !reconnectable_state(candidate->state) ||
-		    !string_matches(candidate->user, user))
+		    !string_matches(candidate->user, user) || (candidate->uid != uid))
 			continue;
 		if (has_session_id)
 		{
 			if (!string_matches(candidate->session_id, requested_session_id))
 				continue;
 			if (found)
-				return -1;
+				return FRDP_SESMAND_RECONNECT_ERROR;
 			selected = x;
 			found = 1;
 			continue;
@@ -68,8 +68,10 @@ int frdp_sesmand_reconnect_select(const frdpSesmandReconnectCandidate* candidate
 		}
 	}
 
-	if (!found || ambiguous)
-		return -1;
+	if (ambiguous)
+		return FRDP_SESMAND_RECONNECT_ERROR;
+	if (!found)
+		return FRDP_SESMAND_RECONNECT_NOT_FOUND;
 	*selected_index = selected;
-	return 0;
+	return FRDP_SESMAND_RECONNECT_SELECTED;
 }

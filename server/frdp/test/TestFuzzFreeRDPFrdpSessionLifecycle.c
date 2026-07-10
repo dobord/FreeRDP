@@ -76,6 +76,7 @@ static void fill_candidate(frdpSesmandReconnectCandidate* candidate, char sessio
 	snprintf(users[index], sizeof(users[index]), "user-%u", read_u32(data, size, offset + 4U) % 3U);
 	candidate->session_id = (selector & 0x80U) ? "" : session_ids[index];
 	candidate->user = (selector & 0x40U) ? "" : users[index];
+	candidate->uid = read_u32(data, size, offset + 20U) % 4U;
 	candidate->state = fuzz_state(data, size, offset + 8U);
 	candidate->start_time = read_u64(data, size, offset + 12U);
 }
@@ -99,7 +100,8 @@ static void fuzz_session_reconnect_policy(const uint8_t* data, size_t size)
 
 	(void)frdp_sesmand_reconnect_select(candidates, FRDP_SESSION_LIFECYCLE_FUZZ_CANDIDATES,
 	                                    (selector & 0x01U) ? requested_session_id : NULL,
-	                                    (selector & 0x02U) ? "" : requested_user, &selected);
+	                                    (selector & 0x02U) ? "" : requested_user,
+	                                    read_u32(data, size, 156U) % 4U, &selected);
 }
 
 typedef struct

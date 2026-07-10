@@ -3,13 +3,13 @@
 #include <stdio.h>
 
 static int expect_selected(const frdpSesmandReconnectCandidate* candidates, size_t candidate_count,
-                           const char* requested_session_id, const char* user,
+                           const char* requested_session_id, const char* user, uint64_t uid,
                            size_t expected_index)
 {
 	size_t selected = 99;
 
-	if (frdp_sesmand_reconnect_select(candidates, candidate_count, requested_session_id, user,
-	                                  &selected) != 0)
+	if (frdp_sesmand_reconnect_select(candidates, candidate_count, requested_session_id, user, uid,
+	                                  &selected) != FRDP_SESMAND_RECONNECT_SELECTED)
 		return -1;
 	if (selected != expected_index)
 	{
@@ -19,14 +19,15 @@ static int expect_selected(const frdpSesmandReconnectCandidate* candidates, size
 	return 0;
 }
 
-static int expect_no_selection(const frdpSesmandReconnectCandidate* candidates,
-                               size_t candidate_count, const char* requested_session_id,
-                               const char* user)
+static int expect_selection_result(const frdpSesmandReconnectCandidate* candidates,
+                                   size_t candidate_count, const char* requested_session_id,
+                                   const char* user, uint64_t uid,
+                                   frdpSesmandReconnectResult expected)
 {
 	size_t selected = 99;
 
 	return frdp_sesmand_reconnect_select(candidates, candidate_count, requested_session_id, user,
-	                                     &selected) != 0
+	                                     uid, &selected) == expected
 	           ? 0
 	           : -1;
 }
@@ -34,74 +35,89 @@ static int expect_no_selection(const frdpSesmandReconnectCandidate* candidates,
 static int test_session_id_selection(void)
 {
 	const frdpSesmandReconnectCandidate candidates[] = {
-		{ "session-a", "alice", FRDP_SESMAND_SESSION_DISCONNECTED, 10 },
-		{ "session-b", "bob", FRDP_SESMAND_SESSION_DISCONNECTED, 20 },
-		{ "session-c", "alice", FRDP_SESMAND_SESSION_ACTIVE, 30 }
+		{ "session-a", "alice", 1000, FRDP_SESMAND_SESSION_DISCONNECTED, 10 },
+		{ "session-b", "bob", 1001, FRDP_SESMAND_SESSION_DISCONNECTED, 20 },
+		{ "session-c", "alice", 1000, FRDP_SESMAND_SESSION_ACTIVE, 30 }
 	};
 
-	if (expect_selected(candidates, 3, "session-c", "alice", 2) != 0)
+	if (expect_selected(candidates, 3, "session-c", "alice", 1000, 2) != 0)
 		return -1;
-	if (expect_no_selection(candidates, 3, "session-b", "alice") != 0)
+	if (expect_selection_result(candidates, 3, "session-b", "alice", 1000,
+	                            FRDP_SESMAND_RECONNECT_NOT_FOUND) != 0)
 		return -1;
-	return expect_no_selection(candidates, 3, "missing", "alice");
+	if (expect_selection_result(candidates, 3, "session-a", "alice", 2000,
+	                            FRDP_SESMAND_RECONNECT_NOT_FOUND) != 0)
+		return -1;
+	return expect_selection_result(candidates, 3, "missing", "alice", 1000,
+	                               FRDP_SESMAND_RECONNECT_NOT_FOUND);
 }
 
 static int test_user_selection_prefers_newest_disconnected(void)
 {
 	const frdpSesmandReconnectCandidate candidates[] = {
-		{ "old", "alice", FRDP_SESMAND_SESSION_DISCONNECTED, 10 },
-		{ "active", "alice", FRDP_SESMAND_SESSION_ACTIVE, 40 },
-		{ "new", "alice", FRDP_SESMAND_SESSION_DISCONNECTED, 30 },
-		{ "other", "bob", FRDP_SESMAND_SESSION_DISCONNECTED, 50 }
+		{ "old", "alice", 1000, FRDP_SESMAND_SESSION_DISCONNECTED, 10 },
+		{ "active", "alice", 1000, FRDP_SESMAND_SESSION_ACTIVE, 40 },
+		{ "wrong-uid", "alice", 2000, FRDP_SESMAND_SESSION_DISCONNECTED, 50 },
+		{ "new", "alice", 1000, FRDP_SESMAND_SESSION_DISCONNECTED, 30 },
+		{ "other", "bob", 1001, FRDP_SESMAND_SESSION_DISCONNECTED, 60 }
 	};
 
-	return expect_selected(candidates, 4, NULL, "alice", 2);
+	return expect_selected(candidates, 5, NULL, "alice", 1000, 3);
 }
 
 static int test_non_reconnectable_states_are_ignored(void)
 {
 	const frdpSesmandReconnectCandidate candidates[] = {
-		{ "starting", "alice", FRDP_SESMAND_SESSION_STARTING, 10 },
-		{ "stopping", "alice", FRDP_SESMAND_SESSION_STOPPING, 20 },
-		{ "dead", "alice", FRDP_SESMAND_SESSION_DEAD, 30 }
+		{ "starting", "alice", 1000, FRDP_SESMAND_SESSION_STARTING, 10 },
+		{ "stopping", "alice", 1000, FRDP_SESMAND_SESSION_STOPPING, 20 },
+		{ "dead", "alice", 1000, FRDP_SESMAND_SESSION_DEAD, 30 }
 	};
 
-	if (expect_no_selection(candidates, 3, NULL, "alice") != 0)
+	if (expect_selection_result(candidates, 3, NULL, "alice", 1000,
+	                            FRDP_SESMAND_RECONNECT_NOT_FOUND) != 0)
 		return -1;
-	if (expect_no_selection(candidates, 3, "stopping", "alice") != 0)
+	if (expect_selection_result(candidates, 3, "stopping", "alice", 1000,
+	                            FRDP_SESMAND_RECONNECT_NOT_FOUND) != 0)
 		return -1;
-	return expect_no_selection(candidates, 3, "dead", "alice");
+	return expect_selection_result(candidates, 3, "dead", "alice", 1000,
+	                               FRDP_SESMAND_RECONNECT_NOT_FOUND);
 }
 
 static int test_ambiguous_selection_fails_closed(void)
 {
 	const frdpSesmandReconnectCandidate duplicate_ids[] = {
-		{ "duplicate", "alice", FRDP_SESMAND_SESSION_ACTIVE, 10 },
-		{ "duplicate", "alice", FRDP_SESMAND_SESSION_DISCONNECTED, 20 }
+		{ "duplicate", "alice", 1000, FRDP_SESMAND_SESSION_ACTIVE, 10 },
+		{ "duplicate", "alice", 1000, FRDP_SESMAND_SESSION_DISCONNECTED, 20 }
 	};
 	const frdpSesmandReconnectCandidate duplicate_newest[] = {
-		{ "session-a", "alice", FRDP_SESMAND_SESSION_DISCONNECTED, 30 },
-		{ "session-b", "alice", FRDP_SESMAND_SESSION_DISCONNECTED, 30 }
+		{ "session-a", "alice", 1000, FRDP_SESMAND_SESSION_DISCONNECTED, 30 },
+		{ "session-b", "alice", 1000, FRDP_SESMAND_SESSION_DISCONNECTED, 30 }
 	};
 
-	if (expect_no_selection(duplicate_ids, 2, "duplicate", "alice") != 0)
+	if (expect_selection_result(duplicate_ids, 2, "duplicate", "alice", 1000,
+	                            FRDP_SESMAND_RECONNECT_ERROR) != 0)
 		return -1;
-	return expect_no_selection(duplicate_newest, 2, NULL, "alice");
+	return expect_selection_result(duplicate_newest, 2, NULL, "alice", 1000,
+	                               FRDP_SESMAND_RECONNECT_ERROR);
 }
 
 static int test_invalid_reconnect_arguments(void)
 {
 	size_t selected = 99;
-	const frdpSesmandReconnectCandidate candidate = { "session", "alice",
+	const frdpSesmandReconnectCandidate candidate = { "session", "alice", 1000,
 		                                              FRDP_SESMAND_SESSION_DISCONNECTED, 10 };
 
-	if (frdp_sesmand_reconnect_select(NULL, 1, NULL, "alice", &selected) == 0)
+	if (frdp_sesmand_reconnect_select(NULL, 1, NULL, "alice", 1000, &selected) !=
+	    FRDP_SESMAND_RECONNECT_ERROR)
 		return -1;
-	if (frdp_sesmand_reconnect_select(&candidate, 0, NULL, "alice", &selected) == 0)
+	if (frdp_sesmand_reconnect_select(&candidate, 0, NULL, "alice", 1000, &selected) !=
+	    FRDP_SESMAND_RECONNECT_ERROR)
 		return -1;
-	if (frdp_sesmand_reconnect_select(&candidate, 1, NULL, NULL, &selected) == 0)
+	if (frdp_sesmand_reconnect_select(&candidate, 1, NULL, NULL, 1000, &selected) !=
+	    FRDP_SESMAND_RECONNECT_ERROR)
 		return -1;
-	if (frdp_sesmand_reconnect_select(&candidate, 1, NULL, "alice", NULL) == 0)
+	if (frdp_sesmand_reconnect_select(&candidate, 1, NULL, "alice", 1000, NULL) !=
+	    FRDP_SESMAND_RECONNECT_ERROR)
 		return -1;
 	return 0;
 }
