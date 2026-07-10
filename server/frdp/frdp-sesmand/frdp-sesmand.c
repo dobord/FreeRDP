@@ -45,6 +45,7 @@
 #include "sesmand_pam.h"
 #include "session_cleanup.h"
 #include "session_disconnect.h"
+#include "session_identity.h"
 #include "session_reconnect.h"
 #include "session_resources.h"
 #include "session_state.h"
@@ -586,11 +587,9 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
             setenv("FRDP_AGENT_CONTROL_FD", agent_fd_str, 1);
             setenv("FRDP_AGENT_SOCKET", agent_socket_path, 1);
         }
-        /* Apply the verified group payload before dropping UID/GID. */
-        if (setgroups((size_t)group_count, native_groups) != 0) {
-            child_exec_failed(exec_pipe[1]);
-        }
-        if (setgid(gid) != 0 || setuid(uid) != 0) {
+        /* Root drops privileges; same-user development runs verify their existing identity. */
+        if (frdp_sesmand_apply_session_identity(uid, gid, native_groups,
+                                                (size_t)group_count) != 0) {
             child_exec_failed(exec_pipe[1]);
         }
         execlp("frdp-session-agent", "frdp-session-agent", (char *)NULL);
