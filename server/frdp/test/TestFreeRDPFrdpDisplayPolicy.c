@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -83,6 +84,46 @@ cleanup:
     return rc;
 }
 
+static int test_reservation_records_process_identity(void)
+{
+    char dir[128] = { 0 };
+    char path[128] = { 0 };
+    char text[128] = { 0 };
+    long pid = 0;
+    unsigned long long start_ticks = 0;
+    int fd = -1;
+    int read_fd = -1;
+    int rc = -1;
+
+    if (make_test_dir(dir, sizeof(dir)) != 0)
+        return -1;
+    if (frdp_sesmand_display_reservation_create(FRDP_SESMAND_DISPLAY_MIN, dir, &fd, path,
+                                                sizeof(path)) != 0)
+        goto cleanup;
+    read_fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (read_fd < 0 || read(read_fd, text, sizeof(text) - 1U) <= 0)
+        goto cleanup;
+#ifdef __linux__
+    if (sscanf(text, "v2 %ld %llu", &pid, &start_ticks) != 2 || pid != (long)getpid() ||
+        start_ticks == 0)
+        goto cleanup;
+#else
+    if (sscanf(text, "%ld", &pid) != 1 || pid != (long)getpid())
+        goto cleanup;
+#endif
+    rc = 0;
+
+cleanup:
+    if (read_fd >= 0)
+        close(read_fd);
+    frdp_sesmand_display_reservation_release(&fd, path);
+    if (path[0] != '\0')
+        unlink(path);
+    if (dir[0] != '\0')
+        rmdir(dir);
+    return rc;
+}
+
 static int test_reservation_release_keeps_replaced_path(void)
 {
     char dir[128] = { 0 };
@@ -146,6 +187,17 @@ static int write_text_file(const char *path, const char *text)
     return close(fd);
 }
 
+static int expect_malformed_reservation_kept(const char *dir, const char *path, const char *text)
+{
+    if (write_text_file(path, text) != 0)
+        return -1;
+    if (frdp_sesmand_display_reservation_reconcile_stale(dir, FRDP_SESMAND_DISPLAY_MIN) != -1)
+        return -1;
+    if (access(path, F_OK) != 0)
+        return -1;
+    return unlink(path);
+}
+
 static int test_reconcile_removes_stale_reservation(void)
 {
     char dir[128] = { 0 };
@@ -196,6 +248,8 @@ static int test_reconcile_keeps_malformed_reservation(void)
 {
     char dir[128] = { 0 };
     char path[128] = { 0 };
+    char text[160] = { 0 };
+    size_t used = 0;
     int rc = -1;
 
     if (make_test_dir(dir, sizeof(dir)) != 0)
@@ -203,11 +257,22 @@ static int test_reconcile_keeps_malformed_reservation(void)
     if (frdp_sesmand_display_reservation_path(path, sizeof(path), dir,
                                               FRDP_SESMAND_DISPLAY_MIN) != 0)
         goto cleanup;
-    if (write_text_file(path, "not-a-pid\n") != 0)
+    if (expect_malformed_reservation_kept(dir, path, "not-a-pid\n") != 0)
         goto cleanup;
-    if (frdp_sesmand_display_reservation_reconcile_stale(dir, FRDP_SESMAND_DISPLAY_MIN) != -1)
+    if (snprintf(text, sizeof(text), "v2 %ld -1\n", (long)getpid()) >= (int)sizeof(text) ||
+        expect_malformed_reservation_kept(dir, path, text) != 0)
         goto cleanup;
-    if (access(path, F_OK) != 0)
+    if (snprintf(text, sizeof(text), "v2 %ld 18446744073709551616\n", (long)getpid()) >=
+            (int)sizeof(text) ||
+        expect_malformed_reservation_kept(dir, path, text) != 0)
+        goto cleanup;
+    used = (size_t)snprintf(text, sizeof(text), "v2 %ld 1", (long)getpid());
+    if (used >= sizeof(text) - 2U)
+        goto cleanup;
+    memset(&text[used], ' ', sizeof(text) - used - 2U);
+    text[sizeof(text) - 2U] = 'x';
+    text[sizeof(text) - 1U] = '\0';
+    if (expect_malformed_reservation_kept(dir, path, text) != 0)
         goto cleanup;
     rc = 0;
 
@@ -246,6 +311,41 @@ cleanup:
     return rc;
 }
 
+static int test_reconcile_removes_reused_pid_reservation(void)
+{
+#ifdef __linux__
+    char dir[128] = { 0 };
+    char path[128] = { 0 };
+    char text[128] = { 0 };
+    int rc = -1;
+
+    if (make_test_dir(dir, sizeof(dir)) != 0)
+        return -1;
+    if (frdp_sesmand_display_reservation_path(path, sizeof(path), dir,
+                                              FRDP_SESMAND_DISPLAY_MIN) != 0)
+        goto cleanup;
+    if (snprintf(text, sizeof(text), "v2 %ld %llu\n", (long)getpid(), ULLONG_MAX) >=
+        (int)sizeof(text))
+        goto cleanup;
+    if (write_text_file(path, text) != 0)
+        goto cleanup;
+    if (frdp_sesmand_display_reservation_reconcile_stale(dir, FRDP_SESMAND_DISPLAY_MIN) != 1)
+        goto cleanup;
+    if (access(path, F_OK) == 0 || errno != ENOENT)
+        goto cleanup;
+    rc = 0;
+
+cleanup:
+    if (path[0] != '\0')
+        unlink(path);
+    if (dir[0] != '\0')
+        rmdir(dir);
+    return rc;
+#else
+    return 0;
+#endif
+}
+
 int TestFreeRDPFrdpDisplayPolicy(int argc, char *argv[])
 {
     (void)argc;
@@ -257,6 +357,10 @@ int TestFreeRDPFrdpDisplayPolicy(int argc, char *argv[])
     }
     if (test_reservation_create_rejects_collision() != 0) {
         fprintf(stderr, "display reservation collision handling failed\n");
+        return -1;
+    }
+    if (test_reservation_records_process_identity() != 0) {
+        fprintf(stderr, "display reservation process identity recording failed\n");
         return -1;
     }
     if (test_reservation_release_keeps_replaced_path() != 0) {
@@ -273,6 +377,10 @@ int TestFreeRDPFrdpDisplayPolicy(int argc, char *argv[])
     }
     if (test_reconcile_keeps_live_reservation() != 0) {
         fprintf(stderr, "display reservation live reconciliation failed\n");
+        return -1;
+    }
+    if (test_reconcile_removes_reused_pid_reservation() != 0) {
+        fprintf(stderr, "display reservation PID reuse reconciliation failed\n");
         return -1;
     }
     return 0;
