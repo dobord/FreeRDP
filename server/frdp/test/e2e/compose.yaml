@@ -43,6 +43,7 @@ services:
     stop_grace_period: 30s
     volumes:
       - local-sesmand:/run/frdp-sesmand
+      - local-x11:/tmp/.X11-unix
     networks:
       frdp-e2e:
         ipv4_address: ${FRDP_LOCAL_SERVER_IP:-172.31.56.30}
@@ -63,6 +64,7 @@ services:
         condition: service_healthy
     volumes:
       - local-sesmand:/run/frdp-sesmand:ro
+      - local-x11:/tmp/.X11-unix
       - ${FRDP_E2E_ARTIFACTS:-./artifacts}/local:/artifacts
     networks:
       frdp-e2e:
@@ -139,6 +141,7 @@ services:
     stop_grace_period: 30s
     volumes:
       - freeipa-sesmand:/run/frdp-sesmand
+      - freeipa-x11:/tmp/.X11-unix
     networks:
       frdp-e2e:
         ipv4_address: ${FRDP_FREEIPA_SERVER_IP:-172.31.56.31}
@@ -163,6 +166,7 @@ services:
         condition: service_healthy
     volumes:
       - freeipa-sesmand:/run/frdp-sesmand:ro
+      - freeipa-x11:/tmp/.X11-unix
       - ${FRDP_E2E_ARTIFACTS:-./artifacts}/freeipa:/artifacts
     networks:
       frdp-e2e:
@@ -227,6 +231,7 @@ services:
     stop_grace_period: 30s
     volumes:
       - samba-sesmand:/run/frdp-sesmand
+      - samba-x11:/tmp/.X11-unix
     networks:
       frdp-e2e:
         ipv4_address: ${FRDP_SAMBA_SERVER_IP:-172.31.56.32}
@@ -252,6 +257,7 @@ services:
         condition: service_healthy
     volumes:
       - samba-sesmand:/run/frdp-sesmand:ro
+      - samba-x11:/tmp/.X11-unix
       - ${FRDP_E2E_ARTIFACTS:-./artifacts}/samba:/artifacts
     networks:
       frdp-e2e:
@@ -259,9 +265,12 @@ services:
 
 volumes:
   local-sesmand:
+  local-x11:
   freeipa-data:
   freeipa-sesmand:
+  freeipa-x11:
   samba-sesmand:
+  samba-x11:
 
 networks:
   frdp-e2e:

@@ -128,7 +128,7 @@ build_args()
 		"-gfx"
 		"+disp"
 		"+dynamic-resolution"
-		"-clipboard"
+		"+clipboard"
 		"-heartbeat"
 		"-multitransport"
 		"/tune:FreeRDP_NetworkAutoDetect:false"

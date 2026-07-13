@@ -20,3 +20,8 @@ static_mode = "blocklist"
 static_deny = ""
 dynamic_mode = "blocklist"
 dynamic_deny = ""
+
+[clipboard]
+mode = "text"
+direction = "bidirectional"
+max_text_bytes = 65536

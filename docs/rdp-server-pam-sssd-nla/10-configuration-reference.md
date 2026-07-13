@@ -35,17 +35,19 @@ This document describes the configuration options available in `frdpd.toml` (see
 - `static_mode` (string): `blocklist`/`blacklist` or `allowlist`/`whitelist`. Default is `blocklist`. In blocklist mode, `static_deny` names are rejected and all other valid non-empty static channel names pass the filter, except `drdynvc`, which remains guard-denied until DVC transport and handlers are explicitly enabled. In allowlist mode, only `static_allow` names pass.
 - `static_deny` (string): Optional comma-separated exact RDP static virtual channel names to reject in `blocklist` mode, for example `"drdynvc,rdpdr"`. Default empty. The key is rejected unless `static_mode = "blocklist"`, even when the value is empty.
 - `static_allow` (string): Optional comma-separated exact RDP static virtual channel names to allow in `allowlist` mode, for example `"cliprdr"`. Default empty. The key is rejected unless `static_mode = "allowlist"`, even when the value is empty.
-- `dynamic_mode` (string): `blocklist`/`blacklist` or `allowlist`/`whitelist`. Default is `blocklist`. This feeds the DVC authorization callback for server-created dynamic channels, but remains operationally preparatory while `drdynvc` and useful dynamic handlers stay disabled.
+- `dynamic_mode` (string): `blocklist`/`blacklist` or `allowlist`/`whitelist`. Default is `blocklist`. This feeds the DVC authorization callback for server-created dynamic channels; the implemented `disp` alias controls Display Control over `drdynvc`.
 - `dynamic_deny` (string): Optional comma-separated exact dynamic virtual channel names to reject in `blocklist` mode, for example `"rdpgfx,disp"`. Default empty. The key is rejected unless `dynamic_mode = "blocklist"`, even when the value is empty.
 - `dynamic_allow` (string): Optional comma-separated exact dynamic virtual channel names to allow in `allowlist` mode, for example `"rdpgfx,disp"`. Default empty. The key is rejected unless `dynamic_mode = "allowlist"`, even when the value is empty.
 - Allowing a name only permits negotiation/filter passage; runtime gates still deny arbitrary static channels and named handlers that are not implemented yet, including `rdpsnd` audio output and `rdpdr` device redirection.
 
 ## [clipboard]
 
-- `mode` (string): `disabled` or `text`. Default `disabled`. `text` is parsed as a policy contract for the upcoming text-only clipboard handler, but current `frdpd` startup fails closed for it until the runtime handler is wired.
+- `mode` (string): `disabled` or `text`. Default `disabled`. `text` enables the server-side `cliprdr` handler for `CF_UNICODETEXT` and the bounded session-agent X11 selection bridge.
 - `direction` (string): `disabled`, `client-to-server`, `server-to-client`, or `bidirectional`. Default `disabled`. `mode = "text"` requires an explicit non-disabled direction; any non-disabled direction is rejected while clipboard mode is disabled.
 - `max_text_bytes` (integer): Maximum UTF/text payload size accepted by the text clipboard policy. Default `65536`; valid range is `1..1048576`. The value must be an unquoted integer.
+- The effective X11 payload limit is additionally capped below the display server's ordinary maximum request size. Oversized transfers and the X11 `INCR` protocol fail closed; configure `max_text_bytes` below that backend limit for interoperable transfers.
 - File clipboard, paths, images, and arbitrary formats remain unsupported and must stay denied until separate policy and runtime tests exist.
+- Clipboard policy is applied when a peer starts; `frdpctl reload` does not yet change existing peer/channel instances.
 
 ## [audit]
 

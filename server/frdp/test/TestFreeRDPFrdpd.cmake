@@ -211,8 +211,8 @@ file(WRITE "${clipboard_text_config}"
      "direction = \"client-to-server\"\n")
 run_frdpd_case_with_result(
   "clipboard-text-config"
-  1
-  "Clipboard text mode requires an integrated runtime clipboard handler"
+  255
+  "Certificate or key file not found: cert=/missing key=/missing"
   --config "${clipboard_text_config}")
 
 set(kerberos_config "${test_dir}/kerberos-enabled.toml")

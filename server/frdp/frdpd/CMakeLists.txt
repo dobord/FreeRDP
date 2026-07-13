@@ -15,6 +15,10 @@ set(SRCS
     frdpd_peer.h
     channel_policy.c
     channel_policy.h
+    clipboard.c
+    clipboard.h
+    clipboard_runtime.c
+    clipboard_runtime.h
     display_control.c
     display_control.h
     frame_policy.c

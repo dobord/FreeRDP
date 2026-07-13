@@ -18,6 +18,7 @@
 #endif
 
 #define TEST_CORRELATION_ID "agent-stop-test"
+#define TEST_RECONNECT_CORRELATION_ID "agent-stop-reconnect-test"
 #define TEST_SESSION_ID "agent-stop-session"
 
 static int wait_for_ready(int fd)
@@ -156,7 +157,8 @@ static int send_agent_resize(const char* socket_path, uint32_t width, uint32_t h
 	if (fd < 0)
 		return -1;
 
-	snprintf(request.correlation_id, sizeof(request.correlation_id), "%s", TEST_CORRELATION_ID);
+	snprintf(request.correlation_id, sizeof(request.correlation_id), "%s",
+	         TEST_RECONNECT_CORRELATION_ID);
 	snprintf(request.session_id, sizeof(request.session_id), "%s", TEST_SESSION_ID);
 	request.width = width;
 	request.height = height;
@@ -181,7 +183,7 @@ static int send_agent_resize(const char* socket_path, uint32_t width, uint32_t h
 
 	if (!response.success || response.width != width || response.height != height)
 		return -1;
-	if (strcmp(response.correlation_id, TEST_CORRELATION_ID) != 0 ||
+	if (strcmp(response.correlation_id, TEST_RECONNECT_CORRELATION_ID) != 0 ||
 	    strcmp(response.session_id, TEST_SESSION_ID) != 0)
 		return -1;
 	return 0;
@@ -195,8 +197,7 @@ static int send_agent_heartbeat(int fd)
 	request.nonce = UINT64_C(0x0102030405060708);
 	if (frdp_ipc_exchange_agent_heartbeat(fd, &request, &response, 1000) != 0)
 		return -1;
-	if ((response.nonce != request.nonce) ||
-	    (strcmp(response.session_id, request.session_id) != 0))
+	if ((response.nonce != request.nonce) || (strcmp(response.session_id, request.session_id) != 0))
 		return -1;
 	return 0;
 }
@@ -227,7 +228,8 @@ static int send_agent_frame_request(const char* socket_path, uint32_t width, uin
 	if (fd < 0)
 		goto fail;
 
-	snprintf(request.correlation_id, sizeof(request.correlation_id), "%s", TEST_CORRELATION_ID);
+	snprintf(request.correlation_id, sizeof(request.correlation_id), "%s",
+	         TEST_RECONNECT_CORRELATION_ID);
 	snprintf(request.session_id, sizeof(request.session_id), "%s", TEST_SESSION_ID);
 	request.x = 0;
 	request.y = 0;
@@ -241,7 +243,7 @@ static int send_agent_frame_request(const char* socket_path, uint32_t width, uin
 		goto fail;
 	if (!response.success || (response.flags & FRDP_AGENT_FRAME_RESPONSE_UNCHANGED))
 		goto fail;
-	if (strcmp(response.correlation_id, TEST_CORRELATION_ID) != 0 ||
+	if (strcmp(response.correlation_id, TEST_RECONNECT_CORRELATION_ID) != 0 ||
 	    strcmp(response.session_id, TEST_SESSION_ID) != 0)
 		goto fail;
 	if ((response.x != 0) || (response.y != 0) || (response.width != width) ||
@@ -264,6 +266,71 @@ fail:
 	return -1;
 }
 
+static int send_agent_clipboard_roundtrip(const char* socket_path)
+{
+	static const uint8_t expected[] = "agent clipboard text";
+	frdpAgentClipboardRequest request = { 0 };
+	frdpAgentClipboardResponse response = { 0 };
+	uint8_t* text = NULL;
+	uint8_t* oversized = NULL;
+	int fd = -1;
+	int rc = -1;
+
+	snprintf(request.correlation_id, sizeof(request.correlation_id), "%s",
+	         TEST_RECONNECT_CORRELATION_ID);
+	snprintf(request.session_id, sizeof(request.session_id), "%s", TEST_SESSION_ID);
+	request.max_text_bytes = 1024;
+	request.text_length = (uint32_t)(sizeof(expected) - 1U);
+	fd = frdp_ipc_connect(socket_path);
+	if ((fd < 0) || (frdp_ipc_send_agent_clipboard_set_request(fd, &request, expected) != 0) ||
+	    (frdp_ipc_recv_agent_clipboard_response(fd, FRDP_IPC_AGENT_CLIPBOARD_SET_RESPONSE,
+	                                            &response, &text) != 0) ||
+	    !response.success || (response.text_length != 0) ||
+	    (strcmp(response.correlation_id, TEST_RECONNECT_CORRELATION_ID) != 0) ||
+	    (strcmp(response.session_id, TEST_SESSION_ID) != 0))
+		goto cleanup;
+	free(text);
+	text = NULL;
+	frdp_ipc_close(fd);
+	fd = -1;
+
+	request.text_length = 0;
+	memset(&response, 0, sizeof(response));
+	fd = frdp_ipc_connect(socket_path);
+	if ((fd < 0) || (frdp_ipc_send_agent_clipboard_get_request(fd, &request) != 0) ||
+	    (frdp_ipc_recv_agent_clipboard_response(fd, FRDP_IPC_AGENT_CLIPBOARD_GET_RESPONSE,
+	                                            &response, &text) != 0) ||
+	    !response.success || (response.text_length != sizeof(expected) - 1U) || !text ||
+	    (memcmp(text, expected, sizeof(expected)) != 0))
+		goto cleanup;
+	free(text);
+	text = NULL;
+	frdp_ipc_close(fd);
+	fd = -1;
+
+	oversized = (uint8_t*)malloc(FRDP_IPC_AGENT_CLIPBOARD_MAX_TEXT_BYTES);
+	if (!oversized)
+		goto cleanup;
+	memset(oversized, 'a', FRDP_IPC_AGENT_CLIPBOARD_MAX_TEXT_BYTES);
+	request.max_text_bytes = FRDP_IPC_AGENT_CLIPBOARD_MAX_TEXT_BYTES;
+	request.text_length = FRDP_IPC_AGENT_CLIPBOARD_MAX_TEXT_BYTES;
+	memset(&response, 0, sizeof(response));
+	fd = frdp_ipc_connect(socket_path);
+	if ((fd < 0) || (frdp_ipc_send_agent_clipboard_set_request(fd, &request, oversized) != 0) ||
+	    (frdp_ipc_recv_agent_clipboard_response(fd, FRDP_IPC_AGENT_CLIPBOARD_SET_RESPONSE,
+	                                            &response, &text) != 0) ||
+	    response.success || (response.text_length != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fd >= 0)
+		frdp_ipc_close(fd);
+	free(text);
+	free(oversized);
+	return rc;
+}
+
 int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 {
 	(void)argc;
@@ -279,6 +346,7 @@ int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 	int rc = -1;
 	int resize_checked = 0;
 	int frame_checked = 0;
+	int clipboard_checked = 0;
 
 	if (pipe(ready_pipe) != 0)
 		return -1;
@@ -337,8 +405,11 @@ int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 		if (send_agent_frame_request(socket_path, 16, 16) != 0)
 			goto cleanup;
 		frame_checked = 1;
+		if (send_agent_clipboard_roundtrip(socket_path) != 0)
+			goto cleanup;
+		clipboard_checked = 1;
 	}
-	if (kill(-pid, SIGTERM) != 0)
+	if (kill(pid, SIGTERM) != 0)
 		goto cleanup;
 	if (wait_for_exit(pid, &status) != 0)
 		goto cleanup;
@@ -360,7 +431,7 @@ cleanup:
 		close(heartbeat_fds[1]);
 	if (pid > 0)
 	{
-		kill(-pid, SIGTERM);
+		kill(pid, SIGTERM);
 		if (wait_for_exit(pid, &status) != 0)
 		{
 			kill(-pid, SIGKILL);
@@ -372,10 +443,11 @@ cleanup:
 	if (socket_dir[0] != '\0')
 		rmdir(socket_dir);
 	if (rc != 0)
-		printf("frdp-session-agent stop cleanup failed\n");
+		printf("frdp-session-agent stop cleanup failed (resize=%d frame=%d clipboard=%d)\n",
+		       resize_checked, frame_checked, clipboard_checked);
 	else if (resize_checked && geteuid() != 0)
 		printf("frdp-session-agent control peer rejection verified for non-root test uid\n");
-	else if (resize_checked && frame_checked)
-		printf("frdp-session-agent root resize and frame capture verified\n");
+	else if (resize_checked && frame_checked && clipboard_checked)
+		printf("frdp-session-agent root resize, frame, and clipboard IPC verified\n");
 	return rc;
 }

@@ -5,8 +5,8 @@ find_package(PAM REQUIRED)
 find_package(X11 REQUIRED)
 find_package(Threads REQUIRED)
 
-if(NOT WITH_SERVER_CHANNELS OR NOT CHANNEL_DRDYNVC_SERVER OR NOT CHANNEL_DISP_SERVER)
-  message(FATAL_ERROR "WITH_FRDPD requires the drdynvc and disp server channels")
+if(NOT WITH_SERVER_CHANNELS OR NOT CHANNEL_DRDYNVC_SERVER OR NOT CHANNEL_DISP_SERVER OR NOT CHANNEL_CLIPRDR_SERVER)
+  message(FATAL_ERROR "WITH_FRDPD requires the drdynvc, disp, and cliprdr server channels")
 endif()
 
 if(NOT X11_XTest_FOUND)
@@ -103,6 +103,8 @@ installwithrpath(TARGETS frdp-sesmand DESTINATION ${CMAKE_INSTALL_BINDIR} COMPON
 set_property(TARGET frdp-sesmand PROPERTY FOLDER "Server/frdp")
 
 add_executable(frdp-session-agent
+    frdp-session-agent/clipboard_x11.c
+    frdp-session-agent/clipboard_x11.h
     frdp-session-agent/input_policy.c
     frdp-session-agent/input_policy.h
     frdp-session-agent/frdp-session-agent.c

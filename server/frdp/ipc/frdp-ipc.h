@@ -30,7 +30,11 @@ typedef enum {
     FRDP_IPC_AGENT_HEARTBEAT_REQUEST = 19,
     FRDP_IPC_AGENT_HEARTBEAT_RESPONSE = 20,
     FRDP_IPC_HELPER_HEALTH_REQUEST = 21,
-    FRDP_IPC_HELPER_HEALTH_RESPONSE = 22
+    FRDP_IPC_HELPER_HEALTH_RESPONSE = 22,
+    FRDP_IPC_AGENT_CLIPBOARD_SET_REQUEST = 23,
+    FRDP_IPC_AGENT_CLIPBOARD_SET_RESPONSE = 24,
+    FRDP_IPC_AGENT_CLIPBOARD_GET_REQUEST = 25,
+    FRDP_IPC_AGENT_CLIPBOARD_GET_RESPONSE = 26
 } frdpIpcMessageType;
 
 typedef enum {
@@ -77,6 +81,9 @@ typedef struct {
 #define FRDP_IPC_AGENT_RESIZE_REQUEST_WIRE_SIZE (64U + 64U + 4U + 4U + 4U)
 #define FRDP_IPC_AGENT_RESIZE_RESPONSE_WIRE_SIZE (64U + 64U + 4U + 4U + 4U + 128U)
 #define FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE (64U + 8U)
+#define FRDP_IPC_AGENT_CLIPBOARD_REQUEST_WIRE_SIZE (64U + 64U + 4U + 4U)
+#define FRDP_IPC_AGENT_CLIPBOARD_RESPONSE_WIRE_SIZE (64U + 64U + 4U + 4U + 128U)
+#define FRDP_IPC_AGENT_CLIPBOARD_MAX_TEXT_BYTES 1048576U
 #define FRDP_IPC_RATE_LIMIT_WINDOW_SECONDS 10U
 #define FRDP_IPC_RATE_LIMIT_MAX_REQUESTS 64U
 #define FRDP_IPC_RATE_LIMIT_MAX_PEERS 16U
@@ -238,6 +245,21 @@ typedef struct {
     uint64_t nonce;
 } frdpAgentHeartbeat;
 
+typedef struct {
+    char correlation_id[64];
+    char session_id[64];
+    uint32_t max_text_bytes;
+    uint32_t text_length;
+} frdpAgentClipboardRequest;
+
+typedef struct {
+    char correlation_id[64];
+    char session_id[64];
+    int success;
+    uint32_t text_length;
+    char error[128];
+} frdpAgentClipboardResponse;
+
 /* Connect to a UNIX domain socket at socket_path and return the fd, or -1 on error */
 int frdp_ipc_connect(const char *socket_path);
 int frdp_ipc_connect_timeout(const char *socket_path, uint32_t timeout_ms);
@@ -286,6 +308,21 @@ int frdp_ipc_recv_agent_resize_request_payload(int fd, frdpAgentResizeRequest *r
                                                uint32_t payload_len);
 int frdp_ipc_send_agent_resize_response(int fd, const frdpAgentResizeResponse *response);
 int frdp_ipc_recv_agent_resize_response(int fd, frdpAgentResizeResponse *response);
+int frdp_ipc_send_agent_clipboard_set_request(int fd, const frdpAgentClipboardRequest *request,
+                                              const uint8_t *text);
+int frdp_ipc_recv_agent_clipboard_set_request_payload(int fd,
+                                                      frdpAgentClipboardRequest *request,
+                                                      uint8_t **text, uint32_t payload_len);
+int frdp_ipc_send_agent_clipboard_get_request(int fd,
+                                              const frdpAgentClipboardRequest *request);
+int frdp_ipc_recv_agent_clipboard_get_request_payload(int fd,
+                                                      frdpAgentClipboardRequest *request,
+                                                      uint32_t payload_len);
+int frdp_ipc_send_agent_clipboard_response(int fd, frdpIpcMessageType type,
+                                           const frdpAgentClipboardResponse *response,
+                                           const uint8_t *text);
+int frdp_ipc_recv_agent_clipboard_response(int fd, frdpIpcMessageType expected_type,
+                                           frdpAgentClipboardResponse *response, uint8_t **text);
 int frdp_ipc_send_agent_heartbeat_request(int fd, const frdpAgentHeartbeat *heartbeat);
 int frdp_ipc_recv_agent_heartbeat_request_payload(int fd, frdpAgentHeartbeat *heartbeat,
                                                   uint32_t payload_len);

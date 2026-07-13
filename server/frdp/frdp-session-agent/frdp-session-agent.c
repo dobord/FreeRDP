@@ -44,6 +44,7 @@
 #include <winpr/platform.h>
 
 #include "../ipc/frdp-ipc.h"
+#include "clipboard_x11.h"
 #include "input_policy.h"
 
 #define FRDP_AGENT_READY_MARKER 'R'
@@ -1057,9 +1058,10 @@ static int send_exact(int fd, const void *buf, size_t len)
 static int validate_agent_ids(const char *event_correlation_id, const char *event_session_id,
                               const char *correlation_id, const char *session_id)
 {
+	(void)correlation_id;
+	if (!event_correlation_id || event_correlation_id[0] == '\0')
+		return -1;
     if (strcmp(event_session_id, session_id) != 0)
-        return -1;
-    if (strcmp(correlation_id, "unknown") != 0 && strcmp(event_correlation_id, correlation_id) != 0)
         return -1;
     return 0;
 }
@@ -1193,8 +1195,8 @@ static int handle_resize_message(int fd, Display *display, uint32_t payload_len,
     request.correlation_id[sizeof(request.correlation_id) - 1] = '\0';
     request.session_id[sizeof(request.session_id) - 1] = '\0';
 
-    snprintf(response.correlation_id, sizeof(response.correlation_id), "%s", correlation_id);
-    snprintf(response.session_id, sizeof(response.session_id), "%s", session_id);
+    snprintf(response.correlation_id, sizeof(response.correlation_id), "%s", request.correlation_id);
+    snprintf(response.session_id, sizeof(response.session_id), "%s", request.session_id);
     if (validate_agent_ids(request.correlation_id, request.session_id, correlation_id,
                            session_id) != 0) {
         char escaped_correlation_id[256] = { 0 };
@@ -1239,8 +1241,8 @@ static int handle_frame_message(int fd, frdpAgentFrameState *frame_state, uint32
     request.correlation_id[sizeof(request.correlation_id) - 1] = '\0';
     request.session_id[sizeof(request.session_id) - 1] = '\0';
 
-    snprintf(response.correlation_id, sizeof(response.correlation_id), "%s", correlation_id);
-    snprintf(response.session_id, sizeof(response.session_id), "%s", session_id);
+    snprintf(response.correlation_id, sizeof(response.correlation_id), "%s", request.correlation_id);
+    snprintf(response.session_id, sizeof(response.session_id), "%s", request.session_id);
     if (validate_agent_ids(request.correlation_id, request.session_id, correlation_id,
                            session_id) != 0) {
         char escaped_correlation_id[256] = { 0 };
@@ -1297,8 +1299,75 @@ static void *heartbeat_thread_main(void *arg)
     return NULL;
 }
 
-static int handle_control_client(int fd, frdpAgentFrameState *frame_state, const char *correlation_id,
-                                  const char *session_id)
+static void init_clipboard_response(frdpAgentClipboardResponse *response,
+                                    const char *correlation_id, const char *session_id)
+{
+    memset(response, 0, sizeof(*response));
+    snprintf(response->correlation_id, sizeof(response->correlation_id), "%s", correlation_id);
+    snprintf(response->session_id, sizeof(response->session_id), "%s", session_id);
+}
+
+static int handle_clipboard_set_message(int fd, frdpAgentClipboardX11 *clipboard,
+                                        uint32_t payload_len, const char *correlation_id,
+                                        const char *session_id)
+{
+    frdpAgentClipboardRequest request = { 0 };
+    frdpAgentClipboardResponse response = { 0 };
+    uint8_t *text = NULL;
+    int rc = -1;
+
+    if (frdp_ipc_recv_agent_clipboard_set_request_payload(fd, &request, &text, payload_len) != 0)
+        return -1;
+    request.correlation_id[sizeof(request.correlation_id) - 1] = '\0';
+    request.session_id[sizeof(request.session_id) - 1] = '\0';
+    init_clipboard_response(&response, request.correlation_id, request.session_id);
+    if (validate_agent_ids(request.correlation_id, request.session_id, correlation_id,
+                           session_id) != 0) {
+        snprintf(response.error, sizeof(response.error), "%s", "mismatched ids");
+    } else if (frdp_agent_clipboard_x11_set_text(clipboard, text, request.text_length,
+                                                  request.max_text_bytes) != 0) {
+        snprintf(response.error, sizeof(response.error), "%s", "clipboard set failed");
+    } else {
+        response.success = 1;
+    }
+    rc = frdp_ipc_send_agent_clipboard_response(fd, FRDP_IPC_AGENT_CLIPBOARD_SET_RESPONSE,
+                                                 &response, NULL);
+    free(text);
+    return rc;
+}
+
+static int handle_clipboard_get_message(int fd, frdpAgentClipboardX11 *clipboard,
+                                        uint32_t payload_len, const char *correlation_id,
+                                        const char *session_id)
+{
+    frdpAgentClipboardRequest request = { 0 };
+    frdpAgentClipboardResponse response = { 0 };
+    uint8_t *text = NULL;
+    int rc = -1;
+
+    if (frdp_ipc_recv_agent_clipboard_get_request_payload(fd, &request, payload_len) != 0)
+        return -1;
+    request.correlation_id[sizeof(request.correlation_id) - 1] = '\0';
+    request.session_id[sizeof(request.session_id) - 1] = '\0';
+    init_clipboard_response(&response, request.correlation_id, request.session_id);
+    if (validate_agent_ids(request.correlation_id, request.session_id, correlation_id,
+                           session_id) != 0) {
+        snprintf(response.error, sizeof(response.error), "%s", "mismatched ids");
+    } else if (frdp_agent_clipboard_x11_get_text(clipboard, request.max_text_bytes, &text,
+                                                  &response.text_length) != 0) {
+        snprintf(response.error, sizeof(response.error), "%s", "clipboard get failed");
+    } else {
+        response.success = 1;
+    }
+    rc = frdp_ipc_send_agent_clipboard_response(fd, FRDP_IPC_AGENT_CLIPBOARD_GET_RESPONSE,
+                                                 &response, text);
+    free(text);
+    return rc;
+}
+
+static int handle_control_client(int fd, frdpAgentFrameState *frame_state,
+                                 frdpAgentClipboardX11 *clipboard, const char *correlation_id,
+                                 const char *session_id)
 {
     frdpIpcHeader header;
 
@@ -1318,13 +1387,19 @@ static int handle_control_client(int fd, frdpAgentFrameState *frame_state, const
         case FRDP_IPC_AGENT_RESIZE_REQUEST:
             return handle_resize_message(fd, frame_state ? frame_state->display : NULL,
                                          header.payload_len, correlation_id, session_id);
+        case FRDP_IPC_AGENT_CLIPBOARD_SET_REQUEST:
+            return handle_clipboard_set_message(fd, clipboard, header.payload_len, correlation_id,
+                                                session_id);
+        case FRDP_IPC_AGENT_CLIPBOARD_GET_REQUEST:
+            return handle_clipboard_get_message(fd, clipboard, header.payload_len, correlation_id,
+                                                session_id);
         default:
             return -1;
     }
 }
 
 static int wait_for_backend_exit(pid_t pid, int control_fd, frdpAgentFrameState *frame_state,
-                                 const char *correlation_id,
+                                 frdpAgentClipboardX11 *clipboard, const char *correlation_id,
                                  const char *session_id, int *stop_requested)
 {
     int status = 0;
@@ -1349,28 +1424,42 @@ static int wait_for_backend_exit(pid_t pid, int control_fd, frdpAgentFrameState 
             return status;
         }
 
-        if (control_fd < 0) {
-            usleep(200000);
-            continue;
-        }
+        struct pollfd pfds[2] = { { 0 } };
+        nfds_t count = 0;
+        int control_index = -1;
+        int x11_index = -1;
 
-        struct pollfd pfd;
-        memset(&pfd, 0, sizeof(pfd));
-        pfd.fd = control_fd;
-        pfd.events = POLLIN;
-        const int poll_status = poll(&pfd, 1, 500);
+        if (control_fd >= 0) {
+            control_index = (int)count;
+            pfds[count].fd = control_fd;
+            pfds[count].events = POLLIN;
+            count++;
+        }
+        if (clipboard && clipboard->display) {
+            if (XPending(clipboard->display) > 0)
+                frdp_agent_clipboard_x11_process_events(clipboard);
+            x11_index = (int)count;
+            pfds[count].fd = ConnectionNumber(clipboard->display);
+            pfds[count].events = POLLIN;
+            count++;
+        }
+        const int poll_status = poll(pfds, count, 500);
         if (poll_status < 0) {
             if (errno == EINTR)
                 continue;
             return status;
         }
-        if (poll_status == 0 || (pfd.revents & POLLIN) == 0)
+        if ((x11_index >= 0) &&
+            ((pfds[x11_index].revents & POLLIN) || (XPending(clipboard->display) > 0)))
+            frdp_agent_clipboard_x11_process_events(clipboard);
+        if ((poll_status == 0) || (control_index < 0) ||
+            ((pfds[control_index].revents & POLLIN) == 0))
             continue;
 
         const int cfd = accept_cloexec(control_fd);
         if (cfd < 0)
             continue;
-        if (handle_control_client(cfd, frame_state, correlation_id, session_id) != 0) {
+        if (handle_control_client(cfd, frame_state, clipboard, correlation_id, session_id) != 0) {
             char escaped_correlation_id[256] = { 0 };
             char escaped_session_id[256] = { 0 };
 
@@ -1625,6 +1714,25 @@ int main(int argc, char **argv)
         closelog();
         return 1;
     }
+    frdpAgentClipboardX11 clipboard;
+    if (frdp_agent_clipboard_x11_init(&clipboard, xdisplay) != 0) {
+        syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to initialize clipboard state",
+               escaped_correlation_id, escaped_session_id);
+        frame_state_uninit(&frame_state);
+        XCloseDisplay(xdisplay);
+        kill(pid, SIGTERM);
+        usleep(200000);
+        kill(pid, SIGKILL);
+        waitpid(pid, NULL, 0);
+        if (ready_fd >= 0)
+            close(ready_fd);
+        if (control_fd >= 0)
+            close(control_fd);
+        if (heartbeat_fd >= 0)
+            close(heartbeat_fd);
+        closelog();
+        return 1;
+    }
     pthread_t heartbeat_thread;
     int heartbeat_thread_started = 0;
     frdpAgentHeartbeatThreadContext heartbeat_context = { .fd = heartbeat_fd };
@@ -1635,6 +1743,7 @@ int main(int argc, char **argv)
         if (pthread_create(&heartbeat_thread, NULL, heartbeat_thread_main, &heartbeat_context) != 0) {
             syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to start heartbeat thread",
                    escaped_correlation_id, escaped_session_id);
+            frdp_agent_clipboard_x11_uninit(&clipboard);
             frame_state_uninit(&frame_state);
             XCloseDisplay(xdisplay);
             kill(pid, SIGTERM);
@@ -1654,6 +1763,7 @@ int main(int argc, char **argv)
     if (notify_agent_ready(&ready_fd) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to report agent readiness",
                escaped_correlation_id, escaped_session_id);
+        frdp_agent_clipboard_x11_uninit(&clipboard);
         frame_state_uninit(&frame_state);
         XCloseDisplay(xdisplay);
         kill(pid, SIGTERM);
@@ -1674,16 +1784,18 @@ int main(int argc, char **argv)
 
     /* TODO: add compression and update scheduling policy. */
     /* TODO: add Unicode/text input injection with explicit layout handling. */
-    /* TODO: process clipboard/audio channels. */
+    /* TODO: process audio channels. */
 
     /* Wait for the display server to exit. */
     int stop_requested = 0;
-    int status = wait_for_backend_exit(pid, control_fd, &frame_state, correlation_id, session_id,
-                                       &stop_requested);
+    int status = wait_for_backend_exit(pid, control_fd, &frame_state, &clipboard, correlation_id,
+                                       session_id, &stop_requested);
     if (stop_requested) {
+        frdp_agent_clipboard_x11_uninit(&clipboard);
         frame_state_free_dirty_tiles(&frame_state);
         status = terminate_backend(pid);
     } else {
+        frdp_agent_clipboard_x11_uninit(&clipboard);
         frame_state_uninit(&frame_state);
         XCloseDisplay(xdisplay);
     }

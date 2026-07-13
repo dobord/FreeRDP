@@ -8,7 +8,7 @@ set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFree
                          TestFreeRDPFrdpHelperStop.c TestFreeRDPFrdpServiceIpc.c
                          TestFreeRDPFrdpAuthdPam.c TestFreeRDPFrdpNtlmIdentity.c
                          TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpInputPolicy.c
-                         TestFreeRDPFrdpDisplayControl.c
+                         TestFreeRDPFrdpDisplayControl.c TestFreeRDPFrdpClipboard.c
                          TestFreeRDPFrdpDisplayPolicy.c TestFreeRDPFrdpProcessIdentity.c
                          TestFreeRDPFrdpSessionState.c
                          TestFreeRDPFrdpSessionCleanup.c TestFreeRDPFrdpSessionDisconnect.c
@@ -33,6 +33,8 @@ add_executable(${MODULE_NAME}
     ../ipc/frdp-ipc.h
     ../frdpd/channel_policy.c
     ../frdpd/channel_policy.h
+    ../frdpd/clipboard.c
+    ../frdpd/clipboard.h
     ../frdpd/display_control.c
     ../frdpd/display_control.h
     ../frdpd/frame_policy.c

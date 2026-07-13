@@ -1443,6 +1443,100 @@ cleanup:
 	return rc;
 }
 
+static int test_agent_clipboard_messages_use_explicit_wire_format(void)
+{
+	static const uint8_t text[] = "clipboard text";
+	int fds[2] = { -1, -1 };
+	frdpIpcHeader header = { 0 };
+	frdpAgentClipboardRequest request = { 0 };
+	frdpAgentClipboardRequest decoded_request = { 0 };
+	frdpAgentClipboardResponse response = { 0 };
+	frdpAgentClipboardResponse decoded_response = { 0 };
+	uint8_t* decoded_text = NULL;
+	int rc = -1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	snprintf(request.correlation_id, sizeof(request.correlation_id), "corr");
+	snprintf(request.session_id, sizeof(request.session_id), "session");
+	request.max_text_bytes = 1024;
+	request.text_length = (uint32_t)(sizeof(text) - 1U);
+	if (frdp_ipc_send_agent_clipboard_set_request(fds[0], &request, text) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_AGENT_CLIPBOARD_SET_REQUEST) ||
+	    (header.payload_len != (FRDP_IPC_AGENT_CLIPBOARD_REQUEST_WIRE_SIZE + request.text_length)))
+		goto cleanup;
+	if (frdp_ipc_recv_agent_clipboard_set_request_payload(fds[1], &decoded_request, &decoded_text,
+	                                                      header.payload_len) != 0)
+		goto cleanup;
+	if ((strcmp(decoded_request.correlation_id, request.correlation_id) != 0) ||
+	    (strcmp(decoded_request.session_id, request.session_id) != 0) ||
+	    (decoded_request.max_text_bytes != request.max_text_bytes) ||
+	    (decoded_request.text_length != request.text_length) ||
+	    (memcmp(decoded_text, text, request.text_length) != 0) ||
+	    (decoded_text[request.text_length] != '\0'))
+		goto cleanup;
+	free(decoded_text);
+	decoded_text = NULL;
+
+	snprintf(response.correlation_id, sizeof(response.correlation_id), "corr");
+	snprintf(response.session_id, sizeof(response.session_id), "session");
+	response.success = 1;
+	if (frdp_ipc_send_agent_clipboard_response(fds[1], FRDP_IPC_AGENT_CLIPBOARD_SET_RESPONSE,
+	                                           &response, NULL) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_agent_clipboard_response(fds[0], FRDP_IPC_AGENT_CLIPBOARD_SET_RESPONSE,
+	                                           &decoded_response, &decoded_text) != 0)
+		goto cleanup;
+	if (!decoded_response.success || (decoded_response.text_length != 0) || !decoded_text ||
+	    (decoded_text[0] != '\0'))
+		goto cleanup;
+	free(decoded_text);
+	decoded_text = NULL;
+
+	request.text_length = 0;
+	if (frdp_ipc_send_agent_clipboard_get_request(fds[0], &request) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header))
+		goto cleanup;
+	if ((header.type != FRDP_IPC_AGENT_CLIPBOARD_GET_REQUEST) ||
+	    (header.payload_len != FRDP_IPC_AGENT_CLIPBOARD_REQUEST_WIRE_SIZE) ||
+	    (frdp_ipc_recv_agent_clipboard_get_request_payload(fds[1], &decoded_request,
+	                                                       header.payload_len) != 0))
+		goto cleanup;
+	response.text_length = (uint32_t)(sizeof(text) - 1U);
+	if (frdp_ipc_send_agent_clipboard_response(fds[1], FRDP_IPC_AGENT_CLIPBOARD_GET_RESPONSE,
+	                                           &response, text) != 0)
+		goto cleanup;
+	if (frdp_ipc_recv_agent_clipboard_response(fds[0], FRDP_IPC_AGENT_CLIPBOARD_GET_RESPONSE,
+	                                           &decoded_response, &decoded_text) != 0)
+		goto cleanup;
+	if (!decoded_response.success || (decoded_response.text_length != sizeof(text) - 1U) ||
+	    (memcmp(decoded_text, text, sizeof(text)) != 0))
+		goto cleanup;
+
+	request.max_text_bytes = 0;
+	errno = 0;
+	if (expect_einval(frdp_ipc_send_agent_clipboard_get_request(-1, &request)) != 0)
+		goto cleanup;
+	request.max_text_bytes = FRDP_IPC_AGENT_CLIPBOARD_MAX_TEXT_BYTES;
+	request.text_length = request.max_text_bytes + 1U;
+	errno = 0;
+	if (expect_einval(frdp_ipc_send_agent_clipboard_set_request(-1, &request, text)) != 0)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	free(decoded_text);
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
 static int test_agent_heartbeat_exchange_has_absolute_deadline(void)
 {
 	int fds[2] = { -1, -1 };
@@ -1625,6 +1719,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_helper_health_exchange_has_absolute_deadline() != 0)
 		return -1;
 	if (test_agent_messages_use_explicit_wire_format() != 0)
+		return -1;
+	if (test_agent_clipboard_messages_use_explicit_wire_format() != 0)
 		return -1;
 	if (test_agent_heartbeat_exchange_has_absolute_deadline() != 0)
 		return -1;

@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <stdio.h>
@@ -1453,6 +1454,243 @@ int frdp_ipc_recv_agent_resize_response(int fd, frdpAgentResizeResponse *respons
     rc = 0;
 
 cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+static void frdp_ipc_encode_agent_clipboard_request(uint8_t *wire,
+                                                    const frdpAgentClipboardRequest *request)
+{
+    size_t offset = 0;
+
+    memcpy(&wire[offset], request->correlation_id, sizeof(request->correlation_id));
+    offset += sizeof(request->correlation_id);
+    memcpy(&wire[offset], request->session_id, sizeof(request->session_id));
+    offset += sizeof(request->session_id);
+    frdp_ipc_write_u32_le(&wire[offset], request->max_text_bytes);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], request->text_length);
+}
+
+static void frdp_ipc_decode_agent_clipboard_request(const uint8_t *wire,
+                                                    frdpAgentClipboardRequest *request)
+{
+    size_t offset = 0;
+
+    memset(request, 0, sizeof(*request));
+    memcpy(request->correlation_id, &wire[offset], sizeof(request->correlation_id));
+    offset += sizeof(request->correlation_id);
+    memcpy(request->session_id, &wire[offset], sizeof(request->session_id));
+    offset += sizeof(request->session_id);
+    request->max_text_bytes = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    request->text_length = frdp_ipc_read_u32_le(&wire[offset]);
+}
+
+static int frdp_ipc_agent_clipboard_request_valid(const frdpAgentClipboardRequest *request)
+{
+    return request && (request->max_text_bytes > 0) &&
+           (request->max_text_bytes <= FRDP_IPC_AGENT_CLIPBOARD_MAX_TEXT_BYTES) &&
+           (request->text_length <= request->max_text_bytes);
+}
+
+int frdp_ipc_send_agent_clipboard_set_request(int fd, const frdpAgentClipboardRequest *request,
+                                              const uint8_t *text)
+{
+    uint8_t wire[FRDP_IPC_AGENT_CLIPBOARD_REQUEST_WIRE_SIZE] = {0};
+    int rc = -1;
+
+    if (!frdp_ipc_agent_clipboard_request_valid(request) ||
+        ((request->text_length > 0) && !text)) {
+        errno = EINVAL;
+        return -1;
+    }
+    frdp_ipc_encode_agent_clipboard_request(wire, request);
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AGENT_CLIPBOARD_SET_REQUEST,
+                             (uint32_t)sizeof(wire) + request->text_length) != 0)
+        goto cleanup;
+    if (frdp_ipc_send(fd, wire, sizeof(wire)) != 0)
+        goto cleanup;
+    if ((request->text_length > 0) && (frdp_ipc_send(fd, text, request->text_length) != 0))
+        goto cleanup;
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_agent_clipboard_set_request_payload(int fd, frdpAgentClipboardRequest *request,
+                                                      uint8_t **text, uint32_t payload_len)
+{
+    uint8_t wire[FRDP_IPC_AGENT_CLIPBOARD_REQUEST_WIRE_SIZE] = {0};
+    uint8_t *local = NULL;
+    int rc = -1;
+
+    if (!request || !text || (payload_len < sizeof(wire))) {
+        errno = EINVAL;
+        return -1;
+    }
+    *text = NULL;
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    frdp_ipc_decode_agent_clipboard_request(wire, request);
+    if (!frdp_ipc_agent_clipboard_request_valid(request) ||
+        (payload_len != ((uint32_t)sizeof(wire) + request->text_length))) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    local = (uint8_t *)calloc((size_t)request->text_length + 1U, 1U);
+    if (!local)
+        goto cleanup;
+    if ((request->text_length > 0) &&
+        (frdp_ipc_recv(fd, local, request->text_length) != (int)request->text_length))
+        goto cleanup;
+    *text = local;
+    local = NULL;
+    rc = 0;
+
+cleanup:
+    free(local);
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_send_agent_clipboard_get_request(int fd, const frdpAgentClipboardRequest *request)
+{
+    uint8_t wire[FRDP_IPC_AGENT_CLIPBOARD_REQUEST_WIRE_SIZE] = {0};
+    int rc = -1;
+
+    if (!frdp_ipc_agent_clipboard_request_valid(request) || (request->text_length != 0)) {
+        errno = EINVAL;
+        return -1;
+    }
+    frdp_ipc_encode_agent_clipboard_request(wire, request);
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AGENT_CLIPBOARD_GET_REQUEST, sizeof(wire)) != 0)
+        goto cleanup;
+    rc = frdp_ipc_send(fd, wire, sizeof(wire));
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_agent_clipboard_get_request_payload(int fd, frdpAgentClipboardRequest *request,
+                                                      uint32_t payload_len)
+{
+    uint8_t wire[FRDP_IPC_AGENT_CLIPBOARD_REQUEST_WIRE_SIZE] = {0};
+    int rc = -1;
+
+    if (!request || (payload_len != sizeof(wire))) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    frdp_ipc_decode_agent_clipboard_request(wire, request);
+    if (!frdp_ipc_agent_clipboard_request_valid(request) || (request->text_length != 0)) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_send_agent_clipboard_response(int fd, frdpIpcMessageType type,
+                                           const frdpAgentClipboardResponse *response,
+                                           const uint8_t *text)
+{
+    uint8_t wire[FRDP_IPC_AGENT_CLIPBOARD_RESPONSE_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response ||
+        ((type != FRDP_IPC_AGENT_CLIPBOARD_SET_RESPONSE) &&
+         (type != FRDP_IPC_AGENT_CLIPBOARD_GET_RESPONSE)) ||
+        (response->text_length > FRDP_IPC_AGENT_CLIPBOARD_MAX_TEXT_BYTES) ||
+        (!response->success && (response->text_length != 0)) ||
+        ((response->text_length > 0) && !text)) {
+        errno = EINVAL;
+        return -1;
+    }
+    memcpy(&wire[offset], response->correlation_id, sizeof(response->correlation_id));
+    offset += sizeof(response->correlation_id);
+    memcpy(&wire[offset], response->session_id, sizeof(response->session_id));
+    offset += sizeof(response->session_id);
+    frdp_ipc_write_u32_le(&wire[offset], response->success ? 1U : 0U);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], response->text_length);
+    offset += 4U;
+    memcpy(&wire[offset], response->error, sizeof(response->error));
+    if (frdp_ipc_send_header(fd, type, (uint32_t)sizeof(wire) + response->text_length) != 0)
+        goto cleanup;
+    if (frdp_ipc_send(fd, wire, sizeof(wire)) != 0)
+        goto cleanup;
+    if ((response->text_length > 0) && (frdp_ipc_send(fd, text, response->text_length) != 0))
+        goto cleanup;
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_agent_clipboard_response(int fd, frdpIpcMessageType expected_type,
+                                           frdpAgentClipboardResponse *response, uint8_t **text)
+{
+    frdpIpcHeader header = { .type = FRDP_IPC_INVALID, .payload_len = 0 };
+    uint8_t wire[FRDP_IPC_AGENT_CLIPBOARD_RESPONSE_WIRE_SIZE] = {0};
+    uint8_t *local = NULL;
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response || !text ||
+        ((expected_type != FRDP_IPC_AGENT_CLIPBOARD_SET_RESPONSE) &&
+         (expected_type != FRDP_IPC_AGENT_CLIPBOARD_GET_RESPONSE))) {
+        errno = EINVAL;
+        return -1;
+    }
+    *text = NULL;
+    if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
+        return -1;
+    if ((header.type != expected_type) || (header.payload_len < sizeof(wire)) ||
+        (header.payload_len > (sizeof(wire) + FRDP_IPC_AGENT_CLIPBOARD_MAX_TEXT_BYTES))) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    memset(response, 0, sizeof(*response));
+    memcpy(response->correlation_id, &wire[offset], sizeof(response->correlation_id));
+    offset += sizeof(response->correlation_id);
+    memcpy(response->session_id, &wire[offset], sizeof(response->session_id));
+    offset += sizeof(response->session_id);
+    response->success = frdp_ipc_read_u32_le(&wire[offset]) ? 1 : 0;
+    offset += 4U;
+    response->text_length = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    memcpy(response->error, &wire[offset], sizeof(response->error));
+    if ((header.payload_len != ((uint32_t)sizeof(wire) + response->text_length)) ||
+        (response->text_length > FRDP_IPC_AGENT_CLIPBOARD_MAX_TEXT_BYTES) ||
+        (!response->success && (response->text_length != 0))) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    local = (uint8_t *)calloc((size_t)response->text_length + 1U, 1U);
+    if (!local)
+        goto cleanup;
+    if ((response->text_length > 0) &&
+        (frdp_ipc_recv(fd, local, response->text_length) != (int)response->text_length))
+        goto cleanup;
+    *text = local;
+    local = NULL;
+    rc = 0;
+
+cleanup:
+    free(local);
     frdp_ipc_clear_secret(wire, sizeof(wire));
     return rc;
 }

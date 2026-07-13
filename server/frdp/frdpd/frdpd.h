@@ -16,6 +16,7 @@
 #include <freerdp/codec/nsc.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/peer.h>
+#include <freerdp/server/cliprdr.h>
 #include <freerdp/server/disp.h>
 
 #include "../config/frdp-config.h"
@@ -76,6 +77,16 @@ extern "C"
 		BOOL display_control_creation_failed;
 		BOOL display_control_caps_sent;
 		BOOL drdynvc_joined;
+		CliprdrServerContext* clipboard_context;
+		BOOL cliprdr_joined;
+		BOOL clipboard_started;
+		BOOL clipboard_client_data_pending;
+		BOOL clipboard_lock_initialized;
+		BOOL clipboard_announced;
+		UINT32 clipboard_last_length;
+		UINT64 clipboard_last_hash;
+		UINT64 clipboard_last_poll_tick;
+		CRITICAL_SECTION clipboard_lock;
 		BOOL display_control_lock_initialized;
 		BOOL display_control_layout_pending;
 		UINT32 display_control_monitor_count;

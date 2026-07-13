@@ -98,7 +98,7 @@ build_args()
 		"-gfx"
 		"+disp"
 		"+dynamic-resolution"
-		"-clipboard"
+		"+clipboard"
 		"-heartbeat"
 		"-multitransport"
 		"/tune:FreeRDP_NetworkAutoDetect:false"
@@ -159,6 +159,7 @@ command -v xvfb-run >/dev/null 2>&1 || fail "xvfb-run executable was not found"
 command -v Xvfb >/dev/null 2>&1 || fail "Xvfb executable was not found"
 command -v xwd >/dev/null 2>&1 || fail "xwd executable was not found"
 command -v xdotool >/dev/null 2>&1 || fail "xdotool executable was not found"
+command -v xclip >/dev/null 2>&1 || fail "xclip executable was not found"
 command -v ps >/dev/null 2>&1 || fail "ps executable was not found"
 command -v nc >/dev/null 2>&1 || fail "nc executable was not found"
 command -v stdbuf >/dev/null 2>&1 || fail "stdbuf executable was not found"
@@ -189,8 +190,16 @@ run_auth_only disabled-account failure "$FRDP_DENY_USER" "$FRDP_DENY_PASSWORD"
 Xvfb :99 -screen 0 1024x768x24 -nolisten tcp >"$FRDP_ARTIFACT_DIR/client-xvfb.log" 2>&1 &
 xvfb_pid=$!
 client_pid=
+client_clipboard_pid=
+server_clipboard_pid=
 cleanup()
 {
+	if [[ -n ${client_clipboard_pid:-} ]]; then
+		stop_process "$client_clipboard_pid"
+	fi
+	if [[ -n ${server_clipboard_pid:-} ]]; then
+		stop_process "$server_clipboard_pid"
+	fi
 	if [[ -n ${client_pid:-} ]]; then
 		stop_process "$client_pid"
 	fi
@@ -243,6 +252,32 @@ frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" | tee "$FRDP_ARTIFACT_DIR/
 	fail "managed session $session_id did not open as active"
 [[ -n $open_display ]] || fail "managed session $session_id has no display"
 positive_integer "$open_pid" || fail "managed session $session_id has invalid agent PID '$open_pid'"
+
+client_clipboard_text=$'client-to-server FreeRDP clipboard UTF-8: Привет \360\237\214\215'
+printf '%s' "$client_clipboard_text" | xclip -selection clipboard -in &
+client_clipboard_pid=$!
+server_clipboard_text=
+for ((i = 0; i < 100; i++)); do
+	server_clipboard_text=$(DISPLAY="$open_display" timeout 1s xclip -selection clipboard -out 2>/dev/null || true)
+	[[ $server_clipboard_text == "$client_clipboard_text" ]] && break
+	sleep 0.1
+done
+[[ $server_clipboard_text == "$client_clipboard_text" ]] ||
+	fail "client-to-server Unicode clipboard transfer failed"
+log "client-to-server Unicode clipboard transfer passed"
+
+server_clipboard_text=$'server-to-client FreeRDP clipboard UTF-8: Мир \360\237\232\200'
+printf '%s' "$server_clipboard_text" | DISPLAY="$open_display" xclip -selection clipboard -in &
+server_clipboard_pid=$!
+client_clipboard_text=
+for ((i = 0; i < 100; i++)); do
+	client_clipboard_text=$(DISPLAY=:99 timeout 1s xclip -selection clipboard -out 2>/dev/null || true)
+	[[ $client_clipboard_text == "$server_clipboard_text" ]] && break
+	sleep 0.1
+done
+[[ $client_clipboard_text == "$server_clipboard_text" ]] ||
+	fail "server-to-client Unicode clipboard transfer failed"
+log "server-to-client Unicode clipboard transfer passed"
 for ((i = 0; i < 100; i++)); do
 	grep -q "DisplayControlCapsPdu" "$FRDP_ARTIFACT_DIR/rdp-session.log" && break
 	sleep 0.1

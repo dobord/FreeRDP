@@ -108,6 +108,7 @@ foreach(expected
         "command -v xvfb-run"
         "command -v Xvfb"
         "command -v xwd"
+        "command -v xclip"
         "command -v ps"
         "command -v nc"
         "command -v frdpctl"
@@ -119,6 +120,8 @@ foreach(expected
         "session_identity_is_exclusively_active"
         "process_is_running"
         "managed RDP session reattached with stable id/display/PID"
+        "client-to-server Unicode clipboard transfer passed"
+        "server-to-client Unicode clipboard transfer passed"
         "session-list-after-reconnect.txt")
   expect_contains("${rdp_probe}" "${expected}" "E2E RDP probe script")
 endforeach()

@@ -51,6 +51,7 @@
 #include "../config/frdp-config.h"
 #include "../ipc/frdp-ipc.h"
 #include "channel_policy.h"
+#include "clipboard_runtime.h"
 #include "display_control.h"
 #include "frame_policy.h"
 #include "frdpd.h"
@@ -1282,6 +1283,7 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 	if (!context)
 		return;
 
+	frdpd_clipboard_runtime_stop(context);
 	disp_server_context_free(context->display_control);
 	context->display_control = NULL;
 	if (context->vcm && (context->vcm != INVALID_HANDLE_VALUE))
@@ -1305,6 +1307,11 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 	{
 		DeleteCriticalSection(&context->display_control_lock);
 		context->display_control_lock_initialized = FALSE;
+	}
+	if (context->clipboard_lock_initialized)
+	{
+		DeleteCriticalSection(&context->clipboard_lock);
+		context->clipboard_lock_initialized = FALSE;
 	}
 }
 
@@ -1438,11 +1445,20 @@ static BOOL frdpd_peer_context_new(freerdp_peer* client, rdpContext* ctx)
 	if (!InitializeCriticalSectionAndSpinCount(&context->display_control_lock, 4000))
 		return FALSE;
 	context->display_control_lock_initialized = TRUE;
+	if (!InitializeCriticalSectionAndSpinCount(&context->clipboard_lock, 4000))
+	{
+		DeleteCriticalSection(&context->display_control_lock);
+		context->display_control_lock_initialized = FALSE;
+		return FALSE;
+	}
+	context->clipboard_lock_initialized = TRUE;
 	if (!frdpd_generate_correlation_id(context->correlation_id, sizeof(context->correlation_id)))
 	{
 		WLog_ERR(TAG, "Failed to generate peer correlation id");
 		DeleteCriticalSection(&context->display_control_lock);
 		context->display_control_lock_initialized = FALSE;
+		DeleteCriticalSection(&context->clipboard_lock);
+		context->clipboard_lock_initialized = FALSE;
 		return FALSE;
 	}
 
@@ -1454,6 +1470,8 @@ static BOOL frdpd_peer_context_new(freerdp_peer* client, rdpContext* ctx)
 		         context->correlation_id);
 		DeleteCriticalSection(&context->display_control_lock);
 		context->display_control_lock_initialized = FALSE;
+		DeleteCriticalSection(&context->clipboard_lock);
+		context->clipboard_lock_initialized = FALSE;
 		return FALSE;
 	}
 	WTSVirtualChannelManagerSetDVCCreationCallback(context->vcm, frdpd_dvc_creation_status,
@@ -1761,6 +1779,7 @@ static BOOL frdpd_peer_client_capabilities(freerdp_peer* client)
 
 	channel_count = freerdp_settings_get_uint32(settings, FreeRDP_ChannelCount);
 	context->drdynvc_joined = FALSE;
+	context->cliprdr_joined = FALSE;
 	for (UINT32 i = 0; i < channel_count; i++)
 	{
 		char name[CHANNEL_NAME_LEN + 2] = { 0 };
@@ -1776,6 +1795,8 @@ static BOOL frdpd_peer_client_capabilities(freerdp_peer* client)
 			                                                          DISP_DVC_CHANNEL_NAME);
 			context->drdynvc_joined = allowed ? TRUE : FALSE;
 		}
+		else if (allowed && (strcmp(name, "cliprdr") == 0))
+			context->cliprdr_joined = TRUE;
 		frdpd_escape_log_string(log_name, sizeof(log_name), name);
 		if (!allowed)
 		{
@@ -2101,7 +2122,9 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 		status = WaitForMultipleObjects(count, handles, FALSE, frdpd_peer_wait_timeout_ms(context));
 		if (status == WAIT_TIMEOUT)
 		{
-			if (!frdpd_process_pending_display_control(context))
+			if (!frdpd_service_display_control(context) ||
+			    !frdpd_process_pending_display_control(context) ||
+			    !frdpd_clipboard_runtime_service(context))
 				break;
 			if (!frdpd_pump_agent_framebuffer(client, context))
 				break;
@@ -2115,6 +2138,8 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 
 		WINPR_ASSERT(client->CheckFileDescriptor);
 		if (!client->CheckFileDescriptor(client))
+			break;
+		if (!frdpd_clipboard_runtime_service(context))
 			break;
 		if (context->vcm &&
 		    !WTSVirtualChannelManagerCheckFileDescriptorEx(context->vcm, context->drdynvc_joined))
@@ -2348,11 +2373,6 @@ static BOOL frdpd_apply_file_config(frdpdOptions* options)
 	if (config->kerberos)
 	{
 		WLog_ERR(TAG, "Kerberos acceptor configuration requires integrated CredSSP/SPNEGO support");
-		return FALSE;
-	}
-	if (config->clipboard.mode != FRDP_CLIPBOARD_MODE_DISABLED)
-	{
-		WLog_ERR(TAG, "Clipboard text mode requires an integrated runtime clipboard handler");
 		return FALSE;
 	}
 	if (!frdpd_string_is_empty(config->tls_cert))

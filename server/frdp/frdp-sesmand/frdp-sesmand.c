@@ -1208,7 +1208,7 @@ static int load_configured_sesmand_policy(const char *config_path, char *service
         return -1;
     if (frdp_config_load(config_path, &config) != 0)
         return -1;
-    if (config.kerberos || (config.clipboard.mode != FRDP_CLIPBOARD_MODE_DISABLED))
+    if (config.kerberos)
         return -1;
     if (!pam_service_is_valid(config.pam_service))
         return -1;

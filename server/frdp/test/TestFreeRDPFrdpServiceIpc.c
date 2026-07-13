@@ -2060,7 +2060,8 @@ static int test_sesmand_reload_config(void)
 	                              "[clipboard]\nmode = \"text\"\n"
 	                              "direction = \"bidirectional\"\n") != 0)
 		goto cleanup;
-	if (test_sesmand_reload(helper.socket_path, 0, NULL, "config reload failed") != 0)
+	if (test_sesmand_reload(helper.socket_path, 1,
+	                        "pam_service=frdpd;max_processes=0;memory_max_mb=0", NULL) != 0)
 		goto cleanup;
 	if (write_sesmand_config_body(config_path,
 	                              "[auth]\npam_service = \"frdpd\"\n"
