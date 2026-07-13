@@ -8,8 +8,10 @@ artifacts=${FRDP_E2E_ARTIFACTS:-$root/artifacts}
 keep=${FRDP_E2E_KEEP:-0}
 profile_timeout=${FRDP_E2E_PROFILE_TIMEOUT:-1800}
 
-export FRDP_E2E_ARTIFACTS="$artifacts"
 mkdir -p "$artifacts"
+artifacts=$(cd "$artifacts" && pwd -P)
+[[ $artifacts != "$repo_root" ]] || { echo "FRDP_E2E_ARTIFACTS must not be the repository root" >&2; exit 2; }
+export FRDP_E2E_ARTIFACTS="$artifacts"
 
 positive_integer()
 {
@@ -23,11 +25,37 @@ command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 2; }
 docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required" >&2; exit 2; }
 command -v timeout >/dev/null 2>&1 || { echo "timeout is required" >&2; exit 2; }
 
+snapshot_excluded_paths=("${root#"$repo_root/"}/artifacts")
+if [[ $artifacts == "$repo_root/"* &&
+	${artifacts#"$repo_root/"} != "${snapshot_excluded_paths[0]}" ]]; then
+	snapshot_excluded_paths+=("${artifacts#"$repo_root/"}")
+fi
+snapshot_excludes=()
+for excluded_path in "${snapshot_excluded_paths[@]}"; do
+	snapshot_excludes+=("--exclude=$excluded_path")
+done
+source_archive=$(mktemp "${TMPDIR:-/tmp}/frdp-source.XXXXXX.tar.gz")
+cleanup_source_archive()
+{
+	[[ -z ${source_archive:-} ]] || rm -f "$source_archive"
+}
+trap cleanup_source_archive EXIT
+
 git -C "$repo_root" rev-parse 'HEAD^{tree}' >"$artifacts/base-tree-sha.txt"
-tar -C "$repo_root" -czf "$artifacts/frdp-source.tar.gz" \
+tar -C "$repo_root" -czf "$source_archive" "${snapshot_excludes[@]}" \
 	server/frdp tools/frdpctl include/freerdp/channels/wtsvc.h \
 	libfreerdp/core/server.c libfreerdp/core/server.h \
 	.github/workflows/frdpd-compose.yml
+for excluded_path in "${snapshot_excluded_paths[@]}"; do
+	while IFS= read -r archive_entry; do
+		if [[ $archive_entry == "$excluded_path" || $archive_entry == "$excluded_path/"* ]]; then
+			echo "source snapshot contains excluded path: $excluded_path" >&2
+			exit 2
+		fi
+	done < <(tar -tzf "$source_archive")
+done
+mv "$source_archive" "$artifacts/frdp-source.tar.gz"
+source_archive=
 
 compose=(docker compose -f "$compose_file")
 

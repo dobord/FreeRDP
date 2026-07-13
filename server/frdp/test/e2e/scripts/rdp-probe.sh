@@ -42,6 +42,33 @@ positive_integer()
 	[[ $1 =~ ^[1-9][0-9]*$ ]]
 }
 
+process_is_running()
+{
+	local pid=$1
+	local state=
+
+	kill -0 "$pid" 2>/dev/null || return 1
+	state=$(ps -o stat= -p "$pid" 2>/dev/null) || return 1
+	state=${state//[[:space:]]/}
+	[[ -n $state && $state != Z* ]]
+}
+
+session_identity_is_exclusively_active()
+{
+	local file=$1
+	local id=$2
+	local user=$3
+	local display=$4
+	local pid=$5
+
+	awk -v id="$id" -v user="$user" -v display="$display" -v pid="$pid" \
+		'NR > 1 && $2 == user { count++ }
+		NR > 1 && $1 == id && $2 == user && $3 == display && $4 == "active" && $5 == pid {
+			matched = 1
+		}
+		END { exit (count == 1 && matched) ? 0 : 1 }' "$file"
+}
+
 wait_tcp()
 {
 	local host=${FRDP_RDP_TARGET%:*}
@@ -109,13 +136,13 @@ run_auth_only()
 stop_process()
 {
 	local pid=$1
-	if ! kill -0 "$pid" 2>/dev/null; then
+	if ! process_is_running "$pid"; then
 		wait "$pid" 2>/dev/null || true
 		return
 	fi
 	kill -TERM "$pid" 2>/dev/null || true
 	for ((i = 0; i < 50; i++)); do
-		if ! kill -0 "$pid" 2>/dev/null; then
+		if ! process_is_running "$pid"; then
 			wait "$pid" 2>/dev/null || true
 			return
 		fi
@@ -130,6 +157,8 @@ positive_integer "$FRDP_AUTH_TIMEOUT" || fail "FRDP_AUTH_TIMEOUT must be positiv
 command -v timeout >/dev/null 2>&1 || fail "timeout executable was not found"
 command -v xvfb-run >/dev/null 2>&1 || fail "xvfb-run executable was not found"
 command -v Xvfb >/dev/null 2>&1 || fail "Xvfb executable was not found"
+command -v xwd >/dev/null 2>&1 || fail "xwd executable was not found"
+command -v ps >/dev/null 2>&1 || fail "ps executable was not found"
 command -v nc >/dev/null 2>&1 || fail "nc executable was not found"
 command -v frdpctl >/dev/null 2>&1 || fail "frdpctl executable was not found"
 
@@ -179,8 +208,12 @@ build_args "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"
 client_pid=$!
 
 session_id=
+open_user=
+open_display=
+open_state=
+open_pid=
 for ((i = 0; i < FRDP_E2E_TIMEOUT; i++)); do
-	if ! kill -0 "$client_pid" 2>/dev/null; then
+	if ! process_is_running "$client_pid"; then
 		wait "$client_pid" || status=$?
 		fail "xfreerdp exited before a managed session appeared (status ${status:-unknown})"
 	fi
@@ -189,8 +222,11 @@ for ((i = 0; i < FRDP_E2E_TIMEOUT; i++)); do
 	list_status=$?
 	set -e
 	if [[ $list_status -eq 0 ]]; then
-		session_id=$(awk -v user="$FRDP_TEST_USER" 'NR > 1 && $2 == user { print $1; exit }' \
-			"$FRDP_ARTIFACT_DIR/session-list-current.txt")
+		read -r session_id open_user open_display open_state open_pid < <(
+			awk -v user="$FRDP_TEST_USER" 'NR > 1 && $2 == user && $4 == "active" {
+				print $1, $2, $3, $4, $5
+				exit
+			}' "$FRDP_ARTIFACT_DIR/session-list-current.txt") || true
 		if [[ -n $session_id ]]; then
 			break
 		fi
@@ -201,9 +237,20 @@ done
 
 log "managed RDP session opened: $session_id"
 frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" | tee "$FRDP_ARTIFACT_DIR/session-list-open.txt"
+[[ $open_user == "$FRDP_TEST_USER" && $open_state == active ]] ||
+	fail "managed session $session_id did not open as active"
+[[ -n $open_display ]] || fail "managed session $session_id has no display"
+positive_integer "$open_pid" || fail "managed session $session_id has invalid agent PID '$open_pid'"
 sleep 3
-kill -0 "$client_pid" 2>/dev/null || fail "xfreerdp did not remain connected"
-xwd -display :99 -root -silent -out "$FRDP_ARTIFACT_DIR/client-root.xwd" || true
+process_is_running "$client_pid" || fail "xfreerdp did not remain connected"
+frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
+	>"$FRDP_ARTIFACT_DIR/session-list-open-held.txt" 2>&1 ||
+	fail "failed to list the held managed session"
+session_identity_is_exclusively_active "$FRDP_ARTIFACT_DIR/session-list-open-held.txt" \
+	"$session_id" "$FRDP_TEST_USER" "$open_display" "$open_pid" ||
+	fail "managed session $session_id did not remain exclusively active"
+xwd -display :99 -root -silent -out "$FRDP_ARTIFACT_DIR/client-root.xwd" ||
+	fail "failed to capture the client Xvfb display"
 
 stop_process "$client_pid"
 client_pid=
@@ -221,6 +268,59 @@ done
 if ! awk -v id="$session_id" 'NR > 1 && $1 == id && $4 == "disconnected" { found = 1 }
 	END { exit found ? 0 : 1 }' "$FRDP_ARTIFACT_DIR/session-list-after.txt"; then
 	fail "managed session $session_id did not become disconnected after client disconnect"
+fi
+
+build_args "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"
+"$XFREERDP" "${RDP_ARGS[@]}" >"$FRDP_ARTIFACT_DIR/rdp-reconnect.log" 2>&1 &
+client_pid=$!
+for ((i = 0; i < FRDP_E2E_TIMEOUT; i++)); do
+	if ! process_is_running "$client_pid"; then
+		wait "$client_pid" || status=$?
+		fail "reconnecting xfreerdp exited before session attach (status ${status:-unknown})"
+	fi
+	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
+		>"$FRDP_ARTIFACT_DIR/session-list-reconnected.txt" 2>&1 || true
+	if session_identity_is_exclusively_active \
+		"$FRDP_ARTIFACT_DIR/session-list-reconnected.txt" "$session_id" "$FRDP_TEST_USER" \
+		"$open_display" "$open_pid"; then
+		log "managed RDP session reattached with stable id/display/PID: $session_id"
+		break
+	fi
+	sleep 1
+done
+
+if ! session_identity_is_exclusively_active "$FRDP_ARTIFACT_DIR/session-list-reconnected.txt" \
+	"$session_id" "$FRDP_TEST_USER" "$open_display" "$open_pid"; then
+	fail "reconnect did not attach exclusively to managed session $session_id"
+fi
+sleep 3
+process_is_running "$client_pid" || fail "reconnected xfreerdp did not remain connected"
+frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
+	>"$FRDP_ARTIFACT_DIR/session-list-reconnected-held.txt" 2>&1 ||
+	fail "failed to list the held reconnected session"
+session_identity_is_exclusively_active "$FRDP_ARTIFACT_DIR/session-list-reconnected-held.txt" \
+	"$session_id" "$FRDP_TEST_USER" "$open_display" "$open_pid" ||
+	fail "reconnected session $session_id did not remain exclusively active"
+stop_process "$client_pid"
+client_pid=
+
+for ((i = 0; i < FRDP_E2E_TIMEOUT; i++)); do
+	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
+		>"$FRDP_ARTIFACT_DIR/session-list-after-reconnect.txt" 2>&1 || true
+	if awk -v id="$session_id" -v display="$open_display" -v pid="$open_pid" \
+		'NR > 1 && $1 == id && $3 == display && $4 == "disconnected" && $5 == pid {
+			found = 1
+		}
+		END { exit found ? 0 : 1 }' "$FRDP_ARTIFACT_DIR/session-list-after-reconnect.txt"; then
+		log "reattached RDP session detached after second client disconnect"
+		break
+	fi
+	sleep 1
+done
+if ! awk -v id="$session_id" -v display="$open_display" -v pid="$open_pid" \
+	'NR > 1 && $1 == id && $3 == display && $4 == "disconnected" && $5 == pid { found = 1 }
+	END { exit found ? 0 : 1 }' "$FRDP_ARTIFACT_DIR/session-list-after-reconnect.txt"; then
+	fail "reattached session $session_id did not become disconnected"
 fi
 
 frdpctl kill-session "$session_id" --socket "$FRDP_SESSION_SOCKET" \

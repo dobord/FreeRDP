@@ -15,9 +15,9 @@ xfreerdp
 | Profile | What is real | Assertions |
 |---|---|---|
 | `component` | Built FRDP binaries and focused CTest suite | Config/channel policy, IPC primitives, `frdpctl`, helper stop handling, malformed requests against real `frdp-authd` and `frdp-sesmand` processes |
-| `local` | TLS, NLA/CredSSP, local `pam_unix`, helper IPC, managed Xvfb session | Valid authentication succeeds; wrong password and locked account fail; a full RDP client creates a session; disconnect detaches it for reconnect; explicit `kill-session` removes it |
-| `samba` | Provisioned Samba AD DC, DNS/Kerberos/LDAP, `adcli` machine join, `sssd-ad`, PAM, RDP | Domain user success, wrong password failure, disabled AD user failure, NSS lookup, managed RDP session lifecycle |
-| `freeipa` | Official FreeIPA server image, LDAP identity, Kerberos password authentication through SSSD, PAM, RDP | IPA user success, wrong password failure, disabled IPA principal failure, NSS lookup, managed RDP session lifecycle |
+| `local` | TLS, NLA/CredSSP, local `pam_unix`, helper IPC, managed Xvfb session | Valid authentication succeeds; wrong password and locked account fail; a full RDP client creates, detaches, reconnects to, and removes one stable session |
+| `samba` | Provisioned Samba AD DC, DNS/Kerberos/LDAP, `adcli` machine join, `sssd-ad`, PAM, RDP | Domain user success, wrong password failure, disabled AD user failure, NSS lookup, managed RDP disconnect/reconnect lifecycle |
+| `freeipa` | Official FreeIPA server image, LDAP identity, Kerberos password authentication through SSSD, PAM, RDP | IPA user success, wrong password failure, disabled IPA principal failure, NSS lookup, managed RDP disconnect/reconnect lifecycle |
 
 The FreeIPA baseline deliberately uses SSSD's LDAP identity provider and Kerberos authentication provider with `krb5_validate=false`. It therefore validates real FreeIPA LDAP/KDC and PAM/SSSD behavior without requiring a host enrollment/keytab inside the FRDP container. A separate joined-host profile using `id_provider=ipa`, host keytab validation and explicit HBAC rules is still required before claiming production FreeIPA policy coverage.
 
@@ -65,12 +65,13 @@ The first FreeIPA start provisions the realm and can take several minutes. The i
 
 ## What the RDP probe checks
 
-`rdp-probe.sh` uses the `xfreerdp` built from the same source tree and performs four checks:
+`rdp-probe.sh` uses the `xfreerdp` built from the same source tree and performs five checks:
 
 1. `/auth-only` succeeds for the enabled user.
 2. `/auth-only` fails for an incorrect password.
 3. `/auth-only` fails for a locked or disabled account.
-4. A normal graphical connection under client-side Xvfb remains connected, appears in `frdpctl list-sessions`, and disappears after client termination.
+4. A normal graphical connection under client-side Xvfb remains connected, appears as `active`, and becomes `disconnected` after client termination.
+5. A second graphical client reattaches to the only matching session with the same session id, display and agent PID; its disconnect and explicit `kill-session` leave an empty registry.
 
 The client mounts only the session-manager socket volume. This allows it to observe the real manager registry without inspecting server process memory. Logs, session listings and an XWD capture of the client display are written below `artifacts/<profile>/`. The harness also preserves the rendered Compose model, timestamped aggregate logs, per-container logs, per-container inspect JSON and the component profile CTest `LastTest.log` when available.
 
@@ -108,8 +109,9 @@ bash /opt/frdp-e2e/scripts/rdp-protocol-regression.sh
 ```
 
 Run a retained-client graphical session smoke probe, which opens a normal RDP
-session, waits for it to appear in `frdpctl list-sessions`, captures the client
-Xvfb root window, terminates the client, and verifies session cleanup:
+session, waits for it to become active in `frdpctl list-sessions`, captures the
+client Xvfb root window, disconnects and reconnects a second client to the same
+session id/display/agent PID, and verifies final session cleanup:
 
 ```bash
 bash /opt/frdp-e2e/scripts/rdp-session-smoke.sh
@@ -123,6 +125,6 @@ docker compose -f server/frdp/test/e2e/compose.yaml down --volumes --remove-orph
 
 ## Coverage still required
 
-This harness does not yet prove Kerberos-only CredSSP, reconnect semantics, RDPGFX/RFX policy, clipboard/audio channels, logind/cgroups, durable session reconciliation, a joined FreeIPA host with HBAC, graphical session soak behavior, broad protocol regression coverage, or Windows `mstsc` interoperability. Those should be added as separate profiles or an external lab matrix rather than weakening the deterministic baseline tests.
+This harness does not yet prove Kerberos-only CredSSP, reconnect across manager or daemon restart, RDPGFX/RFX policy, clipboard/audio channels, logind/cgroups, durable session reconciliation, a joined FreeIPA host with HBAC, graphical session soak behavior, broad protocol regression coverage, or Windows `mstsc` interoperability. Those should be added as separate profiles or an external lab matrix rather than weakening the deterministic baseline tests.
 
 All committed passwords are test-only defaults for an isolated Compose network. Do not expose provider ports or reuse these credentials outside the testbed.

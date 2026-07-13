@@ -53,6 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         sssd-tools \
         util-linux \
         uuid-dev \
+        x11-apps \
         x11-utils \
         xauth \
         xvfb \

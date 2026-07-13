@@ -85,6 +85,13 @@ foreach(expected
         "docker compose version"
         "command -v timeout"
         "timeout \"\${profile_timeout}s\""
+        "snapshot_excluded_paths"
+        "\${root#\"$repo_root/\"}/artifacts"
+        "snapshot_excludes"
+        "\${artifacts#\"$repo_root/\"}"
+        "mktemp \"\${TMPDIR:-/tmp}/frdp-source."
+        "source snapshot contains excluded path"
+        "tar -tzf \"$source_archive\""
         "exceeded FRDP_E2E_PROFILE_TIMEOUT"
         "compose-config.yaml"
         "container-inspect")
@@ -100,10 +107,19 @@ foreach(expected
         "command -v timeout"
         "command -v xvfb-run"
         "command -v Xvfb"
+        "command -v xwd"
+        "command -v ps"
         "command -v nc"
         "command -v frdpctl"
         "timeout \"\${FRDP_AUTH_TIMEOUT}s\""
-        "frdpctl list-sessions --socket")
+        "frdpctl list-sessions --socket"
+        "rdp-reconnect.log"
+        "session-list-reconnected.txt"
+        "session-list-reconnected-held.txt"
+        "session_identity_is_exclusively_active"
+        "process_is_running"
+        "managed RDP session reattached with stable id/display/PID"
+        "session-list-after-reconnect.txt")
   expect_contains("${rdp_probe}" "${expected}" "E2E RDP probe script")
 endforeach()
 
@@ -135,6 +151,8 @@ foreach(expected
         "FRDP_SESSION_HOLD_SECONDS"
         "command -v Xvfb"
         "command -v xdpyinfo"
+        "command -v xwd"
+        "command -v ps"
         "command -v nc"
         "command -v frdpctl"
         "allocate_display"
@@ -145,6 +163,13 @@ foreach(expected
         "awk -v id=\"$session_id\""
         "xwd -display \"$display_name\" -root"
         "managed RDP session detached after client disconnect"
+        "rdp-reconnect.log"
+        "session-list-reconnected.txt"
+        "session-list-reconnected-held.txt"
+        "session_identity_is_exclusively_active"
+        "process_is_running"
+        "managed RDP session reattached with stable id/display/PID"
+        "session-list-after-reconnect.txt"
         "frdpctl kill-session \"$session_id\" --socket"
         "managed RDP session was cleaned after explicit kill-session")
   expect_contains("${session_smoke}" "${expected}" "E2E session smoke script")
