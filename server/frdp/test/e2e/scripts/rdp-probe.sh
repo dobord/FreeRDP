@@ -96,8 +96,8 @@ build_args()
 		"/bpp:24"
 		"/audio-mode:none"
 		"-gfx"
-		"-disp"
-		"-dynamic-resolution"
+		"+disp"
+		"+dynamic-resolution"
 		"-clipboard"
 		"-heartbeat"
 		"-multitransport"
@@ -158,8 +158,10 @@ command -v timeout >/dev/null 2>&1 || fail "timeout executable was not found"
 command -v xvfb-run >/dev/null 2>&1 || fail "xvfb-run executable was not found"
 command -v Xvfb >/dev/null 2>&1 || fail "Xvfb executable was not found"
 command -v xwd >/dev/null 2>&1 || fail "xwd executable was not found"
+command -v xdotool >/dev/null 2>&1 || fail "xdotool executable was not found"
 command -v ps >/dev/null 2>&1 || fail "ps executable was not found"
 command -v nc >/dev/null 2>&1 || fail "nc executable was not found"
+command -v stdbuf >/dev/null 2>&1 || fail "stdbuf executable was not found"
 command -v frdpctl >/dev/null 2>&1 || fail "frdpctl executable was not found"
 
 XFREERDP=$(find_xfreerdp) || fail "xfreerdp executable was not found"
@@ -204,7 +206,7 @@ done
 
 export DISPLAY=:99
 build_args "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"
-"$XFREERDP" "${RDP_ARGS[@]}" >"$FRDP_ARTIFACT_DIR/rdp-session.log" 2>&1 &
+stdbuf -oL -eL "$XFREERDP" "${RDP_ARGS[@]}" >"$FRDP_ARTIFACT_DIR/rdp-session.log" 2>&1 &
 client_pid=$!
 
 session_id=
@@ -241,7 +243,22 @@ frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" | tee "$FRDP_ARTIFACT_DIR/
 	fail "managed session $session_id did not open as active"
 [[ -n $open_display ]] || fail "managed session $session_id has no display"
 positive_integer "$open_pid" || fail "managed session $session_id has invalid agent PID '$open_pid'"
-sleep 3
+for ((i = 0; i < 100; i++)); do
+	grep -q "DisplayControlCapsPdu" "$FRDP_ARTIFACT_DIR/rdp-session.log" && break
+	sleep 0.1
+done
+grep -q "DisplayControlCapsPdu" "$FRDP_ARTIFACT_DIR/rdp-session.log" ||
+	fail "xfreerdp did not receive Display Control capabilities"
+window_id=$(xdotool search --onlyvisible --class xfreerdp | head -n 1 || true)
+[[ -n $window_id ]] || fail "xfreerdp window was not found"
+xdotool windowsize --sync "$window_id" 800 600 || fail "failed to resize the xfreerdp window"
+for ((i = 0; i < 100; i++)); do
+	grep -q "ConfigureNotify (800x600)" "$FRDP_ARTIFACT_DIR/rdp-session.log" && break
+	sleep 0.1
+done
+grep -q "ConfigureNotify (800x600)" "$FRDP_ARTIFACT_DIR/rdp-session.log" ||
+	fail "xfreerdp did not observe the requested window resize"
+sleep 1
 process_is_running "$client_pid" || fail "xfreerdp did not remain connected"
 frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
 	>"$FRDP_ARTIFACT_DIR/session-list-open-held.txt" 2>&1 ||
@@ -271,7 +288,7 @@ if ! awk -v id="$session_id" 'NR > 1 && $1 == id && $4 == "disconnected" { found
 fi
 
 build_args "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"
-"$XFREERDP" "${RDP_ARGS[@]}" >"$FRDP_ARTIFACT_DIR/rdp-reconnect.log" 2>&1 &
+stdbuf -oL -eL "$XFREERDP" "${RDP_ARGS[@]}" >"$FRDP_ARTIFACT_DIR/rdp-reconnect.log" 2>&1 &
 client_pid=$!
 for ((i = 0; i < FRDP_E2E_TIMEOUT; i++)); do
 	if ! process_is_running "$client_pid"; then

@@ -5,6 +5,10 @@ find_package(PAM REQUIRED)
 find_package(X11 REQUIRED)
 find_package(Threads REQUIRED)
 
+if(NOT WITH_SERVER_CHANNELS OR NOT CHANNEL_DRDYNVC_SERVER OR NOT CHANNEL_DISP_SERVER)
+  message(FATAL_ERROR "WITH_FRDPD requires the drdynvc and disp server channels")
+endif()
+
 if(NOT X11_XTest_FOUND)
   message(FATAL_ERROR "XTest is required for frdp-session-agent input injection")
 endif()

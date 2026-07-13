@@ -15,6 +15,8 @@ set(SRCS
     frdpd_peer.h
     channel_policy.c
     channel_policy.h
+    display_control.c
+    display_control.h
     frame_policy.c
     frame_policy.h
     frdpd_pam.c

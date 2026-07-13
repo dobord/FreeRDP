@@ -47,12 +47,12 @@ the release record.
 
 | Capability | Status | Required evidence before GA |
 |---|---|---|
-| Xvfb-backed desktop session | Prototype | Wire negotiated Display Control transport, replace or augment the fixed-mode Xvfb backend to support geometry changes, then attach real-client graphical session, resize churn, disconnect cleanup, reconnect, and load/soak evidence. |
+| Xvfb-backed desktop session | Prototype | Replace or augment the fixed-mode Xvfb backend to apply the now-negotiated Display Control geometry changes, then attach resize churn and load/soak evidence. |
 | Wayland backend | Not supported | No production backend is implemented. |
 | Text clipboard | Prototype | Runtime `cliprdr` handler, direction/size policy enforcement, client interoperability, and audit evidence. |
 | Audio output | Not supported | Baseline audio handler and policy tests are not implemented. |
 | Drive, printer, smart card, arbitrary file clipboard | Not supported | Must remain denied until separate policy, audit, and runtime tests exist. |
-| Dynamic virtual channels | Prototype | Authorization hook exists, but `drdynvc` and useful handlers remain disabled until explicit handler coverage exists. |
+| Dynamic virtual channels | Prototype | Policy-gated `drdynvc` and Display Control have focused/live-client evidence; other handlers remain disabled until explicit policy and interoperability coverage exists. |
 
 ## Packaging and operations
 

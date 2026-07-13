@@ -323,9 +323,6 @@ static int validate_channel_filter_lists(const frdpConfig *config, int seen_stat
     if (config->channels.static_mode == FRDP_CHANNEL_FILTER_ALLOWLIST) {
         if (seen_static_deny)
             return -1;
-        if (channel_list_contains(config->channels.static_allow,
-                                  config->channels.static_allow_count, "drdynvc"))
-            return -1;
     }
     else if (config->channels.static_mode == FRDP_CHANNEL_FILTER_BLOCKLIST) {
         if (seen_static_allow)

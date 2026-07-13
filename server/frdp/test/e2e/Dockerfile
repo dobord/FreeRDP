@@ -56,6 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         x11-apps \
         x11-utils \
         xauth \
+        xdotool \
         xvfb \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -75,7 +76,6 @@ RUN cmake -S /src -B /opt/freerdp-build -GNinja \
         -DWITH_FRDPD_NTLM=ON \
         -DCHANNEL_AINPUT_CLIENT=OFF \
         -DCHANNEL_AUDIN_CLIENT=OFF \
-        -DCHANNEL_DISP_CLIENT=OFF \
         -DCHANNEL_ECHO_CLIENT=OFF \
         -DCHANNEL_GEOMETRY_CLIENT=OFF \
         -DCHANNEL_RDPGFX_CLIENT=OFF \
@@ -96,7 +96,7 @@ RUN cmake -S /src -B /opt/freerdp-build -GNinja \
         -DWITH_FUSE=OFF \
         -DWITH_OPENCL=OFF \
         -DCHANNEL_URBDRC=OFF \
-    && ! grep -Eq '^#define CHANNEL_(AINPUT|AUDIN|DISP|ECHO|GEOMETRY|RDPGFX|RDPSND|VIDEO)_CLIENT' \
+    && ! grep -Eq '^#define CHANNEL_(AINPUT|AUDIN|ECHO|GEOMETRY|RDPGFX|RDPSND|VIDEO)_CLIENT' \
         /opt/freerdp-build/include/freerdp/config.h \
     && cmake --build /opt/freerdp-build --target \
         frdpd \

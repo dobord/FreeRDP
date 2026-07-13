@@ -3,6 +3,8 @@
 #include <ctype.h>
 #include <string.h>
 
+#include <freerdp/channels/disp.h>
+
 static void frdp_channel_policy_channel_name(char* dst, size_t dst_size, const CHANNEL_DEF* channel)
 {
 	size_t len = 0;
@@ -53,16 +55,16 @@ static int frdp_channel_policy_name_valid(const char* channel)
 static int frdp_channel_policy_runtime_static_supported(const frdpClipboardPolicy* clipboard,
                                                         const char* channel)
 {
+	if (strcmp(channel, "drdynvc") == 0)
+		return 1;
 	if (strcmp(channel, "cliprdr") == 0)
 		return clipboard->mode == FRDP_CLIPBOARD_MODE_TEXT;
 	return 0;
 }
 
-int frdp_channel_policy_static_allowed(const frdpChannelPolicy *policy, const char *channel)
+int frdp_channel_policy_static_allowed(const frdpChannelPolicy* policy, const char* channel)
 {
 	if (!policy || !frdp_channel_policy_name_valid(channel))
-		return 0;
-	if (strcmp(channel, "drdynvc") == 0)
 		return 0;
 
 	if (policy->static_mode == FRDP_CHANNEL_FILTER_ALLOWLIST)
@@ -71,14 +73,14 @@ int frdp_channel_policy_static_allowed(const frdpChannelPolicy *policy, const ch
 	if (policy->static_mode == FRDP_CHANNEL_FILTER_BLOCKLIST)
 	{
 		return !frdp_channel_policy_list_contains(policy->static_deny, policy->static_deny_count,
-		                                         channel);
+		                                          channel);
 	}
 	return 0;
 }
 
-int frdp_channel_policy_static_allowed_for_runtime(const frdpChannelPolicy *policy,
-                                                   const frdpClipboardPolicy *clipboard,
-                                                   const char *channel)
+int frdp_channel_policy_static_allowed_for_runtime(const frdpChannelPolicy* policy,
+                                                   const frdpClipboardPolicy* clipboard,
+                                                   const char* channel)
 {
 	if (!policy || !clipboard || !frdp_channel_policy_name_valid(channel))
 		return 0;
@@ -87,7 +89,7 @@ int frdp_channel_policy_static_allowed_for_runtime(const frdpChannelPolicy *poli
 	return frdp_channel_policy_runtime_static_supported(clipboard, channel);
 }
 
-int frdp_channel_policy_dynamic_allowed(const frdpChannelPolicy *policy, const char *channel)
+int frdp_channel_policy_dynamic_allowed(const frdpChannelPolicy* policy, const char* channel)
 {
 	if (!policy || !frdp_channel_policy_name_valid(channel))
 		return 0;
@@ -100,13 +102,21 @@ int frdp_channel_policy_dynamic_allowed(const frdpChannelPolicy *policy, const c
 	if (policy->dynamic_mode == FRDP_CHANNEL_FILTER_BLOCKLIST)
 	{
 		return !frdp_channel_policy_list_contains(policy->dynamic_deny, policy->dynamic_deny_count,
-		                                         channel);
+		                                          channel);
 	}
 	return 0;
 }
 
-int frdp_channel_policy_static_channel_allowed(const frdpChannelPolicy *policy,
-                                               const CHANNEL_DEF *channel, char *name,
+int frdp_channel_policy_dynamic_allowed_for_runtime(const frdpChannelPolicy* policy,
+                                                    const char* channel)
+{
+	if (!policy || !channel || (strcmp(channel, DISP_DVC_CHANNEL_NAME) != 0))
+		return 0;
+	return frdp_channel_policy_dynamic_allowed(policy, "disp");
+}
+
+int frdp_channel_policy_static_channel_allowed(const frdpChannelPolicy* policy,
+                                               const CHANNEL_DEF* channel, char* name,
                                                size_t name_size)
 {
 	char local_name[CHANNEL_NAME_LEN + 2] = { 0 };
@@ -116,9 +126,9 @@ int frdp_channel_policy_static_channel_allowed(const frdpChannelPolicy *policy,
 	return frdp_channel_policy_static_allowed(policy, local_name);
 }
 
-int frdp_channel_policy_static_channel_allowed_for_runtime(const frdpChannelPolicy *policy,
-                                                           const frdpClipboardPolicy *clipboard,
-                                                           const CHANNEL_DEF *channel, char *name,
+int frdp_channel_policy_static_channel_allowed_for_runtime(const frdpChannelPolicy* policy,
+                                                           const frdpClipboardPolicy* clipboard,
+                                                           const CHANNEL_DEF* channel, char* name,
                                                            size_t name_size)
 {
 	char local_name[CHANNEL_NAME_LEN + 2] = { 0 };

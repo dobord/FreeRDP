@@ -11,10 +11,12 @@
 #include <sys/types.h>
 
 #include <winpr/stream.h>
+#include <winpr/synch.h>
 
 #include <freerdp/codec/nsc.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/peer.h>
+#include <freerdp/server/disp.h>
 
 #include "../config/frdp-config.h"
 #include "../ipc/frdp-ipc.h"
@@ -68,6 +70,17 @@ extern "C"
 		wStream* framebuffer_nsc_stream;
 		BOOL framebuffer_nsc_warned;
 		HANDLE vcm;
+		DispServerContext* display_control;
+		UINT32 display_control_channel_id;
+		BOOL display_control_creation_ready;
+		BOOL display_control_creation_failed;
+		BOOL display_control_caps_sent;
+		BOOL drdynvc_joined;
+		BOOL display_control_lock_initialized;
+		BOOL display_control_layout_pending;
+		UINT32 display_control_monitor_count;
+		MONITOR_DEF display_control_monitors[16];
+		CRITICAL_SECTION display_control_lock;
 		char* pam_user;
 		char authorization_id[192];
 		uid_t uid;

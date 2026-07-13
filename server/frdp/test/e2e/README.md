@@ -109,9 +109,10 @@ bash /opt/frdp-e2e/scripts/rdp-protocol-regression.sh
 ```
 
 Run a retained-client graphical session smoke probe, which opens a normal RDP
-session, waits for it to become active in `frdpctl list-sessions`, captures the
-client Xvfb root window, disconnects and reconnects a second client to the same
-session id/display/agent PID, and verifies final session cleanup:
+session, waits for it to become active in `frdpctl list-sessions`, negotiates
+Display Control, resizes the client window, captures the client Xvfb root
+window, disconnects and reconnects a second client to the same session
+id/display/agent PID, and verifies final session cleanup:
 
 ```bash
 bash /opt/frdp-e2e/scripts/rdp-session-smoke.sh

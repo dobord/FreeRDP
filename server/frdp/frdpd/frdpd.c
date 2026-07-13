@@ -43,6 +43,7 @@
 #include <freerdp/listener.h>
 #include <freerdp/log.h>
 #include <freerdp/peer.h>
+#include <freerdp/server/disp.h>
 #include <freerdp/settings.h>
 #include <freerdp/crypto/certificate.h>
 #include <freerdp/crypto/privatekey.h>
@@ -50,6 +51,7 @@
 #include "../config/frdp-config.h"
 #include "../ipc/frdp-ipc.h"
 #include "channel_policy.h"
+#include "display_control.h"
 #include "frame_policy.h"
 #include "frdpd.h"
 #include "frdpd_auth.h"
@@ -62,8 +64,6 @@
 #define FRDPD_FRAME_IPC_TIMEOUT_US 100000
 #define FRDPD_FRAME_HASH_OFFSET 1469598103934665603ULL
 #define FRDPD_FRAME_HASH_PRIME 1099511628211ULL
-#define FRDPD_MAX_DESKTOP_SIZE 8192U
-#define FRDPD_MAX_MONITORS 16U
 #define FRDPD_NSC_COLOR_LOSS_LEVEL 1U
 #define FRDPD_KERBEROS_ONLY_PACKAGE_LIST "kerberos,u2u,!ntlm"
 #define FRDPD_PEER_ACTIVE_WAIT_TIMEOUT_MS 50
@@ -88,6 +88,10 @@ typedef struct
 } frdpdOptions;
 
 static volatile sig_atomic_t g_frdpd_running = 1;
+
+static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
+                                       const MONITOR_DEF* monitors);
+static BOOL frdpd_process_pending_display_control(frdpdPeerContext* context);
 
 #ifdef WITH_FRDPD_NTLM
 static BOOL frdpd_prepare_ntlm_sam_file(frdpdServerConfig* config)
@@ -194,7 +198,7 @@ static void frdpd_escape_log_string(char* dst, size_t dst_size, const char* src)
 }
 
 static const char* frdpd_log_value(const char* value, char* dst, size_t dst_size,
-                                  const char* fallback)
+                                   const char* fallback)
 {
 	if (!fallback)
 		fallback = "unknown";
@@ -216,9 +220,10 @@ static const char* frdpd_client_log_name(const freerdp_peer* client, char* dst, 
 }
 
 static const char* frdpd_context_log_session_id(const frdpdPeerContext* context, char* dst,
-                                               size_t dst_size)
+                                                size_t dst_size)
 {
-	return frdpd_log_value((context && (context->session_id[0] != '\0')) ? context->session_id : NULL,
+	return frdpd_log_value((context && (context->session_id[0] != '\0')) ? context->session_id
+	                                                                     : NULL,
 	                       dst, dst_size, "unknown");
 }
 
@@ -253,8 +258,8 @@ static BOOL frdpd_copy_ipc_string(char* dst, size_t dst_size, const char* src)
 }
 
 static BOOL frdpd_session_ipc_request(const char* socket_path, frdpIpcMessageType type,
-                                       const void* request, size_t request_size,
-                                       frdpSessionResponse* response)
+                                      const void* request, size_t request_size,
+                                      frdpSessionResponse* response)
 {
 	int fd = -1;
 	BOOL ok = FALSE;
@@ -305,8 +310,8 @@ fail:
 	return ok;
 }
 
-static BOOL frdpd_send_agent_input(frdpdPeerContext* context, frdpAgentInputType type,
-                                    UINT32 flags, INT32 param1, INT32 param2)
+static BOOL frdpd_send_agent_input(frdpdPeerContext* context, frdpAgentInputType type, UINT32 flags,
+                                   INT32 param1, INT32 param2)
 {
 	int fd = -1;
 	frdpAgentInputEvent event = { 0 };
@@ -317,7 +322,7 @@ static BOOL frdpd_send_agent_input(frdpdPeerContext* context, frdpAgentInputType
 		return TRUE;
 
 	(void)frdpd_copy_ipc_string(event.correlation_id, sizeof(event.correlation_id),
-	                          context->correlation_id);
+	                            context->correlation_id);
 	(void)frdpd_copy_ipc_string(event.session_id, sizeof(event.session_id), context->session_id);
 	event.event_type = type;
 	event.flags = flags;
@@ -489,10 +494,8 @@ static BOOL frdpd_set_resize_ipc_timeout(int fd)
 
 static BOOL frdpd_nsc_surface_bits_supported(const rdpUpdate* update, const rdpSettings* settings)
 {
-	const UINT32 supported = settings
-	                               ? freerdp_settings_get_uint32(settings,
-	                                                             FreeRDP_SurfaceCommandsSupported)
-	                               : 0;
+	const UINT32 supported =
+	    settings ? freerdp_settings_get_uint32(settings, FreeRDP_SurfaceCommandsSupported) : 0;
 	const UINT32 codec_id = settings ? freerdp_settings_get_uint32(settings, FreeRDP_NSCodecId) : 0;
 
 	return update && update->SurfaceBits && settings &&
@@ -503,8 +506,7 @@ static BOOL frdpd_nsc_surface_bits_supported(const rdpUpdate* update, const rdpS
 
 static BOOL frdpd_prepare_nsc_encoder(frdpdPeerContext* context, UINT32 width, UINT32 height)
 {
-	if (!context || (width == 0) || (height == 0) || (width > UINT16_MAX) ||
-	    (height > UINT16_MAX))
+	if (!context || (width == 0) || (height == 0) || (width > UINT16_MAX) || (height > UINT16_MAX))
 		return FALSE;
 	if (!context->framebuffer_nsc)
 	{
@@ -542,13 +544,14 @@ static BOOL frdpd_send_agent_resize(frdpdPeerContext* context, UINT32 width, UIN
 	BOOL ok = FALSE;
 
 	if (!context || !context->managed_session_open || (context->agent_socket[0] == '\0') ||
-	    (width == 0) || (height == 0) || (width > FRDPD_MAX_DESKTOP_SIZE) ||
-	    (height > FRDPD_MAX_DESKTOP_SIZE))
+	    (width == 0) || (height == 0) || (width > FRDPD_DISPLAY_MAX_DESKTOP_SIZE) ||
+	    (height > FRDPD_DISPLAY_MAX_DESKTOP_SIZE))
 		return FALSE;
 
 	(void)frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
-	                          context->correlation_id);
-	(void)frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id), context->session_id);
+	                            context->correlation_id);
+	(void)frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id),
+	                            context->session_id);
 	request.width = width;
 	request.height = height;
 	request.color_depth = color_depth;
@@ -583,8 +586,8 @@ fail:
 }
 
 static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT32 y, UINT32 width,
-                                      UINT32 height, UINT32 flags,
-                                      frdpAgentFrameResponse* response, BYTE** data)
+                                      UINT32 height, UINT32 flags, frdpAgentFrameResponse* response,
+                                      BYTE** data)
 {
 	int fd = -1;
 	frdpAgentFrameRequest request = { 0 };
@@ -593,17 +596,18 @@ static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT3
 	if (!context || !response || !data || !context->managed_session_open ||
 	    (context->agent_socket[0] == '\0'))
 		return FALSE;
-	if (flags & ~((UINT32)FRDP_AGENT_FRAME_REQUEST_FORCE | (UINT32)FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
+	if (flags &
+	    ~((UINT32)FRDP_AGENT_FRAME_REQUEST_FORCE | (UINT32)FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
 		return FALSE;
-	if ((flags & FRDP_AGENT_FRAME_REQUEST_FORCE) &&
-	    (flags & FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
+	if ((flags & FRDP_AGENT_FRAME_REQUEST_FORCE) && (flags & FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY))
 		return FALSE;
 	*data = NULL;
 	memset(response, 0, sizeof(*response));
 
 	(void)frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
-	                          context->correlation_id);
-	(void)frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id), context->session_id);
+	                            context->correlation_id);
+	(void)frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id),
+	                            context->session_id);
 	request.x = x;
 	request.y = y;
 	request.width = width;
@@ -625,8 +629,8 @@ static BOOL frdpd_receive_agent_frame(frdpdPeerContext* context, UINT32 x, UINT3
 	response->session_id[sizeof(response->session_id) - 1] = '\0';
 	response->error[sizeof(response->error) - 1] = '\0';
 	if (!frdpd_frame_response_metadata_is_valid(response, context->correlation_id,
-	                                            context->session_id, x, y, width, height,
-	                                            flags, FRDPD_FRAME_TILE_SIZE, UINT16_MAX))
+	                                            context->session_id, x, y, width, height, flags,
+	                                            FRDPD_FRAME_TILE_SIZE, UINT16_MAX))
 		goto fail;
 	if (response->flags & FRDP_AGENT_FRAME_RESPONSE_UNCHANGED)
 	{
@@ -663,11 +667,9 @@ static BOOL frdpd_send_bitmap_frame(freerdp_peer* client, const frdpAgentFrameRe
 
 	if (!client || !client->context || !frame || !data)
 		return FALSE;
-	if ((frame->x > UINT16_MAX) || (frame->y > UINT16_MAX) ||
-	    (frame->width == 0) || (frame->height == 0) ||
-	    (frame->x + frame->width - 1U > UINT16_MAX) ||
-	    (frame->y + frame->height - 1U > UINT16_MAX) ||
-	    (frame->data_length > UINT16_MAX))
+	if ((frame->x > UINT16_MAX) || (frame->y > UINT16_MAX) || (frame->width == 0) ||
+	    (frame->height == 0) || (frame->x + frame->width - 1U > UINT16_MAX) ||
+	    (frame->y + frame->height - 1U > UINT16_MAX) || (frame->data_length > UINT16_MAX))
 		return FALSE;
 
 	update = client->context->update;
@@ -715,9 +717,8 @@ static BOOL frdpd_send_nsc_frame(freerdp_peer* client, frdpdPeerContext* context
 	update = client->context->update;
 	if (!frdpd_nsc_surface_bits_supported(update, settings))
 		return FALSE;
-	if ((frame->x > UINT16_MAX) || (frame->y > UINT16_MAX) ||
-	    (frame->width > UINT16_MAX) || (frame->height > UINT16_MAX) ||
-	    (frame->width > UINT16_MAX - frame->x) ||
+	if ((frame->x > UINT16_MAX) || (frame->y > UINT16_MAX) || (frame->width > UINT16_MAX) ||
+	    (frame->height > UINT16_MAX) || (frame->width > UINT16_MAX - frame->x) ||
 	    (frame->height > UINT16_MAX - frame->y))
 		return FALSE;
 	if (!frdpd_prepare_nsc_encoder(context, frame->width, frame->height))
@@ -760,7 +761,8 @@ fail:
 	if (!context->framebuffer_nsc_warned)
 	{
 		WLog_WARN(TAG,
-		          "correlation_id=%s failed to send NSCodec framebuffer tile for session_id=%s; falling back to raw bitmap updates",
+		          "correlation_id=%s failed to send NSCodec framebuffer tile for session_id=%s; "
+		          "falling back to raw bitmap updates",
 		          context->correlation_id,
 		          frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)));
 		context->framebuffer_nsc_warned = TRUE;
@@ -846,15 +848,14 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 		else
 			request_flags |= FRDP_AGENT_FRAME_REQUEST_DIRTY_ONLY;
 
-		if (!frdpd_receive_agent_frame(context, x, y, width, height, request_flags, &frame,
-		                              &data))
+		if (!frdpd_receive_agent_frame(context, x, y, width, height, request_flags, &frame, &data))
 		{
 			if (!context->agent_frame_warned)
 			{
-				WLog_WARN(TAG, "correlation_id=%s failed to receive framebuffer from session_id=%s",
-				          context->correlation_id,
-				          frdpd_context_log_session_id(context, log_session_id,
-				                                      sizeof(log_session_id)));
+				WLog_WARN(
+				    TAG, "correlation_id=%s failed to receive framebuffer from session_id=%s",
+				    context->correlation_id,
+				    frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)));
 				context->agent_frame_warned = TRUE;
 			}
 			frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
@@ -870,17 +871,16 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 			continue;
 		}
 		if ((frame.x >= desktop_width) || (frame.y >= desktop_height) ||
-		    (frame.width > desktop_width - frame.x) ||
-		    (frame.height > desktop_height - frame.y))
+		    (frame.width > desktop_width - frame.x) || (frame.height > desktop_height - frame.y))
 		{
 			free(data);
 			if (!context->agent_frame_warned)
 			{
-				WLog_WARN(TAG,
-				          "correlation_id=%s received out-of-bounds framebuffer tile from session_id=%s",
-				          context->correlation_id,
-				          frdpd_context_log_session_id(context, log_session_id,
-				                                      sizeof(log_session_id)));
+				WLog_WARN(
+				    TAG,
+				    "correlation_id=%s received out-of-bounds framebuffer tile from session_id=%s",
+				    context->correlation_id,
+				    frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)));
 				context->agent_frame_warned = TRUE;
 			}
 			frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
@@ -903,10 +903,10 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 		if (!frdpd_send_frame(client, context, &frame, data))
 		{
 			free(data);
-			WLog_WARN(TAG, "correlation_id=%s failed to send framebuffer tile for session_id=%s",
-			          context->correlation_id,
-			          frdpd_context_log_session_id(context, log_session_id,
-			                                      sizeof(log_session_id)));
+			WLog_WARN(
+			    TAG, "correlation_id=%s failed to send framebuffer tile for session_id=%s",
+			    context->correlation_id,
+			    frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)));
 			return FALSE;
 		}
 		if (response_hash_slot)
@@ -950,7 +950,7 @@ static DWORD WINAPI frdpd_session_close_retry_thread(LPVOID arg)
 		                            retry->session_id);
 		(void)frdpd_copy_ipc_string(request.user, sizeof(request.user), retry->user);
 		closed = frdpd_session_ipc_request(retry->socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST,
-		                                  &request, sizeof(request), &response);
+		                                   &request, sizeof(request), &response);
 		SecureZeroMemory(&request, sizeof(request));
 		SecureZeroMemory(&response, sizeof(response));
 		if (!closed)
@@ -958,15 +958,15 @@ static DWORD WINAPI frdpd_session_close_retry_thread(LPVOID arg)
 	}
 
 	if (closed)
-		WLog_INFO(TAG, "correlation_id=%s closed managed session_id=%s after retry",
-		          retry->correlation_id,
-		          frdpd_log_value(retry->session_id, log_session_id, sizeof(log_session_id),
-		                          "unknown"));
+		WLog_INFO(
+		    TAG, "correlation_id=%s closed managed session_id=%s after retry",
+		    retry->correlation_id,
+		    frdpd_log_value(retry->session_id, log_session_id, sizeof(log_session_id), "unknown"));
 	else
-		WLog_WARN(TAG, "correlation_id=%s exhausted close retries for managed session_id=%s",
-		          retry->correlation_id,
-		          frdpd_log_value(retry->session_id, log_session_id, sizeof(log_session_id),
-		                          "unknown"));
+		WLog_WARN(
+		    TAG, "correlation_id=%s exhausted close retries for managed session_id=%s",
+		    retry->correlation_id,
+		    frdpd_log_value(retry->session_id, log_session_id, sizeof(log_session_id), "unknown"));
 
 	SecureZeroMemory(retry, sizeof(*retry));
 	free(retry);
@@ -987,9 +987,9 @@ static BOOL frdpd_schedule_session_close_retry(const frdpdServerConfig* config,
 	if (!retry)
 		return FALSE;
 	if (!frdpd_copy_ipc_string(retry->socket_path, sizeof(retry->socket_path),
-	                          config->session_socket) ||
+	                           config->session_socket) ||
 	    !frdpd_copy_ipc_string(retry->correlation_id, sizeof(retry->correlation_id),
-	                          context->correlation_id) ||
+	                           context->correlation_id) ||
 	    !frdpd_copy_ipc_string(retry->session_id, sizeof(retry->session_id), context->session_id) ||
 	    !frdpd_copy_ipc_string(retry->user, sizeof(retry->user), context->pam_user))
 	{
@@ -1008,7 +1008,7 @@ static BOOL frdpd_schedule_session_close_retry(const frdpdServerConfig* config,
 }
 
 static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerConfig* config,
-                                        frdpdPeerContext* context)
+                                       frdpdPeerContext* context)
 {
 	rdpSettings* settings = NULL;
 	frdpSessionRequestV3 request = { 0 };
@@ -1034,12 +1034,12 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 		return FALSE;
 
 	if (!frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
-	                          context->correlation_id) ||
+	                           context->correlation_id) ||
 	    !frdpd_copy_ipc_string(request.user, sizeof(request.user), context->pam_user) ||
 	    !frdpd_copy_ipc_string(request.authorization_id, sizeof(request.authorization_id),
-	                          context->authorization_id) ||
+	                           context->authorization_id) ||
 	    !frdpd_copy_ipc_string(request.rhost, sizeof(request.rhost),
-	                          (client->hostname[0] != '\0') ? client->hostname : NULL))
+	                           (client->hostname[0] != '\0') ? client->hostname : NULL))
 		goto cleanup;
 
 	request.uid = (UINT64)context->uid;
@@ -1056,8 +1056,8 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 		request.color_depth = freerdp_settings_get_uint32(settings, FreeRDP_ColorDepth);
 	}
 
-	if (!frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_REQUEST_V3,
-	                              &request, sizeof(request), &response))
+	if (!frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_REQUEST_V3, &request,
+	                               sizeof(request), &response))
 	{
 		WLog_WARN(TAG, "correlation_id=%s session manager rejected login for %s: %s",
 		          context->correlation_id,
@@ -1068,11 +1068,11 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 	}
 
 	if (!frdpd_copy_ipc_string(context->session_id, sizeof(context->session_id),
-	                          response.session_id) ||
+	                           response.session_id) ||
 	    !frdpd_copy_ipc_string(context->session_display, sizeof(context->session_display),
-	                          response.display) ||
+	                           response.display) ||
 	    !frdpd_copy_ipc_string(context->agent_socket, sizeof(context->agent_socket),
-	                          response.agent_socket) ||
+	                           response.agent_socket) ||
 	    (context->session_id[0] == '\0') || (context->agent_socket[0] == '\0'))
 	{
 		if (response.session_id[0] != '\0')
@@ -1084,13 +1084,13 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 			(void)frdpd_copy_ipc_string(close_request.correlation_id,
 			                            sizeof(close_request.correlation_id),
 			                            context->correlation_id);
-			(void)frdpd_copy_ipc_string(close_request.session_id,
-			                            sizeof(close_request.session_id), response.session_id);
+			(void)frdpd_copy_ipc_string(close_request.session_id, sizeof(close_request.session_id),
+			                            response.session_id);
 			(void)frdpd_copy_ipc_string(close_request.user, sizeof(close_request.user),
 			                            context->pam_user);
-			rollback_closed = frdpd_session_ipc_request(
-			    config->session_socket, FRDP_IPC_SESSION_CLOSE_REQUEST, &close_request,
-			    sizeof(close_request), &close_response);
+			rollback_closed =
+			    frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_CLOSE_REQUEST,
+			                              &close_request, sizeof(close_request), &close_response);
 			if (!rollback_closed && (context->session_id[0] != '\0'))
 			{
 				context->managed_session_open = TRUE;
@@ -1114,7 +1114,8 @@ static BOOL frdpd_open_managed_session(freerdp_peer* client, const frdpdServerCo
 	context->agent_input_warned = FALSE;
 	context->agent_frame_warned = FALSE;
 	frdpd_reset_framebuffer_state(context);
-	WLog_INFO(TAG, "correlation_id=%s opened managed session_id=%s display=%s agent_socket=%s user=%s",
+	WLog_INFO(TAG,
+	          "correlation_id=%s opened managed session_id=%s display=%s agent_socket=%s user=%s",
 	          context->correlation_id,
 	          frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)),
 	          frdpd_log_value(context->session_display[0] ? context->session_display : NULL,
@@ -1160,9 +1161,9 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 		return TRUE;
 
 	if (!frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
-	                          context->correlation_id) ||
+	                           context->correlation_id) ||
 	    !frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id),
-	                          context->session_id) ||
+	                           context->session_id) ||
 	    !frdpd_copy_ipc_string(request.user, sizeof(request.user), context->pam_user))
 	{
 		WLog_WARN(TAG, "correlation_id=%s unable to build session close request",
@@ -1174,9 +1175,10 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 	{
 		if (!frdpd_schedule_session_close_retry(config, context))
 		{
-			WLog_WARN(TAG, "correlation_id=%s failed to schedule close retry for session_id=%s",
-			          context->correlation_id,
-			          frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)));
+			WLog_WARN(
+			    TAG, "correlation_id=%s failed to schedule close retry for session_id=%s",
+			    context->correlation_id,
+			    frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)));
 			goto cleanup;
 		}
 		WLog_INFO(TAG, "correlation_id=%s scheduled close retry for managed session_id=%s",
@@ -1192,7 +1194,7 @@ static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPe
 	}
 
 	closed = frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_CLOSE_REQUEST,
-	                                  &request, sizeof(request), &response);
+	                                   &request, sizeof(request), &response);
 
 	if (!closed)
 	{
@@ -1234,9 +1236,9 @@ static BOOL frdpd_disconnect_managed_session(const frdpdServerConfig* config,
 		return TRUE;
 
 	if (!frdpd_copy_ipc_string(request.correlation_id, sizeof(request.correlation_id),
-	                          context->correlation_id) ||
+	                           context->correlation_id) ||
 	    !frdpd_copy_ipc_string(request.session_id, sizeof(request.session_id),
-	                          context->session_id) ||
+	                           context->session_id) ||
 	    !frdpd_copy_ipc_string(request.user, sizeof(request.user), context->pam_user))
 	{
 		WLog_WARN(TAG, "correlation_id=%s unable to build session disconnect request",
@@ -1244,9 +1246,9 @@ static BOOL frdpd_disconnect_managed_session(const frdpdServerConfig* config,
 		goto cleanup;
 	}
 
-	detached = frdpd_session_ipc_request(config->session_socket,
-	                                     FRDP_IPC_SESSION_DISCONNECT_REQUEST, &request,
-	                                     sizeof(request), &response);
+	detached =
+	    frdpd_session_ipc_request(config->session_socket, FRDP_IPC_SESSION_DISCONNECT_REQUEST,
+	                              &request, sizeof(request), &response);
 	if (!detached)
 	{
 		WLog_WARN(TAG, "correlation_id=%s failed to detach managed session_id=%s: %s",
@@ -1274,11 +1276,14 @@ cleanup:
 static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 {
 	frdpdPeerContext* context = (frdpdPeerContext*)ctx;
-	const frdpdServerConfig* config = client ? (const frdpdServerConfig*)client->ContextExtra : NULL;
+	const frdpdServerConfig* config =
+	    client ? (const frdpdServerConfig*)client->ContextExtra : NULL;
 
 	if (!context)
 		return;
 
+	disp_server_context_free(context->display_control);
+	context->display_control = NULL;
 	if (context->vcm && (context->vcm != INVALID_HANDLE_VALUE))
 	{
 		WTSCloseServer(context->vcm);
@@ -1296,6 +1301,11 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 	SecureZeroMemory(context->authorization_id, sizeof(context->authorization_id));
 	free(context->pam_user);
 	context->pam_user = NULL;
+	if (context->display_control_lock_initialized)
+	{
+		DeleteCriticalSection(&context->display_control_lock);
+		context->display_control_lock_initialized = FALSE;
+	}
 }
 
 static BOOL frdpd_dvc_authorize(void* userdata, DWORD SessionId, const char* channelName,
@@ -1312,7 +1322,112 @@ static BOOL frdpd_dvc_authorize(void* userdata, DWORD SessionId, const char* cha
 	config = (frdpdServerConfig*)context->_p.peer->ContextExtra;
 	if (!config)
 		return FALSE;
-	return frdp_channel_policy_dynamic_allowed(&config->channels, channelName) ? TRUE : FALSE;
+	return frdp_channel_policy_dynamic_allowed_for_runtime(&config->channels, channelName) ? TRUE
+	                                                                                       : FALSE;
+}
+
+static BOOL frdpd_display_control_channel_id_assigned(DispServerContext* display_control,
+                                                      UINT32 channel_id)
+{
+	frdpdPeerContext* context = NULL;
+
+	if (!display_control || !display_control->custom)
+		return FALSE;
+	context = (frdpdPeerContext*)display_control->custom;
+	context->display_control_channel_id = channel_id;
+	return TRUE;
+}
+
+static BOOL frdpd_dvc_creation_status(void* userdata, UINT32 channel_id, INT32 creation_status)
+{
+	frdpdPeerContext* context = (frdpdPeerContext*)userdata;
+
+	if (!context || (channel_id != context->display_control_channel_id))
+		return TRUE;
+	if (creation_status < 0)
+		context->display_control_creation_failed = TRUE;
+	else
+		context->display_control_creation_ready = TRUE;
+	return TRUE;
+}
+
+static UINT frdpd_display_control_monitor_layout(DispServerContext* display_control,
+                                                 const DISPLAY_CONTROL_MONITOR_LAYOUT_PDU* pdu)
+{
+	frdpdPeerContext* context = NULL;
+	MONITOR_DEF monitors[FRDPD_DISPLAY_MAX_MONITORS] = { 0 };
+	UINT32 width = 0;
+	UINT32 height = 0;
+
+	if (!display_control || !display_control->custom || !pdu ||
+	    !frdpd_display_control_to_monitors(pdu, monitors, ARRAYSIZE(monitors)) ||
+	    !frdpd_display_monitor_bounds(pdu->NumMonitors, monitors, &width, &height))
+		return ERROR_INVALID_DATA;
+
+	context = (frdpdPeerContext*)display_control->custom;
+	EnterCriticalSection(&context->display_control_lock);
+	memcpy(context->display_control_monitors, monitors, pdu->NumMonitors * sizeof(monitors[0]));
+	context->display_control_monitor_count = pdu->NumMonitors;
+	context->display_control_layout_pending = TRUE;
+	LeaveCriticalSection(&context->display_control_lock);
+	return CHANNEL_RC_OK;
+}
+
+static BOOL frdpd_service_display_control(frdpdPeerContext* context)
+{
+	BYTE state = DRDYNVC_STATE_NONE;
+
+	if (!context || !context->vcm || !context->drdynvc_joined)
+		return TRUE;
+	state = WTSVirtualChannelManagerGetDrdynvcState(context->vcm);
+	if (state == DRDYNVC_STATE_FAILED)
+	{
+		WLog_WARN(TAG, "correlation_id=%s dynamic virtual channel negotiation failed",
+		          context->correlation_id);
+		context->drdynvc_joined = FALSE;
+		return TRUE;
+	}
+	if (state != DRDYNVC_STATE_READY)
+		return TRUE;
+
+	if (!context->display_control)
+	{
+		context->display_control = disp_server_context_new(context->vcm);
+		if (!context->display_control)
+			return FALSE;
+		context->display_control->custom = context;
+		context->display_control->rdpcontext = &context->_p;
+		context->display_control->MaxNumMonitors = FRDPD_DISPLAY_MAX_MONITORS;
+		context->display_control->MaxMonitorAreaFactorA = FRDPD_DISPLAY_MAX_DESKTOP_SIZE;
+		context->display_control->MaxMonitorAreaFactorB = FRDPD_DISPLAY_MAX_DESKTOP_SIZE;
+		context->display_control->ChannelIdAssigned = frdpd_display_control_channel_id_assigned;
+		context->display_control->DispMonitorLayout = frdpd_display_control_monitor_layout;
+		if (context->display_control->Open(context->display_control) != CHANNEL_RC_OK)
+		{
+			WLog_WARN(TAG, "correlation_id=%s failed to open Display Control DVC",
+			          context->correlation_id);
+			disp_server_context_free(context->display_control);
+			context->display_control = NULL;
+			context->drdynvc_joined = FALSE;
+			return TRUE;
+		}
+	}
+
+	if (context->display_control_creation_failed)
+	{
+		WLog_WARN(TAG, "correlation_id=%s client rejected Display Control DVC",
+		          context->correlation_id);
+		context->drdynvc_joined = FALSE;
+		return TRUE;
+	}
+	if (context->display_control_creation_ready && !context->display_control_caps_sent)
+	{
+		if (context->display_control->DisplayControlCaps(context->display_control) != CHANNEL_RC_OK)
+			return FALSE;
+		context->display_control_caps_sent = TRUE;
+		WLog_INFO(TAG, "correlation_id=%s Display Control DVC ready", context->correlation_id);
+	}
+	return TRUE;
 }
 
 static BOOL frdpd_peer_context_new(freerdp_peer* client, rdpContext* ctx)
@@ -1320,10 +1435,14 @@ static BOOL frdpd_peer_context_new(freerdp_peer* client, rdpContext* ctx)
 	frdpdPeerContext* context = (frdpdPeerContext*)ctx;
 
 	WINPR_ASSERT(ctx);
-	if (!frdpd_generate_correlation_id(context->correlation_id,
-	                                  sizeof(context->correlation_id)))
+	if (!InitializeCriticalSectionAndSpinCount(&context->display_control_lock, 4000))
+		return FALSE;
+	context->display_control_lock_initialized = TRUE;
+	if (!frdpd_generate_correlation_id(context->correlation_id, sizeof(context->correlation_id)))
 	{
 		WLog_ERR(TAG, "Failed to generate peer correlation id");
+		DeleteCriticalSection(&context->display_control_lock);
+		context->display_control_lock_initialized = FALSE;
 		return FALSE;
 	}
 
@@ -1333,10 +1452,14 @@ static BOOL frdpd_peer_context_new(freerdp_peer* client, rdpContext* ctx)
 		context->vcm = NULL;
 		WLog_ERR(TAG, "correlation_id=%s failed to open virtual channel manager",
 		         context->correlation_id);
+		DeleteCriticalSection(&context->display_control_lock);
+		context->display_control_lock_initialized = FALSE;
 		return FALSE;
 	}
+	WTSVirtualChannelManagerSetDVCCreationCallback(context->vcm, frdpd_dvc_creation_status,
+	                                               context);
 	WTSVirtualChannelManagerSetDVCChannelAuthorizationCallback(context->vcm, frdpd_dvc_authorize,
-	                                                         context);
+	                                                           context);
 	return TRUE;
 }
 
@@ -1435,7 +1558,8 @@ static void frdpd_peer_log_nla_package(const char* correlation_id, const char* l
 	WINPR_ASSERT(log_hostname);
 	WINPR_ASSERT(package_name);
 	WLog_INFO(TAG, "correlation_id=%s NLA SSPI package=%s for %s", correlation_id,
-	          frdpd_log_value(package_name, log_package, sizeof(log_package), "unknown"), log_hostname);
+	          frdpd_log_value(package_name, log_package, sizeof(log_package), "unknown"),
+	          log_hostname);
 }
 
 static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY* identity,
@@ -1460,8 +1584,8 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 
 	if (!automatic && !config->allow_tls_fallback)
 	{
-		WLog_WARN(TAG, "correlation_id=%s rejecting non-NLA login from %s",
-		          context->correlation_id, log_hostname);
+		WLog_WARN(TAG, "correlation_id=%s rejecting non-NLA login from %s", context->correlation_id,
+		          log_hostname);
 		return FALSE;
 	}
 
@@ -1483,8 +1607,7 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 			WLog_WARN(TAG, "correlation_id=%s unable to query NLA SSPI package for %s",
 			          context->correlation_id, log_hostname);
 
-		if (!config->ntlm_fallback &&
-		    (!package_known || (_stricmp(nla_package, "Kerberos") != 0)))
+		if (!config->ntlm_fallback && (!package_known || (_stricmp(nla_package, "Kerberos") != 0)))
 		{
 			WLog_WARN(TAG,
 			          "correlation_id=%s rejecting NLA login from %s because selected SSPI "
@@ -1524,12 +1647,11 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	if (!ok)
 	{
 		char log_broker_error[FRDPD_LOG_STRING_SIZE] = { 0 };
-		const char* broker_error = frdpd_log_value(
-		    result.broker_error[0] ? result.broker_error : NULL, log_broker_error,
-		    sizeof(log_broker_error), "none");
+		const char* broker_error =
+		    frdpd_log_value(result.broker_error[0] ? result.broker_error : NULL, log_broker_error,
+		                    sizeof(log_broker_error), "none");
 
-		WLog_WARN(TAG,
-		          "correlation_id=%s PAM rejected RDP login from %s: %s (%d), broker_error=%s",
+		WLog_WARN(TAG, "correlation_id=%s PAM rejected RDP login from %s: %s (%d), broker_error=%s",
 		          context->correlation_id, log_hostname,
 		          frdpd_pam_auth_status_string(context->auth_status), context->pam_status,
 		          broker_error);
@@ -1553,25 +1675,23 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	result.pam_user = NULL;
 	frdpd_auth_result_cleanup(&result);
 
-	WLog_INFO(TAG, "correlation_id=%s PAM accepted RDP login for %s from %s",
-	          context->correlation_id,
-	          frdpd_log_value(context->pam_user, log_user, sizeof(log_user), "unknown"),
-	          log_hostname);
+	WLog_INFO(
+	    TAG, "correlation_id=%s PAM accepted RDP login for %s from %s", context->correlation_id,
+	    frdpd_log_value(context->pam_user, log_user, sizeof(log_user), "unknown"), log_hostname);
 	return TRUE;
 }
 
-static BOOL frdpd_peer_remote_credentials(freerdp_peer* client,
-                                          WINPR_ATTR_UNUSED KERB_TICKET_LOGON* logon_creds,
-                                          WINPR_ATTR_UNUSED
-                                          MSV1_0_REMOTE_SUPPLEMENTAL_CREDENTIAL* supp_creds)
+static BOOL
+frdpd_peer_remote_credentials(freerdp_peer* client,
+                              WINPR_ATTR_UNUSED KERB_TICKET_LOGON* logon_creds,
+                              WINPR_ATTR_UNUSED MSV1_0_REMOTE_SUPPLEMENTAL_CREDENTIAL* supp_creds)
 {
 	frdpdPeerContext* context = NULL;
 	char log_hostname[FRDPD_LOG_STRING_SIZE] = { 0 };
 
 	WINPR_ASSERT(client);
 	context = (frdpdPeerContext*)client->context;
-	WLog_WARN(TAG,
-	          "correlation_id=%s rejecting unsupported Remote Credential Guard login from %s",
+	WLog_WARN(TAG, "correlation_id=%s rejecting unsupported Remote Credential Guard login from %s",
 	          context ? context->correlation_id : "unknown",
 	          frdpd_client_log_name(client, log_hostname, sizeof(log_hostname)));
 	return FALSE;
@@ -1593,8 +1713,8 @@ static BOOL frdpd_peer_post_connect(freerdp_peer* client)
 	WINPR_ASSERT(context);
 
 	WLog_INFO(TAG,
-	          "correlation_id=%s client %s logged in as %s; requested desktop %" PRIu32
-	          "x%" PRIu32 "x%" PRIu32,
+	          "correlation_id=%s client %s logged in as %s; requested desktop %" PRIu32 "x%" PRIu32
+	          "x%" PRIu32,
 	          context->correlation_id,
 	          frdpd_client_log_name(client, log_hostname, sizeof(log_hostname)),
 	          frdpd_log_value(context->pam_user, log_user, sizeof(log_user), "unknown"),
@@ -1640,21 +1760,26 @@ static BOOL frdpd_peer_client_capabilities(freerdp_peer* client)
 	(void)frdpd_client_log_name(client, log_hostname, sizeof(log_hostname));
 
 	channel_count = freerdp_settings_get_uint32(settings, FreeRDP_ChannelCount);
+	context->drdynvc_joined = FALSE;
 	for (UINT32 i = 0; i < channel_count; i++)
 	{
 		char name[CHANNEL_NAME_LEN + 2] = { 0 };
 		char log_name[((CHANNEL_NAME_LEN + 1) * 4) + 1] = { 0 };
-		const CHANNEL_DEF* channel =
-		    (const CHANNEL_DEF*)freerdp_settings_get_pointer_array(settings,
-		                                                          FreeRDP_ChannelDefArray, i);
+		const CHANNEL_DEF* channel = (const CHANNEL_DEF*)freerdp_settings_get_pointer_array(
+		    settings, FreeRDP_ChannelDefArray, i);
 
-		const int allowed = frdp_channel_policy_static_channel_allowed_for_runtime(
+		int allowed = frdp_channel_policy_static_channel_allowed_for_runtime(
 		    &config->channels, &config->clipboard, channel, name, sizeof(name));
+		if (allowed && (strcmp(name, "drdynvc") == 0))
+		{
+			allowed = frdp_channel_policy_dynamic_allowed_for_runtime(&config->channels,
+			                                                          DISP_DVC_CHANNEL_NAME);
+			context->drdynvc_joined = allowed ? TRUE : FALSE;
+		}
 		frdpd_escape_log_string(log_name, sizeof(log_name), name);
 		if (!allowed)
 		{
-			WLog_WARN(TAG,
-			          "correlation_id=%s rejected static virtual channel '%s' from client %s",
+			WLog_WARN(TAG, "correlation_id=%s rejected static virtual channel '%s' from client %s",
 			          context ? context->correlation_id : "unknown",
 			          (log_name[0] != '\0') ? log_name : "invalid", log_hostname);
 			return FALSE;
@@ -1668,8 +1793,8 @@ static BOOL frdpd_peer_synchronize_event(rdpInput* input, UINT32 flags)
 {
 	if (!input || !input->context)
 		return FALSE;
-	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_SYNC,
-	                             flags, 0, 0);
+	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_SYNC, flags,
+	                              0, 0);
 }
 
 static BOOL frdpd_peer_keyboard_event(rdpInput* input, UINT16 flags, UINT8 code)
@@ -1677,7 +1802,7 @@ static BOOL frdpd_peer_keyboard_event(rdpInput* input, UINT16 flags, UINT8 code)
 	if (!input || !input->context)
 		return FALSE;
 	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_KEYBOARD,
-	                             flags, code, 0);
+	                              flags, code, 0);
 }
 
 static BOOL frdpd_peer_unicode_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code)
@@ -1685,15 +1810,15 @@ static BOOL frdpd_peer_unicode_keyboard_event(rdpInput* input, UINT16 flags, UIN
 	if (!input || !input->context)
 		return FALSE;
 	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_UNICODE,
-	                             flags, code, 0);
+	                              flags, code, 0);
 }
 
 static BOOL frdpd_peer_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y)
 {
 	if (!input || !input->context)
 		return FALSE;
-	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_MOUSE,
-	                             flags, x, y);
+	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_MOUSE, flags,
+	                              x, y);
 }
 
 static BOOL frdpd_peer_rel_mouse_event(rdpInput* input, UINT16 flags, INT16 xDelta, INT16 yDelta)
@@ -1701,7 +1826,7 @@ static BOOL frdpd_peer_rel_mouse_event(rdpInput* input, UINT16 flags, INT16 xDel
 	if (!input || !input->context)
 		return FALSE;
 	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_REL_MOUSE,
-	                             flags, xDelta, yDelta);
+	                              flags, xDelta, yDelta);
 }
 
 static BOOL frdpd_peer_extended_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y)
@@ -1709,7 +1834,7 @@ static BOOL frdpd_peer_extended_mouse_event(rdpInput* input, UINT16 flags, UINT1
 	if (!input || !input->context)
 		return FALSE;
 	return frdpd_send_agent_input((frdpdPeerContext*)input->context, FRDP_AGENT_INPUT_EXT_MOUSE,
-	                             flags, x, y);
+	                              flags, x, y);
 }
 
 static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
@@ -1717,10 +1842,6 @@ static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
 {
 	frdpdPeerContext* frdp_context = NULL;
 	rdpSettings* settings = NULL;
-	INT64 left = 0;
-	INT64 top = 0;
-	INT64 right = 0;
-	INT64 bottom = 0;
 	UINT32 width = 0;
 	UINT32 height = 0;
 	UINT32 old_width = 0;
@@ -1728,36 +1849,12 @@ static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
 	UINT32 color_depth = 0;
 	char log_session_id[FRDPD_LOG_STRING_SIZE] = { 0 };
 
-	if (!context || !monitors || (count == 0) || (count > FRDPD_MAX_MONITORS))
+	if (!context || !monitors)
 		return FALSE;
 	settings = context->settings;
 	if (!settings)
 		return FALSE;
-
-	left = monitors[0].left;
-	top = monitors[0].top;
-	right = monitors[0].right;
-	bottom = monitors[0].bottom;
-	for (UINT32 i = 0; i < count; i++)
-	{
-		if ((monitors[i].right < monitors[i].left) || (monitors[i].bottom < monitors[i].top))
-			return FALSE;
-		if (monitors[i].left < left)
-			left = monitors[i].left;
-		if (monitors[i].top < top)
-			top = monitors[i].top;
-		if (monitors[i].right > right)
-			right = monitors[i].right;
-		if (monitors[i].bottom > bottom)
-			bottom = monitors[i].bottom;
-	}
-
-	if ((right < left) || (bottom < top) || ((right - left + 1) > FRDPD_MAX_DESKTOP_SIZE) ||
-	    ((bottom - top + 1) > FRDPD_MAX_DESKTOP_SIZE))
-		return FALSE;
-	width = (UINT32)(right - left + 1);
-	height = (UINT32)(bottom - top + 1);
-	if ((width == 0) || (height == 0))
+	if (!frdpd_display_monitor_bounds(count, monitors, &width, &height))
 		return FALSE;
 
 	old_width = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
@@ -1770,12 +1867,11 @@ static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
 	if (frdp_context->managed_session_open &&
 	    !frdpd_send_agent_resize(frdp_context, width, height, color_depth))
 	{
-		WLog_WARN(TAG,
-		          "correlation_id=%s ignored display resize to %" PRIu32 "x%" PRIu32
-		          " for session_id=%s",
-		          frdp_context->correlation_id, width, height,
-		          frdpd_context_log_session_id(frdp_context, log_session_id,
-		                                      sizeof(log_session_id)));
+		WLog_WARN(
+		    TAG,
+		    "correlation_id=%s ignored display resize to %" PRIu32 "x%" PRIu32 " for session_id=%s",
+		    frdp_context->correlation_id, width, height,
+		    frdpd_context_log_session_id(frdp_context, log_session_id, sizeof(log_session_id)));
 		return TRUE;
 	}
 
@@ -1789,6 +1885,27 @@ static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
 	          " monitor_count=%" PRIu32,
 	          frdp_context->correlation_id, width, height, count);
 	return TRUE;
+}
+
+static BOOL frdpd_process_pending_display_control(frdpdPeerContext* context)
+{
+	MONITOR_DEF monitors[FRDPD_DISPLAY_MAX_MONITORS] = { 0 };
+	UINT32 count = 0;
+
+	if (!context || !context->display_control_lock_initialized)
+		return FALSE;
+	EnterCriticalSection(&context->display_control_lock);
+	if (context->display_control_layout_pending)
+	{
+		count = context->display_control_monitor_count;
+		memcpy(monitors, context->display_control_monitors, count * sizeof(monitors[0]));
+		context->display_control_layout_pending = FALSE;
+	}
+	LeaveCriticalSection(&context->display_control_lock);
+
+	if (count == 0)
+		return TRUE;
+	return frdpd_peer_remote_monitors(&context->_p, count, monitors);
 }
 
 static BOOL frdpd_peer_refresh_rect(rdpContext* context, BYTE count, const RECTANGLE_16* areas)
@@ -1984,6 +2101,8 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 		status = WaitForMultipleObjects(count, handles, FALSE, frdpd_peer_wait_timeout_ms(context));
 		if (status == WAIT_TIMEOUT)
 		{
+			if (!frdpd_process_pending_display_control(context))
+				break;
 			if (!frdpd_pump_agent_framebuffer(client, context))
 				break;
 			continue;
@@ -1997,11 +2116,15 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 		WINPR_ASSERT(client->CheckFileDescriptor);
 		if (!client->CheckFileDescriptor(client))
 			break;
-		if (context->vcm && !WTSVirtualChannelManagerCheckFileDescriptorEx(context->vcm, FALSE))
+		if (context->vcm &&
+		    !WTSVirtualChannelManagerCheckFileDescriptorEx(context->vcm, context->drdynvc_joined))
 		{
 			WLog_ERR(TAG, "Virtual channel manager check failed for peer %s", log_hostname);
 			break;
 		}
+		if (!frdpd_service_display_control(context) ||
+		    !frdpd_process_pending_display_control(context))
+			break;
 		if (!frdpd_pump_agent_framebuffer(client, context))
 			break;
 	}
@@ -2122,8 +2245,8 @@ static void frdpd_print_usage(const char* app)
 	(void)fprintf(stderr, "  --pam-service=<name>          PAM service name, default frdpd\n");
 	(void)fprintf(stderr,
 	              "  --auth-socket=<path>          Auth/account IPC for normal helper topology\n");
-	(void)fprintf(stderr,
-	              "  --session-socket=<path>       Session-manager IPC for normal helper topology\n");
+	(void)fprintf(
+	    stderr, "  --session-socket=<path>       Session-manager IPC for normal helper topology\n");
 	(void)fprintf(stderr, "  --service <name>              PAM service alias for auth test\n");
 	(void)fprintf(stderr, "  --domain-mode=plain|downlevel|upn|auto\n");
 	(void)fprintf(stderr,
@@ -2224,14 +2347,12 @@ static BOOL frdpd_apply_file_config(frdpdOptions* options)
 		return FALSE;
 	if (config->kerberos)
 	{
-		WLog_ERR(TAG,
-		         "Kerberos acceptor configuration requires integrated CredSSP/SPNEGO support");
+		WLog_ERR(TAG, "Kerberos acceptor configuration requires integrated CredSSP/SPNEGO support");
 		return FALSE;
 	}
 	if (config->clipboard.mode != FRDP_CLIPBOARD_MODE_DISABLED)
 	{
-		WLog_ERR(TAG,
-		         "Clipboard text mode requires an integrated runtime clipboard handler");
+		WLog_ERR(TAG, "Clipboard text mode requires an integrated runtime clipboard handler");
 		return FALSE;
 	}
 	if (!frdpd_string_is_empty(config->tls_cert))
@@ -2464,8 +2585,7 @@ static BOOL frdpd_validate_ntlm_config(frdpdServerConfig* config)
 #ifdef WITH_FRDPD_NTLM
 	if (!frdpd_prepare_ntlm_sam_file(config))
 	{
-		WLog_ERR(TAG,
-		         "NTLM fallback requires an owner-only regular ntlm_sam_file owned by frdpd");
+		WLog_ERR(TAG, "NTLM fallback requires an owner-only regular ntlm_sam_file owned by frdpd");
 		return FALSE;
 	}
 #endif
@@ -2479,9 +2599,8 @@ static BOOL frdpd_validate_build_features(const frdpdServerConfig* config)
 #ifndef WITH_FRDPD_NTLM
 	if (config->ntlm_fallback)
 	{
-		WLog_ERR(TAG,
-		         "NTLM authentication was disabled at build time; rebuild with "
-		         "-DWITH_FRDPD_NTLM=ON or set ntlm_fallback=false");
+		WLog_ERR(TAG, "NTLM authentication was disabled at build time; rebuild with "
+		              "-DWITH_FRDPD_NTLM=ON or set ntlm_fallback=false");
 		return FALSE;
 	}
 #endif
@@ -2500,8 +2619,7 @@ static BOOL frdpd_probe_helper(const char* socket_path, const char* expected_rol
 	if (fd < 0)
 		goto cleanup;
 	if ((frdp_ipc_exchange_helper_health(fd, &response, FRDPD_HELPER_READY_TIMEOUT_MS) != 0) ||
-	    !response.success ||
-	    !memchr(response.message, '\0', sizeof(response.message)) ||
+	    !response.success || !memchr(response.message, '\0', sizeof(response.message)) ||
 	    !memchr(response.error, '\0', sizeof(response.error)) || (response.error[0] != '\0') ||
 	    (strcmp(response.message, expected_role) != 0))
 		goto cleanup;
