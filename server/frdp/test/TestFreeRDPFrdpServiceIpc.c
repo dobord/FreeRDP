@@ -68,14 +68,22 @@ static int wait_for_socket(const char* path)
 	for (int attempt = 0; attempt < 50; attempt++)
 	{
 		struct stat st;
+		int fd = -1;
 
 		if (lstat(path, &st) == 0)
 		{
 			if (!S_ISSOCK(st.st_mode) || ((st.st_mode & 0777) != 0600))
 				return -1;
-			return 0;
+			fd = frdp_ipc_connect(path);
+			if (fd >= 0)
+			{
+				frdp_ipc_close(fd);
+				return 0;
+			}
+			if ((errno != ECONNREFUSED) && (errno != ENOENT))
+				return -1;
 		}
-		if (errno != ENOENT)
+		else if (errno != ENOENT)
 			return -1;
 		usleep(100000);
 	}
