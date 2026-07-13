@@ -67,6 +67,11 @@ typedef struct {
     unsigned char *dirty_tiles;
 } frdpAgentFrameState;
 
+typedef struct {
+    frdpAgentUnicodeInputState unicode;
+    char correlation_id[sizeof(((frdpAgentInputEvent *)0)->correlation_id)];
+} frdpAgentInputState;
+
 static volatile int g_x11_resize_error = 0;
 static volatile int g_x11_keyboard_error = 0;
 static volatile sig_atomic_t g_stop_requested = 0;
@@ -259,12 +264,7 @@ static KeySym unicode_to_keysym(uint32_t codepoint)
             break;
     }
 
-    if ((codepoint < 0x20) || (codepoint > 0xFFFF) ||
-        ((codepoint >= 0xD800) && (codepoint <= 0xDFFF)))
-        return NoSymbol;
-    if (codepoint <= 0xFF)
-        return (KeySym)codepoint;
-    return (KeySym)(0x01000000UL | codepoint);
+    return (KeySym)frdp_agent_unicode_scalar_to_keysym(codepoint);
 }
 
 static int find_unused_keycode(Display *display, int *min_keycode, int *keysyms_per_keycode,
@@ -362,17 +362,21 @@ out:
     return rc;
 }
 
-static int inject_unicode_event(Display *display, const frdpAgentInputEvent *event)
+static int inject_unicode_event(Display *display, const frdpAgentInputEvent *event,
+                                frdpAgentUnicodeInputState *state)
 {
     KeySym keysym = NoSymbol;
     uint32_t codepoint = 0;
+    int decode_status = 0;
 
-    if (!display || !event)
+    if (!display || !event || !state)
         return -1;
-    if (event->flags & KBD_FLAGS_RELEASE)
+    decode_status = frdp_agent_unicode_input_decode(state, event, &codepoint);
+    if (decode_status < 0)
+        return -1;
+    if (decode_status == 0)
         return 0;
 
-    codepoint = (uint32_t)(event->param1 & 0xFFFF);
     keysym = unicode_to_keysym(codepoint);
     if (keysym == NoSymbol)
         return -1;
@@ -456,12 +460,15 @@ static int inject_extended_mouse_event(Display *display, const frdpAgentInputEve
     return 0;
 }
 
-static int inject_input_event(Display *display, const frdpAgentInputEvent *event)
+static int inject_input_event(Display *display, const frdpAgentInputEvent *event,
+                              frdpAgentInputState *state)
 {
     int rc = 0;
 
-    if (!display || !event)
+    if (!display || !event || !state)
         return -1;
+    if (event->event_type != FRDP_AGENT_INPUT_UNICODE)
+        frdp_agent_unicode_input_reset(&state->unicode);
     XLockDisplay(display);
     XTestGrabControl(display, True);
     switch (event->event_type) {
@@ -472,7 +479,7 @@ static int inject_input_event(Display *display, const frdpAgentInputEvent *event
             rc = inject_keyboard_event(display, event);
             break;
         case FRDP_AGENT_INPUT_UNICODE:
-            rc = inject_unicode_event(display, event);
+            rc = inject_unicode_event(display, event, &state->unicode);
             break;
         case FRDP_AGENT_INPUT_MOUSE:
             rc = inject_mouse_event(display, event);
@@ -1123,15 +1130,20 @@ static int resize_backend_display(Display *display, const frdpAgentResizeRequest
     return 0;
 }
 
-static int handle_input_message(int fd, Display *display, uint32_t payload_len,
+static int handle_input_message(int fd, Display *display, frdpAgentInputState *input_state,
+                                uint32_t payload_len,
                                 const char *correlation_id, const char *session_id)
 {
     frdpAgentInputEvent event;
 
     memset(&event, 0, sizeof(event));
 
-    if (frdp_ipc_recv_agent_input_event_payload(fd, &event, payload_len) != 0)
+    if (!input_state)
         return -1;
+    if (frdp_ipc_recv_agent_input_event_payload(fd, &event, payload_len) != 0) {
+        frdp_agent_unicode_input_reset(&input_state->unicode);
+        return -1;
+    }
 
     event.correlation_id[sizeof(event.correlation_id) - 1] = '\0';
     event.session_id[sizeof(event.session_id) - 1] = '\0';
@@ -1144,6 +1156,7 @@ static int handle_input_message(int fd, Display *display, uint32_t payload_len,
                        sizeof(escaped_session_id));
         syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected mismatched input event",
                escaped_correlation_id, escaped_session_id);
+        frdp_agent_unicode_input_reset(&input_state->unicode);
         return -1;
     }
     if (!frdp_agent_input_event_payload_is_valid(&event)) {
@@ -1155,10 +1168,17 @@ static int handle_input_message(int fd, Display *display, uint32_t payload_len,
                        sizeof(escaped_session_id));
         syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected malformed input event",
                escaped_correlation_id, escaped_session_id);
+        frdp_agent_unicode_input_reset(&input_state->unicode);
         return -1;
     }
 
-    return inject_input_event(display, &event);
+    if (strcmp(input_state->correlation_id, event.correlation_id) != 0) {
+        frdp_agent_unicode_input_reset(&input_state->unicode);
+        snprintf(input_state->correlation_id, sizeof(input_state->correlation_id), "%s",
+                 event.correlation_id);
+    }
+
+    return inject_input_event(display, &event, input_state);
 }
 
 static int send_frame_response(int fd, const frdpAgentFrameResponse *response,
@@ -1366,7 +1386,8 @@ static int handle_clipboard_get_message(int fd, frdpAgentClipboardX11 *clipboard
 }
 
 static int handle_control_client(int fd, frdpAgentFrameState *frame_state,
-                                 frdpAgentClipboardX11 *clipboard, const char *correlation_id,
+                                 frdpAgentClipboardX11 *clipboard,
+                                 frdpAgentInputState *input_state, const char *correlation_id,
                                  const char *session_id)
 {
     frdpIpcHeader header;
@@ -1380,7 +1401,7 @@ static int handle_control_client(int fd, frdpAgentFrameState *frame_state,
 
     switch (header.type) {
         case FRDP_IPC_AGENT_INPUT:
-            return handle_input_message(fd, frame_state ? frame_state->display : NULL,
+            return handle_input_message(fd, frame_state ? frame_state->display : NULL, input_state,
                                         header.payload_len, correlation_id, session_id);
         case FRDP_IPC_AGENT_FRAME_REQUEST:
             return handle_frame_message(fd, frame_state, header.payload_len, correlation_id, session_id);
@@ -1403,6 +1424,7 @@ static int wait_for_backend_exit(pid_t pid, int control_fd, frdpAgentFrameState 
                                  const char *session_id, int *stop_requested)
 {
     int status = 0;
+    frdpAgentInputState input_state = { 0 };
 
     if (stop_requested)
         *stop_requested = 0;
@@ -1459,7 +1481,8 @@ static int wait_for_backend_exit(pid_t pid, int control_fd, frdpAgentFrameState 
         const int cfd = accept_cloexec(control_fd);
         if (cfd < 0)
             continue;
-        if (handle_control_client(cfd, frame_state, clipboard, correlation_id, session_id) != 0) {
+        if (handle_control_client(cfd, frame_state, clipboard, &input_state, correlation_id,
+                                  session_id) != 0) {
             char escaped_correlation_id[256] = { 0 };
             char escaped_session_id[256] = { 0 };
 
@@ -1783,7 +1806,7 @@ int main(int argc, char **argv)
     }
 
     /* TODO: add compression and update scheduling policy. */
-    /* TODO: add Unicode/text input injection with explicit layout handling. */
+    /* TODO: add IME and layout-aware text input handling. */
     /* TODO: process audio channels. */
 
     /* Wait for the display server to exit. */

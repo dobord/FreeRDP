@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <freerdp/input.h>
@@ -86,11 +87,46 @@ static void fuzz_structured_event(const uint8_t *data, size_t size)
 	(void)frdp_agent_input_event_payload_is_valid(&event);
 }
 
+static void fuzz_unicode_sequence(const uint8_t *data, size_t size)
+{
+	frdpAgentUnicodeInputState state = { 0 };
+	frdpAgentInputEvent event = { 0 };
+
+	event.event_type = FRDP_AGENT_INPUT_UNICODE;
+	for (size_t offset = 0; offset + 1U < size; offset += 3U)
+	{
+		uint32_t codepoint = UINT32_MAX;
+		int decode_status = 0;
+
+		event.flags = ((offset + 2U < size) && (data[offset + 2U] & 1U))
+		                  ? KBD_FLAGS_RELEASE
+		                  : 0;
+		event.param1 = (int32_t)((uint32_t)data[offset] | ((uint32_t)data[offset + 1U] << 8U));
+		decode_status = frdp_agent_unicode_input_decode(&state, &event, &codepoint);
+		if ((decode_status < -1) || (decode_status > 1))
+			abort();
+		if ((decode_status <= 0) && (codepoint != 0))
+			abort();
+		if ((decode_status == 1) &&
+		    ((codepoint > 0x10FFFFU) || ((codepoint >= 0xD800U) && (codepoint <= 0xDFFFU))))
+			abort();
+		if ((decode_status == 1) && (codepoint >= 0x20U) &&
+		    (frdp_agent_unicode_scalar_to_keysym(codepoint) !=
+		     ((codepoint <= 0xFFU) ? codepoint : (UINT32_C(0x01000000) | codepoint))))
+			abort();
+		if ((state.pending_high_surrogate != 0) &&
+		    ((state.pending_high_surrogate < 0xD800U) ||
+		     (state.pending_high_surrogate > 0xDBFFU)))
+			abort();
+	}
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size)
 {
 	if (!Data || (Size > FRDP_INPUT_POLICY_FUZZ_MAX_SIZE))
 		return 0;
 	fuzz_raw_event(Data, Size);
 	fuzz_structured_event(Data, Size);
+	fuzz_unicode_sequence(Data, Size);
 	return 0;
 }

@@ -88,6 +88,8 @@ target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CM
                                                    FRDP_SESSION_AGENT_BINARY="$<TARGET_FILE:frdp-session-agent>")
 if(XVFB_EXECUTABLE)
   target_compile_definitions(${MODULE_NAME} PRIVATE FRDP_XVFB_EXECUTABLE="${XVFB_EXECUTABLE}")
+  target_include_directories(${MODULE_NAME} SYSTEM PRIVATE ${X11_INCLUDE_DIR})
+  target_link_libraries(${MODULE_NAME} PRIVATE ${X11_LIBRARIES})
 endif()
 
 set_target_properties(${MODULE_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${TESTING_OUTPUT_DIRECTORY}")

@@ -11,6 +11,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <X11/Xlib.h>
+
+#include <freerdp/input.h>
+
 #include "ipc/frdp-ipc.h"
 
 #ifndef FRDP_SESSION_AGENT_BINARY
@@ -266,6 +270,105 @@ fail:
 	return -1;
 }
 
+static int send_agent_unicode_event(const char* socket_path, uint32_t flags, uint16_t code_unit)
+{
+	frdpAgentInputEvent event = { 0 };
+	int fd = frdp_ipc_connect(socket_path);
+
+	if (fd < 0)
+		return -1;
+	snprintf(event.correlation_id, sizeof(event.correlation_id), "%s",
+	         TEST_RECONNECT_CORRELATION_ID);
+	snprintf(event.session_id, sizeof(event.session_id), "%s", TEST_SESSION_ID);
+	event.event_type = FRDP_AGENT_INPUT_UNICODE;
+	event.flags = flags;
+	event.param1 = code_unit;
+	if (frdp_ipc_send_agent_input_event(fd, &event) != 0)
+	{
+		frdp_ipc_close(fd);
+		return -1;
+	}
+	frdp_ipc_close(fd);
+	return 0;
+}
+
+static int wait_for_agent_key_pair(Display* display)
+{
+	KeyCode keycode = 0;
+	int saw_press = 0;
+	int saw_release = 0;
+	struct pollfd pfd = { 0 };
+
+	pfd.fd = ConnectionNumber(display);
+	pfd.events = POLLIN;
+	for (int attempt = 0; attempt < 20; attempt++)
+	{
+		if (XPending(display) == 0)
+		{
+			const int status = poll(&pfd, 1, 50);
+
+			if (status < 0)
+			{
+				if (errno == EINTR)
+					continue;
+				return -1;
+			}
+			if (status == 0)
+				continue;
+		}
+		while (XPending(display) > 0)
+		{
+			XEvent event;
+
+			XNextEvent(display, &event);
+			if (event.type == KeyPress)
+			{
+				keycode = event.xkey.keycode;
+				saw_press = keycode != 0;
+			}
+			else if ((event.type == KeyRelease) && saw_press &&
+			         (event.xkey.keycode == keycode))
+			{
+				saw_release = 1;
+			}
+		}
+		if (saw_press && saw_release)
+			return 0;
+	}
+	return -1;
+}
+
+static int send_agent_supplementary_unicode(const char* socket_path, const char* display_name)
+{
+	Display* display = XOpenDisplay(display_name);
+	Window window = None;
+	int rc = -1;
+
+	if (!display)
+		return -1;
+	window = XCreateSimpleWindow(display, DefaultRootWindow(display), 0, 0, 16, 16, 0, 0, 0);
+	if (window == None)
+		goto cleanup;
+	XSelectInput(display, window, KeyPressMask | KeyReleaseMask);
+	XMapWindow(display, window);
+	XSetInputFocus(display, window, RevertToPointerRoot, CurrentTime);
+	XSync(display, False);
+
+	if ((send_agent_unicode_event(socket_path, 0, 0xD83C) != 0) ||
+	    (send_agent_unicode_event(socket_path, KBD_FLAGS_RELEASE, 0xD83C) != 0) ||
+	    (send_agent_unicode_event(socket_path, 0, 0xDF0D) != 0) ||
+	    (send_agent_unicode_event(socket_path, KBD_FLAGS_RELEASE, 0xDF0D) != 0) ||
+	    (wait_for_agent_key_pair(display) != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (window != None)
+		XDestroyWindow(display, window);
+	XCloseDisplay(display);
+	return rc;
+}
+
 static int send_agent_clipboard_roundtrip(const char* socket_path)
 {
 	static const uint8_t expected[] = "agent clipboard text";
@@ -338,6 +441,7 @@ int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 
 	char socket_dir[64] = { 0 };
 	char socket_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
+	char display[32] = { 0 };
 	int control_fd = -1;
 	int ready_pipe[2] = { -1, -1 };
 	int heartbeat_fds[2] = { -1, -1 };
@@ -347,7 +451,10 @@ int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 	int resize_checked = 0;
 	int frame_checked = 0;
 	int clipboard_checked = 0;
+	int unicode_checked = 0;
 
+	if (choose_display(display, sizeof(display)) != 0)
+		return -1;
 	if (pipe(ready_pipe) != 0)
 		return -1;
 	if (socketpair(AF_UNIX, SOCK_SEQPACKET, 0, heartbeat_fds) != 0)
@@ -364,15 +471,12 @@ int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 	{
 		char control_fd_str[32] = { 0 };
 		char ready_fd[32] = { 0 };
-		char display[32] = { 0 };
 		char heartbeat_fd[32] = { 0 };
 
 		setpgid(0, 0);
 		close(ready_pipe[0]);
 		close(heartbeat_fds[0]);
 		snprintf(ready_fd, sizeof(ready_fd), "%d", ready_pipe[1]);
-		if (choose_display(display, sizeof(display)) != 0)
-			_exit(126);
 		snprintf(control_fd_str, sizeof(control_fd_str), "%d", control_fd);
 		setenv("FRDP_AGENT_READY_FD", ready_fd, 1);
 		setenv("FRDP_AGENT_CONTROL_FD", control_fd_str, 1);
@@ -408,6 +512,9 @@ int TestFreeRDPFrdpAgentStop(int argc, char* argv[])
 		if (send_agent_clipboard_roundtrip(socket_path) != 0)
 			goto cleanup;
 		clipboard_checked = 1;
+		if (send_agent_supplementary_unicode(socket_path, display) != 0)
+			goto cleanup;
+		unicode_checked = 1;
 	}
 	if (kill(pid, SIGTERM) != 0)
 		goto cleanup;
@@ -443,11 +550,11 @@ cleanup:
 	if (socket_dir[0] != '\0')
 		rmdir(socket_dir);
 	if (rc != 0)
-		printf("frdp-session-agent stop cleanup failed (resize=%d frame=%d clipboard=%d)\n",
-		       resize_checked, frame_checked, clipboard_checked);
+		printf("frdp-session-agent stop cleanup failed (resize=%d frame=%d clipboard=%d unicode=%d)\n",
+		       resize_checked, frame_checked, clipboard_checked, unicode_checked);
 	else if (resize_checked && geteuid() != 0)
 		printf("frdp-session-agent control peer rejection verified for non-root test uid\n");
-	else if (resize_checked && frame_checked && clipboard_checked)
-		printf("frdp-session-agent root resize, frame, and clipboard IPC verified\n");
+	else if (resize_checked && frame_checked && clipboard_checked && unicode_checked)
+		printf("frdp-session-agent root resize, frame, clipboard, and Unicode IPC verified\n");
 	return rc;
 }

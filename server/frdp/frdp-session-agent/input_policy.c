@@ -19,9 +19,9 @@ static int single_button_is_valid(uint32_t flags, uint32_t button_mask)
     return (buttons == 0) || ((buttons & (buttons - 1U)) == 0);
 }
 
-static int unicode_codepoint_is_supported(uint32_t codepoint)
+static int unicode_code_unit_is_supported(uint32_t code_unit)
 {
-    switch (codepoint) {
+    switch (code_unit) {
         case 0x08:
         case 0x09:
         case 0x0D:
@@ -32,11 +32,21 @@ static int unicode_codepoint_is_supported(uint32_t codepoint)
             break;
     }
 
-    if ((codepoint < 0x20U) || (codepoint > 0xFFFFU))
-        return 0;
-    if ((codepoint >= 0xD800U) && (codepoint <= 0xDFFFU))
+    if ((code_unit >= 0xD800U) && (code_unit <= 0xDFFFU))
+        return 1;
+    if ((code_unit < 0x20U) || (code_unit > 0xFFFFU))
         return 0;
     return 1;
+}
+
+uint32_t frdp_agent_unicode_scalar_to_keysym(uint32_t codepoint)
+{
+    if ((codepoint < 0x20U) || (codepoint > 0x10FFFFU) ||
+        ((codepoint >= 0xD800U) && (codepoint <= 0xDFFFU)))
+        return 0;
+    if (codepoint <= 0xFFU)
+        return codepoint;
+    return UINT32_C(0x01000000) | codepoint;
 }
 
 static int keyboard_event_is_valid(const frdpAgentInputEvent *event)
@@ -53,7 +63,54 @@ static int unicode_event_is_valid(const frdpAgentInputEvent *event)
     const uint32_t allowed_flags = KBD_FLAGS_DOWN | KBD_FLAGS_RELEASE;
 
     return ((event->flags & ~allowed_flags) == 0) && uint16_param_is_valid(event->param1) &&
-           unicode_codepoint_is_supported((uint32_t)event->param1) && (event->param2 == 0);
+           unicode_code_unit_is_supported((uint32_t)event->param1) && (event->param2 == 0);
+}
+
+void frdp_agent_unicode_input_reset(frdpAgentUnicodeInputState *state)
+{
+    if (state)
+        state->pending_high_surrogate = 0;
+}
+
+int frdp_agent_unicode_input_decode(frdpAgentUnicodeInputState *state,
+                                    const frdpAgentInputEvent *event, uint32_t *codepoint)
+{
+    uint32_t code_unit = 0;
+
+    if (!state || !event || !codepoint)
+        return -1;
+    *codepoint = 0;
+    if ((event->event_type != FRDP_AGENT_INPUT_UNICODE) || !unicode_event_is_valid(event)) {
+        state->pending_high_surrogate = 0;
+        return -1;
+    }
+    if (event->flags & KBD_FLAGS_RELEASE)
+        return 0;
+
+    code_unit = (uint32_t)event->param1;
+    if ((code_unit >= 0xD800U) && (code_unit <= 0xDBFFU)) {
+        if (state->pending_high_surrogate != 0) {
+            state->pending_high_surrogate = 0;
+            return -1;
+        }
+        state->pending_high_surrogate = (uint16_t)code_unit;
+        return 0;
+    }
+    if ((code_unit >= 0xDC00U) && (code_unit <= 0xDFFFU)) {
+        if (state->pending_high_surrogate == 0)
+            return -1;
+        *codepoint = 0x10000U +
+                     (((uint32_t)state->pending_high_surrogate - 0xD800U) << 10U) +
+                     (code_unit - 0xDC00U);
+        state->pending_high_surrogate = 0;
+        return 1;
+    }
+    if (state->pending_high_surrogate != 0) {
+        state->pending_high_surrogate = 0;
+        return -1;
+    }
+    *codepoint = code_unit;
+    return 1;
 }
 
 static int mouse_event_is_valid(const frdpAgentInputEvent *event)
