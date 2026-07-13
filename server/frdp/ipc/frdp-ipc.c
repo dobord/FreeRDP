@@ -553,13 +553,17 @@ int frdp_ipc_recv_auth_request_v2_payload(int fd, frdpAuthRequest *request, uint
     size_t offset = 0;
     int rc = -1;
 
-    if (!request || (payload_len != sizeof(wire))) {
+    if (!request) {
+        errno = EINVAL;
+        return -1;
+    }
+    frdp_ipc_clear_secret(request, sizeof(*request));
+    if (payload_len != sizeof(wire)) {
         errno = EINVAL;
         return -1;
     }
     if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
         goto cleanup;
-    memset(request, 0, sizeof(*request));
     memcpy(request->correlation_id, &wire[offset], sizeof(request->correlation_id));
     offset += sizeof(request->correlation_id);
     memcpy(request->user, &wire[offset], sizeof(request->user));

@@ -635,6 +635,43 @@ cleanup:
 	return rc;
 }
 
+static int test_auth_request_decoder_clears_output_on_short_read(void)
+{
+	int fds[2] = { -1, -1 };
+	const uint8_t partial[] = { 's', 'e', 'c', 'r', 'e', 't' };
+	frdpAuthRequest decoded;
+	frdpAuthRequest cleared = { 0 };
+	int rc = -1;
+
+	memset(&decoded, 0xa5, sizeof(decoded));
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_auth_request_v2_payload(
+	        -1, &decoded, FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE - 1U)) != 0)
+		return -1;
+	if (memcmp(&decoded, &cleared, sizeof(decoded)) != 0)
+		return -1;
+	memset(&decoded, 0xa5, sizeof(decoded));
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	if (frdp_ipc_send(fds[1], partial, sizeof(partial)) != 0)
+		goto cleanup;
+	close(fds[1]);
+	fds[1] = -1;
+	if (frdp_ipc_recv_auth_request_v2_payload(
+	        fds[0], &decoded, FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE) != -1)
+		goto cleanup;
+	if (memcmp(&decoded, &cleared, sizeof(decoded)) != 0)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
 static int test_session_request_v3_uses_explicit_wire_format(void)
 {
 	int fds[2] = { -1, -1 };
@@ -1699,6 +1736,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_payload_decoders_reject_invalid_arguments() != 0)
 		return -1;
 	if (test_auth_request_uses_explicit_wire_format() != 0)
+		return -1;
+	if (test_auth_request_decoder_clears_output_on_short_read() != 0)
 		return -1;
 	if (test_auth_response_uses_explicit_wire_format() != 0)
 		return -1;

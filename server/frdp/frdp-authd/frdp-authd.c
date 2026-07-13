@@ -642,7 +642,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             clear_secret((char *)&response, sizeof(response));
         } else if ((hdr.type == FRDP_IPC_AUTH_REQUEST_V2) &&
             (hdr.payload_len == FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE)) {
-            frdpAuthRequest req;
+            frdpAuthRequest req = {0};
             if (frdp_ipc_recv_auth_request_v2_payload(cfd, &req, hdr.payload_len) == 0) {
                 lockedSecret request_password_secret = {0};
                 lockedSecret password_secret = {0};
@@ -699,6 +699,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                 unlock_locked_secret(&password_secret);
                 unlock_locked_secret(&request_password_secret);
             }
+            clear_secret((char *)&req, sizeof(req));
         } else {
             send_auth_response(cfd, 0, "unsupported IPC request", NULL, (uid_t)-1, (gid_t)-1,
                                NULL, 0, 0);
