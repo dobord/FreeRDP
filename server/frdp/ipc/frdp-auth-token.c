@@ -152,21 +152,26 @@ static int frdp_auth_token_hmac_hex(const char* payload, char* hex, size_t hex_s
 {
 	uint8_t key[FRDP_AUTH_TOKEN_KEY_LEN] = { 0 };
 	uint8_t digest[FRDP_AUTH_TOKEN_HMAC_LEN] = { 0 };
+	int rc = -1;
 
 	if (!payload || !hex || (hex_size < FRDP_AUTH_TOKEN_HEX_LEN + 1U))
 		return -1;
+	SecureZeroMemory(hex, hex_size);
 	if (frdp_auth_token_load_key(key, sizeof(key)) != 0)
-		return -1;
+		goto cleanup;
 	if (!winpr_HMAC(WINPR_MD_SHA256, key, sizeof(key), payload, strlen(payload), digest,
 	                sizeof(digest)))
-	{
-		SecureZeroMemory(key, sizeof(key));
-		return -1;
-	}
+		goto cleanup;
 	for (size_t x = 0; x < sizeof(digest); x++)
 		snprintf(&hex[x * 2U], hex_size - (x * 2U), "%02x", digest[x]);
+	rc = 0;
+
+cleanup:
 	SecureZeroMemory(key, sizeof(key));
-	return 0;
+	SecureZeroMemory(digest, sizeof(digest));
+	if (rc != 0)
+		SecureZeroMemory(hex, hex_size);
+	return rc;
 }
 
 static int frdp_auth_token_hex_equal(const char* a, const char* b)
@@ -190,6 +195,8 @@ int frdp_auth_token_create(const char* user, const char* rhost, const char* corr
 	char hmac_hex[FRDP_AUTH_TOKEN_HEX_LEN + 1U] = { 0 };
 	const unsigned long long expires_at =
 	    (unsigned long long)time(NULL) + FRDP_AUTH_TOKEN_TTL_SECONDS;
+	int rc = -1;
+	int written = 0;
 
 	if (!token || (token_size < 128))
 		return -1;
@@ -197,13 +204,23 @@ int frdp_auth_token_create(const char* user, const char* rhost, const char* corr
 	uuid_unparse_lower(id, nonce);
 	if (frdp_auth_token_payload(payload, sizeof(payload), nonce, expires_at, user, rhost,
 	                            correlation_id, uid, gid, groups, group_count, account_ok) != 0)
-		return -1;
+		goto cleanup;
 	if (frdp_auth_token_hmac_hex(payload, hmac_hex, sizeof(hmac_hex)) != 0)
-		return -1;
-	if (snprintf(token, token_size, "%s:%llu:%s", nonce, expires_at, hmac_hex) >=
-	    (int)token_size)
-		return -1;
-	return 0;
+		goto cleanup;
+	SecureZeroMemory(token, token_size);
+	written = snprintf(token, token_size, "%s:%llu:%s", nonce, expires_at, hmac_hex);
+	if ((written < 0) || ((size_t)written >= token_size))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	SecureZeroMemory(id, sizeof(id));
+	SecureZeroMemory(nonce, sizeof(nonce));
+	SecureZeroMemory(payload, sizeof(payload));
+	SecureZeroMemory(hmac_hex, sizeof(hmac_hex));
+	if (rc != 0)
+		SecureZeroMemory(token, token_size);
+	return rc;
 }
 
 int frdp_auth_token_verify(const char* token, const char* user, const char* rhost,
@@ -218,27 +235,46 @@ int frdp_auth_token_verify(const char* token, const char* user, const char* rhos
 	char payload[2048] = { 0 };
 	unsigned long long parsed_expires_at = 0;
 	int consumed = 0;
+	int rc = -1;
 
 	if (!token || !nonce || (nonce_size < sizeof(parsed_nonce)) || !expires_at)
+	{
+		if (nonce && (nonce_size > 0U))
+			SecureZeroMemory(nonce, nonce_size);
+		if (expires_at)
+			*expires_at = 0;
 		return -1;
+	}
 	if (sscanf(token, "%36[0-9a-f-]:%llu:%64[0-9a-f]%n", parsed_nonce, &parsed_expires_at,
 	           parsed_hmac, &consumed) != 3)
-		return -1;
+		goto cleanup;
 	if ((consumed <= 0) || (token[consumed] != '\0'))
-		return -1;
+		goto cleanup;
 	if ((strlen(parsed_nonce) != 36U) || (strlen(parsed_hmac) != FRDP_AUTH_TOKEN_HEX_LEN))
-		return -1;
+		goto cleanup;
 	if (parsed_expires_at < (unsigned long long)time(NULL))
-		return -1;
+		goto cleanup;
 	if (frdp_auth_token_payload(payload, sizeof(payload), parsed_nonce, parsed_expires_at, user,
 	                            rhost, correlation_id, uid, gid, groups, group_count,
 	                            account_ok) != 0)
-		return -1;
+		goto cleanup;
 	if (frdp_auth_token_hmac_hex(payload, expected_hmac, sizeof(expected_hmac)) != 0)
-		return -1;
+		goto cleanup;
 	if (!frdp_auth_token_hex_equal(parsed_hmac, expected_hmac))
-		return -1;
+		goto cleanup;
 	snprintf(nonce, nonce_size, "%s", parsed_nonce);
 	*expires_at = parsed_expires_at;
-	return 0;
+	rc = 0;
+
+cleanup:
+	SecureZeroMemory(parsed_nonce, sizeof(parsed_nonce));
+	SecureZeroMemory(parsed_hmac, sizeof(parsed_hmac));
+	SecureZeroMemory(expected_hmac, sizeof(expected_hmac));
+	SecureZeroMemory(payload, sizeof(payload));
+	if (rc != 0)
+	{
+		SecureZeroMemory(nonce, nonce_size);
+		*expires_at = 0;
+	}
+	return rc;
 }

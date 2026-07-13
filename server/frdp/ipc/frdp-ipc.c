@@ -628,6 +628,7 @@ int frdp_ipc_recv_auth_response(int fd, frdpAuthResponse *response)
         errno = EINVAL;
         return -1;
     }
+    frdp_ipc_clear_secret(response, sizeof(*response));
     if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
         return -1;
     if ((header.type != FRDP_IPC_AUTH_RESPONSE) || (header.payload_len != sizeof(wire))) {
@@ -636,7 +637,6 @@ int frdp_ipc_recv_auth_response(int fd, frdpAuthResponse *response)
     }
     if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
         goto cleanup;
-    memset(response, 0, sizeof(*response));
     response->success = frdp_ipc_read_u32_le(&wire[offset]) ? 1 : 0;
     offset += 4U;
     memcpy(response->error, &wire[offset], sizeof(response->error));
@@ -651,7 +651,7 @@ int frdp_ipc_recv_auth_response(int fd, frdpAuthResponse *response)
     offset += 4U;
     if (response->group_count > FRDP_IPC_MAX_AUTH_GROUPS) {
         errno = EINVAL;
-        memset(response, 0, sizeof(*response));
+        frdp_ipc_clear_secret(response, sizeof(*response));
         goto cleanup;
     }
     for (uint32_t x = 0; x < FRDP_IPC_MAX_AUTH_GROUPS; x++) {
@@ -725,13 +725,17 @@ int frdp_ipc_recv_session_request_v3_payload(int fd, frdpSessionRequestV3 *reque
     size_t offset = 0;
     int rc = -1;
 
-    if (!request || (payload_len != sizeof(wire))) {
+    if (!request) {
+        errno = EINVAL;
+        return -1;
+    }
+    frdp_ipc_clear_secret(request, sizeof(*request));
+    if (payload_len != sizeof(wire)) {
         errno = EINVAL;
         return -1;
     }
     if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
         goto cleanup;
-    memset(request, 0, sizeof(*request));
     memcpy(request->correlation_id, &wire[offset], sizeof(request->correlation_id));
     offset += sizeof(request->correlation_id);
     memcpy(request->session_id, &wire[offset], sizeof(request->session_id));
@@ -750,7 +754,7 @@ int frdp_ipc_recv_session_request_v3_payload(int fd, frdpSessionRequestV3 *reque
     offset += 4U;
     if (request->group_count > FRDP_IPC_MAX_AUTH_GROUPS) {
         errno = EINVAL;
-        memset(request, 0, sizeof(*request));
+        frdp_ipc_clear_secret(request, sizeof(*request));
         goto cleanup;
     }
     for (uint32_t x = 0; x < FRDP_IPC_MAX_AUTH_GROUPS; x++) {

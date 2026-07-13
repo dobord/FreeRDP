@@ -1,4 +1,5 @@
 #include <fcntl.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -103,8 +104,9 @@ static int ensure_fuzz_key(void)
 static void fuzz_verify_token(const uint8_t* data, size_t size)
 {
 	char token[FRDP_AUTH_TOKEN_FUZZ_MAX_SIZE + 1U] = { 0 };
-	char nonce[37] = { 0 };
-	unsigned long long expires_at = 0;
+	char nonce[37];
+	char cleared_nonce[sizeof(nonce)] = { 0 };
+	unsigned long long expires_at = ULLONG_MAX;
 	uint64_t groups[FRDP_AUTH_TOKEN_MAX_GROUPS] = { 1001, 1002 };
 	uint32_t group_count = 2;
 	size_t token_len = size;
@@ -119,8 +121,15 @@ static void fuzz_verify_token(const uint8_t* data, size_t size)
 	for (uint32_t x = 0; x < group_count; x++)
 		groups[x] = (uint64_t)(1000U + x + ((size > x) ? data[x] : 0U));
 
-	(void)frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1000, 1001,
-	                             groups, group_count, 1, nonce, sizeof(nonce), &expires_at);
+	memset(nonce, 0xa5, sizeof(nonce));
+	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1000, 1001, groups,
+	                           group_count, 1, nonce, sizeof(nonce), &expires_at) == 0)
+	{
+		if ((nonce[0] == '\0') || (expires_at == 0))
+			abort();
+	}
+	else if ((memcmp(nonce, cleared_nonce, sizeof(nonce)) != 0) || (expires_at != 0))
+		abort();
 }
 
 static void fuzz_valid_token_path(const uint8_t* data, size_t size)

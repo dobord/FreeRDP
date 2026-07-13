@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -635,14 +636,30 @@ cleanup:
 	return rc;
 }
 
-static int test_auth_request_decoder_clears_output_on_short_read(void)
+static int test_credential_decoders_clear_outputs_on_failure(void)
 {
 	int fds[2] = { -1, -1 };
 	const uint8_t partial[] = { 's', 'e', 'c', 'r', 'e', 't' };
 	frdpAuthRequest decoded;
 	frdpAuthRequest cleared = { 0 };
+	frdpAuthResponse auth_response;
+	frdpAuthResponse cleared_auth_response = { 0 };
+	frdpSessionRequestV3 session_request;
+	frdpSessionRequestV3 cleared_session_request = { 0 };
 	int rc = -1;
 
+	memset(&auth_response, 0xa5, sizeof(auth_response));
+	if (frdp_ipc_recv_auth_response(-1, &auth_response) != -1)
+		return -1;
+	if (memcmp(&auth_response, &cleared_auth_response, sizeof(auth_response)) != 0)
+		return -1;
+	memset(&session_request, 0xa5, sizeof(session_request));
+	errno = 0;
+	if (expect_einval(frdp_ipc_recv_session_request_v3_payload(
+	        -1, &session_request, FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE - 1U)) != 0)
+		return -1;
+	if (memcmp(&session_request, &cleared_session_request, sizeof(session_request)) != 0)
+		return -1;
 	memset(&decoded, 0xa5, sizeof(decoded));
 	errno = 0;
 	if (expect_einval(frdp_ipc_recv_auth_request_v2_payload(
@@ -1644,7 +1661,10 @@ static int test_auth_token_binds_posix_account(void)
 	char dir[1024] = { 0 };
 	char key_path[1024] = { 0 };
 	char token[192] = { 0 };
+	char cleared_token[sizeof(token)] = { 0 };
+	char aliased_token[sizeof(token)] = { 0 };
 	char nonce[37] = { 0 };
+	char cleared_nonce[sizeof(nonce)] = { 0 };
 	const uint64_t groups[] = { 1001, 2000 };
 	const uint64_t changed_groups[] = { 1001, 2001 };
 	unsigned long long expires_at = 0;
@@ -1672,8 +1692,12 @@ static int test_auth_token_binds_posix_account(void)
 		goto cleanup;
 	if (nonce[0] == '\0' || expires_at == 0)
 		goto cleanup;
+	memset(nonce, 0xa5, sizeof(nonce));
+	expires_at = ULLONG_MAX;
 	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1002, 1001, groups,
 	                           2, 1, nonce, sizeof(nonce), &expires_at) == 0)
+		goto cleanup;
+	if ((memcmp(nonce, cleared_nonce, sizeof(nonce)) != 0) || (expires_at != 0))
 		goto cleanup;
 	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "corr-1", 1000, 1002, groups,
 	                           2, 1, nonce, sizeof(nonce), &expires_at) == 0)
@@ -1690,6 +1714,25 @@ static int test_auth_token_binds_posix_account(void)
 		goto cleanup;
 	if (frdp_auth_token_verify(token, "alice|h", "c", "x", 1000, 1001, groups, 2, 1, nonce,
 	                           sizeof(nonce), &expires_at) == 0)
+		goto cleanup;
+	memset(token, 0xa5, sizeof(token));
+	if (frdp_auth_token_create("alice", "198.51.100.8", "invalid-groups", 1000, 1001, groups,
+	                           FRDP_AUTH_TOKEN_MAX_GROUPS + 1U, 1, token, sizeof(token)) == 0)
+		goto cleanup;
+	if (memcmp(token, cleared_token, sizeof(token)) != 0)
+		goto cleanup;
+	snprintf(aliased_token, sizeof(aliased_token), "%s", "alice");
+	if (frdp_auth_token_create(aliased_token, "198.51.100.8", "aliased-create", 1000, 1001,
+	                           groups, 2, 1, aliased_token, sizeof(aliased_token)) != 0)
+		goto cleanup;
+	if (frdp_auth_token_verify(aliased_token, "alice", "198.51.100.8", "aliased-create", 1000,
+	                           1001, groups, 2, 1, nonce, sizeof(nonce), &expires_at) != 0)
+		goto cleanup;
+	snprintf(token, sizeof(token), "%s", aliased_token);
+	if (frdp_auth_token_verify(token, "alice", "198.51.100.8", "aliased-create", 1000, 1001,
+	                           groups, 2, 1, token, sizeof(nonce), &expires_at) != 0)
+		goto cleanup;
+	if ((strlen(token) != 36U) || (expires_at == 0))
 		goto cleanup;
 	rc = 0;
 
@@ -1737,7 +1780,7 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 		return -1;
 	if (test_auth_request_uses_explicit_wire_format() != 0)
 		return -1;
-	if (test_auth_request_decoder_clears_output_on_short_read() != 0)
+	if (test_credential_decoders_clear_outputs_on_failure() != 0)
 		return -1;
 	if (test_auth_response_uses_explicit_wire_format() != 0)
 		return -1;
