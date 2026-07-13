@@ -114,6 +114,24 @@ static int test_authd_pam_conversation_rejects_bad_arguments(void)
 	return 0;
 }
 
+static int test_authd_pam_status_classification(void)
+{
+	if ((frdp_authd_pam_auth_status(PAM_SUCCESS) != FRDP_AUTHD_PAM_OK) ||
+	    (frdp_authd_pam_auth_status(PAM_AUTH_ERR) != FRDP_AUTHD_PAM_DENIED) ||
+	    (frdp_authd_pam_auth_status(PAM_USER_UNKNOWN) != FRDP_AUTHD_PAM_DENIED) ||
+	    (frdp_authd_pam_auth_status(PAM_CRED_INSUFFICIENT) != FRDP_AUTHD_PAM_ERROR) ||
+	    (frdp_authd_pam_auth_status(PAM_AUTHINFO_UNAVAIL) != FRDP_AUTHD_PAM_ERROR) ||
+	    (frdp_authd_pam_auth_status(PAM_SYSTEM_ERR) != FRDP_AUTHD_PAM_ERROR))
+		return -1;
+	if ((frdp_authd_pam_account_status(PAM_SUCCESS) != FRDP_AUTHD_PAM_OK) ||
+	    (frdp_authd_pam_account_status(PAM_ACCT_EXPIRED) != FRDP_AUTHD_PAM_DENIED) ||
+	    (frdp_authd_pam_account_status(PAM_AUTH_ERR) != FRDP_AUTHD_PAM_DENIED) ||
+	    (frdp_authd_pam_account_status(PAM_NEW_AUTHTOK_REQD) != FRDP_AUTHD_PAM_DENIED) ||
+	    (frdp_authd_pam_account_status(PAM_SYSTEM_ERR) != FRDP_AUTHD_PAM_ERROR))
+		return -1;
+	return 0;
+}
+
 int TestFreeRDPFrdpAuthdPam(int argc, char *argv[])
 {
 	(void)argc;
@@ -132,6 +150,11 @@ int TestFreeRDPFrdpAuthdPam(int argc, char *argv[])
 	if (test_authd_pam_conversation_rejects_bad_arguments() != 0)
 	{
 		printf("authd PAM bad argument test failed\n");
+		return -1;
+	}
+	if (test_authd_pam_status_classification() != 0)
+	{
+		printf("authd PAM status classification test failed\n");
 		return -1;
 	}
 	return 0;

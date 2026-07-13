@@ -29,6 +29,37 @@ void frdp_authd_pam_clear_responses(struct pam_response *responses, int count)
     }
 }
 
+frdpAuthdPamStatus frdp_authd_pam_auth_status(int pam_status)
+{
+    switch (pam_status) {
+        case PAM_SUCCESS:
+            return FRDP_AUTHD_PAM_OK;
+        case PAM_AUTH_ERR:
+        case PAM_MAXTRIES:
+        case PAM_PERM_DENIED:
+        case PAM_USER_UNKNOWN:
+            return FRDP_AUTHD_PAM_DENIED;
+        default:
+            return FRDP_AUTHD_PAM_ERROR;
+    }
+}
+
+frdpAuthdPamStatus frdp_authd_pam_account_status(int pam_status)
+{
+    switch (pam_status) {
+        case PAM_SUCCESS:
+            return FRDP_AUTHD_PAM_OK;
+        case PAM_ACCT_EXPIRED:
+        case PAM_AUTH_ERR:
+        case PAM_NEW_AUTHTOK_REQD:
+        case PAM_PERM_DENIED:
+        case PAM_USER_UNKNOWN:
+            return FRDP_AUTHD_PAM_DENIED;
+        default:
+            return FRDP_AUTHD_PAM_ERROR;
+    }
+}
+
 int frdp_authd_pam_conversation(int num_msg, const struct pam_message **msg,
                                 struct pam_response **resp, void *appdata_ptr)
 {

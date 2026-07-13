@@ -1,5 +1,6 @@
 #include "ipc/frdp-auth-token.h"
 #include "ipc/frdp-ipc.h"
+#include "frdp-authd/auth_failure_limit.h"
 #include "frdp-sesmand/display_policy.h"
 #include "frdp-sesmand/session_metadata.h"
 
@@ -20,6 +21,7 @@
 #endif
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <winpr/crt.h>
@@ -29,6 +31,9 @@
 #endif
 #ifndef FRDP_AUTHD_BINARY
 #error "FRDP_AUTHD_BINARY is not defined"
+#endif
+#ifndef FRDP_AUTHD_TEST_DENY_BINARY
+#error "FRDP_AUTHD_TEST_DENY_BINARY is not defined"
 #endif
 #ifndef FRDP_SESMAND_BINARY
 #error "FRDP_SESMAND_BINARY is not defined"
@@ -891,6 +896,101 @@ static int test_authd_rate_limit(void)
 			goto cleanup;
 		}
 	}
+
+cleanup:
+	if (stop_helper(&helper) != 0)
+		rc = -1;
+	return rc;
+}
+
+static int send_authd_failed_login(const char* socket_path, const char* user, const char* rhost,
+                                   int expect_limited)
+{
+	frdpAuthRequest request = { 0 };
+	frdpAuthResponse response = { 0 };
+	int fd = -1;
+	int rc = -1;
+
+	if (!socket_path || !user || !rhost)
+		return -1;
+	fd = frdp_ipc_connect(socket_path);
+	if (fd < 0)
+		return -1;
+	snprintf(request.correlation_id, sizeof(request.correlation_id), "%s",
+	         "22222222-2222-4222-8222-222222222222");
+	if ((snprintf(request.user, sizeof(request.user), "%s", user) >=
+	     (int)sizeof(request.user)) ||
+	    (snprintf(request.rhost, sizeof(request.rhost), "%s", rhost) >=
+	     (int)sizeof(request.rhost)))
+		goto cleanup;
+	snprintf(request.password, sizeof(request.password), "%s", "invalid-password");
+	if ((frdp_ipc_send_auth_request_v2(fd, &request) != 0) ||
+	    (frdp_ipc_recv_auth_response(fd, &response) != 0) || response.success ||
+	    !memchr(response.error, '\0', sizeof(response.error)))
+		goto cleanup;
+	if (expect_limited)
+		rc = strcmp(response.error, "authentication temporarily unavailable") == 0 ? 0 : -1;
+	else
+		rc = response.error[0] == '\0' ? 0 : -1;
+
+cleanup:
+	SecureZeroMemory(&request, sizeof(request));
+	SecureZeroMemory(&response, sizeof(response));
+	frdp_ipc_close(fd);
+	return rc;
+}
+
+static int test_monotonic_seconds(uint64_t* seconds)
+{
+	struct timespec now = { 0 };
+
+	if (!seconds || (clock_gettime(CLOCK_MONOTONIC, &now) != 0) || (now.tv_sec < 0))
+		return -1;
+	*seconds = (uint64_t)now.tv_sec;
+	return 0;
+}
+
+static int test_authd_account_and_source_failure_limit(void)
+{
+	frdpTestHelper helper;
+	char user[sizeof(((frdpAuthRequest*)0)->user)] = { 0 };
+	uint64_t started = 0;
+	uint64_t finished = 0;
+	int rc = -1;
+
+	if (start_helper(FRDP_AUTHD_TEST_DENY_BINARY, "frdp-authd-auth-failure-limit", &helper) != 0)
+		return -1;
+	if (test_monotonic_seconds(&started) != 0)
+		goto cleanup;
+	for (uint32_t x = 0; x < FRDP_AUTH_FAILURE_LIMIT_DEFAULT_MAX_FAILURES; x++)
+	{
+		if (send_authd_failed_login(helper.socket_path, "frdp-no-such-limited-account",
+		                            "192.0.2.44", 0) != 0)
+			goto cleanup;
+	}
+	if ((test_monotonic_seconds(&finished) != 0) ||
+	    ((finished - started) >= FRDP_AUTH_FAILURE_LIMIT_DEFAULT_WINDOW_SECONDS))
+		goto cleanup;
+	if (send_authd_failed_login(helper.socket_path, "FRDP-NO-SUCH-LIMITED-ACCOUNT",
+	                            "192.0.2.45", 1) != 0)
+		goto cleanup;
+	if (test_monotonic_seconds(&started) != 0)
+		goto cleanup;
+	for (uint32_t x = 0; x < FRDP_AUTH_FAILURE_LIMIT_DEFAULT_MAX_FAILURES; x++)
+	{
+		if (snprintf(user, sizeof(user), "frdp-no-such-source-user-%" PRIu32, x) >=
+		    (int)sizeof(user))
+			goto cleanup;
+		if (send_authd_failed_login(helper.socket_path, user, "198.51.100.9", 0) != 0)
+			goto cleanup;
+	}
+	if ((test_monotonic_seconds(&finished) != 0) ||
+	    ((finished - started) >= FRDP_AUTH_FAILURE_LIMIT_DEFAULT_WINDOW_SECONDS))
+		goto cleanup;
+	if (send_authd_failed_login(helper.socket_path, "frdp-no-such-source-user-final",
+	                            "198.51.100.9", 1) != 0)
+		goto cleanup;
+	rc = 0;
 
 cleanup:
 	if (stop_helper(&helper) != 0)
@@ -2360,6 +2460,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_authd_rate_limit() != 0)
 	{
 		printf("frdp-authd IPC rate-limit test failed\n");
+		return -1;
+	}
+	if (test_authd_account_and_source_failure_limit() != 0)
+	{
+		printf("frdp-authd account/source failure-limit test failed\n");
 		return -1;
 	}
 	if (test_sesmand_rate_limit() != 0)

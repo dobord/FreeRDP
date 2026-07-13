@@ -58,6 +58,8 @@ set_property(TARGET frdp-ipc PROPERTY FOLDER "Server/frdp")
 
 add_executable(frdp-authd
     frdp-authd/frdp-authd.c
+    frdp-authd/auth_failure_limit.c
+    frdp-authd/auth_failure_limit.h
     frdp-authd/authd_pam.c
     frdp-authd/authd_pam.h
     config/frdp-config.c

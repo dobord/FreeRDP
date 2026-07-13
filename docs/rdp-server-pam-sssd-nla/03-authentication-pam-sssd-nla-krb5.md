@@ -113,7 +113,11 @@ The result must be a canonical principal and POSIX account. Ambiguous mappings m
 - `PR_SET_DUMPABLE=0` for authd.
 - Zeroization after the PAM transaction.
 - journald redaction for username/domain where privacy requires it.
-- Rate limiting by IP and account.
+- Rate limiting by remote source and normalized account (`frdp-authd` now keeps independent,
+  process-local fixed-window failure budgets: 10 credential/account denials in 120 seconds, with
+  backend-canonical account keys (ASCII case-fold fallback for unresolved names) and bounded
+  tables that fail closed when capacity is exhausted; distributed enforcement remains an
+  operational follow-up).
 - Audit events for authentication success/failure with reason codes and no sensitive data.
 - Keytab rotation procedure.
 

@@ -32,12 +32,14 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <time.h>
 #include <fcntl.h>
 
 /* IPC definitions */
 #include "../config/frdp-config.h"
 #include "../ipc/frdp-auth-token.h"
 #include "../ipc/frdp-ipc.h"
+#include "auth_failure_limit.h"
 #include "authd_pam.h"
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -337,24 +339,42 @@ static int set_client_timeouts(int fd)
     return 0;
 }
 
-/* Perform a PAM authentication for the given user and password. */
-static int authenticate_user(const char *service, const char *rhost, const char *correlation_id,
-                             const char *user, const char *password)
+static int monotonic_seconds(uint64_t *seconds)
 {
-    if (!service || !service[0] || !user || !password)
+    struct timespec now;
+
+    if (!seconds || (clock_gettime(CLOCK_MONOTONIC, &now) != 0) || (now.tv_sec < 0))
         return -1;
+    *seconds = (uint64_t)now.tv_sec;
+    return 0;
+}
+
+/* Perform a PAM authentication for the given user and password. */
+static frdpAuthdPamStatus authenticate_user(const char *service, const char *rhost,
+                                            const char *correlation_id, const char *user,
+                                            const char *password)
+{
+    frdpAuthdPamStatus status = FRDP_AUTHD_PAM_ERROR;
+
+    if (!service || !service[0] || !user || !password)
+        return status;
+#if defined(FRDP_AUTHD_TEST_DENY_ALL)
+    (void)rhost;
+    log_audit_event(user, 0, correlation_id);
+    return FRDP_AUTHD_PAM_DENIED;
+#else
     size_t pwlen = strlen(password);
     /* Allocate a temporary buffer and lock it to prevent swapping. */
     char *buf = mmap(NULL, pwlen + 1, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANON, -1, 0);
     if (buf == MAP_FAILED)
-        return -1;
+        return status;
     memcpy(buf, password, pwlen + 1);
     if (mlock(buf, pwlen + 1) != 0) {
         /* Hard fail if we cannot lock memory to protect secrets */
         clear_secret(buf, pwlen + 1);
         munmap(buf, pwlen + 1);
-        return -1;
+        return status;
     }
 
     struct pam_conv conv = {frdp_authd_pam_conversation, buf};
@@ -373,27 +393,35 @@ static int authenticate_user(const char *service, const char *rhost, const char 
         }
         if (ret == PAM_SUCCESS) {
             ret = pam_authenticate(pamh, 0);
+            status = frdp_authd_pam_auth_status(ret);
         }
-        if (ret == PAM_SUCCESS) {
+        if (status == FRDP_AUTHD_PAM_OK) {
             ret = pam_acct_mgmt(pamh, 0);
+            status = frdp_authd_pam_account_status(ret);
         }
         /* Establish credentials for the session */
-        if (ret == PAM_SUCCESS) {
+        if (status == FRDP_AUTHD_PAM_OK) {
             ret = pam_setcred(pamh, PAM_ESTABLISH_CRED);
             credentials_established = (ret == PAM_SUCCESS);
+            if (!credentials_established)
+                status = FRDP_AUTHD_PAM_ERROR;
         }
         if (credentials_established) {
             int cred_ret = pam_setcred(pamh, PAM_DELETE_CRED);
-            if (ret == PAM_SUCCESS && cred_ret != PAM_SUCCESS)
+            if (cred_ret != PAM_SUCCESS) {
                 ret = cred_ret;
+                status = FRDP_AUTHD_PAM_ERROR;
+            }
         }
-        pam_end(pamh, ret);
+        if (pam_end(pamh, ret) != PAM_SUCCESS)
+            status = FRDP_AUTHD_PAM_ERROR;
     }
 
     /* Verify that the user exists. */
-    struct passwd *pwd = getpwnam(user);
-    if (!pwd) {
-        ret = PAM_USER_UNKNOWN;
+    if (status == FRDP_AUTHD_PAM_OK) {
+        errno = 0;
+        if (!getpwnam(user))
+            status = (errno == 0) ? FRDP_AUTHD_PAM_DENIED : FRDP_AUTHD_PAM_ERROR;
     }
 
     /* Clear and unlock secret data. */
@@ -401,8 +429,9 @@ static int authenticate_user(const char *service, const char *rhost, const char 
     munlock(buf, pwlen + 1);
     munmap(buf, pwlen + 1);
 
-    log_audit_event(user, ret == PAM_SUCCESS, correlation_id);
-    return (ret == PAM_SUCCESS) ? 0 : -1;
+    log_audit_event(user, status == FRDP_AUTHD_PAM_OK, correlation_id);
+    return status;
+#endif
 }
 
 /* Run in IPC server mode listening on a UNIX domain socket and handling auth requests */
@@ -560,6 +589,15 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
     printf("frdp-authd IPC server listening on %s\n", escaped_socket);
     frdpIpcRateLimiter rate_limiter = {0};
     frdpIpcRateLimiter health_rate_limiter = {0};
+    frdpAuthFailureLimiter account_failure_limiter;
+    frdpAuthFailureLimiter source_failure_limiter;
+
+    frdp_auth_failure_limiter_init(&account_failure_limiter,
+                                   FRDP_AUTH_FAILURE_LIMIT_DEFAULT_MAX_FAILURES,
+                                   FRDP_AUTH_FAILURE_LIMIT_DEFAULT_WINDOW_SECONDS);
+    frdp_auth_failure_limiter_init(&source_failure_limiter,
+                                   FRDP_AUTH_FAILURE_LIMIT_DEFAULT_MAX_FAILURES,
+                                   FRDP_AUTH_FAILURE_LIMIT_DEFAULT_WINDOW_SECONDS);
     while (!g_stop_requested) {
         struct pollfd pfd;
 
@@ -662,14 +700,60 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                                        (gid_t)-1, NULL, 0, 0);
                 } else {
                     char authorization_id[sizeof(((frdpAuthResponse *)0)->authorization_id)] = {0};
+                    char account_limit_key[FRDP_AUTH_FAILURE_LIMIT_KEY_SIZE] = {0};
                     uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
                     uint32_t group_count = 0;
-                    const int authenticated =
-                        authenticate_user(pam_service, rhost, correlation_id, user, password) == 0;
+                    uint64_t now_seconds = 0;
+                    int authenticated = 0;
+                    int rate_limit_ready = 0;
+                    frdpAuthdPamStatus auth_status = FRDP_AUTHD_PAM_ERROR;
+                    struct passwd *account_pwd = NULL;
                     struct passwd *pwd = NULL;
-                    if (authenticated)
+
+                    errno = 0;
+#if !defined(FRDP_AUTHD_TEST_DENY_ALL)
+                    account_pwd = getpwnam(user);
+#endif
+                    rate_limit_ready =
+                        (account_pwd || (errno == 0)) &&
+                        (frdp_auth_failure_limiter_account_key(user, sizeof(user),
+                                                               account_pwd ? account_pwd->pw_name
+                                                                           : NULL,
+                                                               account_limit_key,
+                                                               sizeof(account_limit_key)) == 0) &&
+                        (monotonic_seconds(&now_seconds) == 0) &&
+                        frdp_auth_failure_limiter_allow(&account_failure_limiter,
+                                                        account_limit_key,
+                                                        now_seconds) &&
+                        frdp_auth_failure_limiter_allow(&source_failure_limiter, rhost,
+                                                        now_seconds);
+                    if (!rate_limit_ready) {
+                        log_audit_event(user, 0, correlation_id);
+                        send_auth_response(cfd, 0, "authentication temporarily unavailable", NULL,
+                                           (uid_t)-1, (gid_t)-1, NULL, 0, 0);
+                    } else {
+                        auth_status = authenticate_user(pam_service, rhost, correlation_id, user,
+                                                        password);
+                        authenticated = auth_status == FRDP_AUTHD_PAM_OK;
+                        if ((auth_status == FRDP_AUTHD_PAM_DENIED) &&
+                            ((frdp_auth_failure_limiter_record(&account_failure_limiter,
+                                                               account_limit_key,
+                                                               now_seconds) != 0) ||
+                             (frdp_auth_failure_limiter_record(&source_failure_limiter, rhost,
+                                                               now_seconds) != 0))) {
+                            send_auth_response(cfd, 0, "authentication temporarily unavailable",
+                                               NULL, (uid_t)-1, (gid_t)-1, NULL, 0, 0);
+                            rate_limit_ready = 0;
+                        }
+                    }
+                    if (authenticated) {
+                        frdp_auth_failure_limiter_clear(&account_failure_limiter,
+                                                        account_limit_key);
                         pwd = getpwnam(user);
-                    if (authenticated && !pwd)
+                    }
+                    if (!rate_limit_ready) {
+                        /* The fail-closed response was already sent above. */
+                    } else if (authenticated && !pwd)
                         send_auth_response(cfd, 0, "missing POSIX account", NULL, (uid_t)-1,
                                            (gid_t)-1, NULL, 0, 0);
                     else if (authenticated &&
@@ -692,6 +776,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                                            authenticated ? group_count : 0,
                                            authenticated ? 1 : 0);
                     clear_secret(authorization_id, sizeof(authorization_id));
+                    clear_secret(account_limit_key, sizeof(account_limit_key));
                     clear_secret((char *)groups, sizeof(groups));
                 }
                 wipe_locked_secret(&password_secret);

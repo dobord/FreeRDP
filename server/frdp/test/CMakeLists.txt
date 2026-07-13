@@ -6,7 +6,8 @@ disable_warnings_for_directory(${CMAKE_CURRENT_BINARY_DIR})
 set(${MODULE_PREFIX}_DRIVER ${MODULE_NAME}.c)
 set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFreeRDPFrdpCtlIpc.c
                          TestFreeRDPFrdpHelperStop.c TestFreeRDPFrdpServiceIpc.c
-                         TestFreeRDPFrdpAuthdPam.c TestFreeRDPFrdpNtlmIdentity.c
+                         TestFreeRDPFrdpAuthdPam.c TestFreeRDPFrdpAuthFailureLimit.c
+                         TestFreeRDPFrdpNtlmIdentity.c
                          TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpInputPolicy.c
                          TestFreeRDPFrdpDisplayControl.c TestFreeRDPFrdpClipboard.c
                          TestFreeRDPFrdpDisplayPolicy.c TestFreeRDPFrdpProcessIdentity.c
@@ -22,6 +23,21 @@ if(XVFB_EXECUTABLE)
 endif()
 
 create_test_sourcelist(${MODULE_PREFIX}_SRCS ${${MODULE_PREFIX}_DRIVER} ${${MODULE_PREFIX}_TESTS})
+
+add_executable(frdp-authd-test-deny EXCLUDE_FROM_ALL
+    ../frdp-authd/frdp-authd.c
+    ../frdp-authd/auth_failure_limit.c
+    ../frdp-authd/auth_failure_limit.h
+    ../frdp-authd/authd_pam.c
+    ../frdp-authd/authd_pam.h
+    ../config/frdp-config.c
+    ../config/frdp-config.h
+    $<TARGET_OBJECTS:frdp-ipc>)
+target_compile_definitions(frdp-authd-test-deny PRIVATE FRDP_AUTHD_TEST_DENY_ALL)
+target_include_directories(frdp-authd-test-deny SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
+target_link_libraries(frdp-authd-test-deny PRIVATE winpr ${PAM_LIBRARIES} ${UUID_LIBRARY})
+frdp_apply_strict_warnings(frdp-authd-test-deny)
+set_property(TARGET frdp-authd-test-deny PROPERTY FOLDER "Server/frdp/Test")
 
 add_executable(${MODULE_NAME}
     ${${MODULE_PREFIX}_SRCS}
@@ -45,6 +61,8 @@ add_executable(${MODULE_NAME}
     ../frdpd/frdpd_auth.h
     ../frdp-authd/authd_pam.c
     ../frdp-authd/authd_pam.h
+    ../frdp-authd/auth_failure_limit.c
+    ../frdp-authd/auth_failure_limit.h
     ../frdp-sesmand/sesmand_pam.c
     ../frdp-sesmand/sesmand_pam.h
     ../frdp-session-agent/input_policy.c
@@ -69,7 +87,8 @@ add_executable(${MODULE_NAME}
     ../frdp-sesmand/session_resources.h
     ../frdp-sesmand/session_state.c
     ../frdp-sesmand/session_state.h)
-add_dependencies(${MODULE_NAME} frdpd frdpctl frdp-authd frdp-sesmand frdp-session-agent)
+add_dependencies(${MODULE_NAME} frdpd frdpctl frdp-authd frdp-authd-test-deny frdp-sesmand
+                 frdp-session-agent)
 
 target_include_directories(${MODULE_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_include_directories(${MODULE_NAME} SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
@@ -84,6 +103,7 @@ target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CM
                                                    FRDPD_BINARY="$<TARGET_FILE:frdpd>"
                                                    FRDPCTL_BINARY="$<TARGET_FILE:frdpctl>"
                                                    FRDP_AUTHD_BINARY="$<TARGET_FILE:frdp-authd>"
+                                                   FRDP_AUTHD_TEST_DENY_BINARY="$<TARGET_FILE:frdp-authd-test-deny>"
                                                    FRDP_SESMAND_BINARY="$<TARGET_FILE:frdp-sesmand>"
                                                    FRDP_SESSION_AGENT_BINARY="$<TARGET_FILE:frdp-session-agent>")
 if(XVFB_EXECUTABLE)
