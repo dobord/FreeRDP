@@ -1814,6 +1814,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
     escape_log_field(socket_path, escaped_socket, sizeof(escaped_socket));
     printf("frdp-sesmand IPC server listening on %s\n", escaped_socket);
     frdpIpcRateLimiter rate_limiter = {0};
+    frdpIpcRateLimiter health_rate_limiter = {0};
     while (!g_stop_requested) {
         struct pollfd pfd;
         int poll_status = 0;
@@ -1850,9 +1851,8 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             continue;
         }
         uint64_t peer_uid = 0;
-        if ((frdp_ipc_get_peer_uid(cfd, &peer_uid) != 0) ||
-            !frdp_ipc_rate_limiter_allow(&rate_limiter, peer_uid)) {
-            send_session_response(cfd, 0, NULL, NULL, NULL, "IPC rate limit exceeded");
+        if (frdp_ipc_get_peer_uid(cfd, &peer_uid) != 0) {
+            send_session_response(cfd, 0, NULL, NULL, NULL, "unable to identify IPC peer");
             close(cfd);
             continue;
         }
@@ -1867,7 +1867,29 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             close(cfd);
             continue;
         }
-        if ((hdr.type == FRDP_IPC_SESSION_LIST_REQUEST) && (hdr.payload_len == 0)) {
+        if ((hdr.type == FRDP_IPC_HELPER_HEALTH_REQUEST) && (hdr.payload_len == 0) &&
+            !frdp_ipc_rate_limiter_allow(&health_rate_limiter, peer_uid)) {
+            frdpControlResponse response = { 0 };
+
+            snprintf(response.error, sizeof(response.error), "%s", "IPC health rate limit exceeded");
+            (void)frdp_ipc_send_helper_health_response(cfd, &response);
+            SecureZeroMemory(&response, sizeof(response));
+            close(cfd);
+            continue;
+        }
+        if (!((hdr.type == FRDP_IPC_HELPER_HEALTH_REQUEST) && (hdr.payload_len == 0)) &&
+            !frdp_ipc_rate_limiter_allow(&rate_limiter, peer_uid)) {
+            send_session_response(cfd, 0, NULL, NULL, NULL, "IPC rate limit exceeded");
+            close(cfd);
+            continue;
+        }
+        if ((hdr.type == FRDP_IPC_HELPER_HEALTH_REQUEST) && (hdr.payload_len == 0)) {
+            frdpControlResponse response = { .success = 1 };
+
+            snprintf(response.message, sizeof(response.message), "%s", "frdp-sesmand");
+            (void)frdp_ipc_send_helper_health_response(cfd, &response);
+            SecureZeroMemory(&response, sizeof(response));
+        } else if ((hdr.type == FRDP_IPC_SESSION_LIST_REQUEST) && (hdr.payload_len == 0)) {
             (void)send_session_list_response(cfd);
         } else if ((hdr.type == FRDP_IPC_SESSION_RELOAD_REQUEST) && (hdr.payload_len == 0)) {
             if (g_config_path[0] != '\0') {

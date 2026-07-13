@@ -28,7 +28,9 @@ typedef enum {
     FRDP_IPC_SESSION_REQUEST_V3 = 17,
     FRDP_IPC_SESSION_DISCONNECT_REQUEST = 18,
     FRDP_IPC_AGENT_HEARTBEAT_REQUEST = 19,
-    FRDP_IPC_AGENT_HEARTBEAT_RESPONSE = 20
+    FRDP_IPC_AGENT_HEARTBEAT_RESPONSE = 20,
+    FRDP_IPC_HELPER_HEALTH_REQUEST = 21,
+    FRDP_IPC_HELPER_HEALTH_RESPONSE = 22
 } frdpIpcMessageType;
 
 typedef enum {
@@ -267,6 +269,10 @@ int frdp_ipc_send_session_list_response(int fd, const frdpSessionListResponse *r
 int frdp_ipc_recv_session_list_response(int fd, frdpSessionListResponse *response);
 int frdp_ipc_send_session_reload_response(int fd, const frdpControlResponse *response);
 int frdp_ipc_recv_session_reload_response(int fd, frdpControlResponse *response);
+int frdp_ipc_send_helper_health_request(int fd);
+int frdp_ipc_send_helper_health_response(int fd, const frdpControlResponse *response);
+int frdp_ipc_recv_helper_health_response(int fd, frdpControlResponse *response);
+int frdp_ipc_exchange_helper_health(int fd, frdpControlResponse *response, uint32_t timeout_ms);
 int frdp_ipc_send_agent_input_event(int fd, const frdpAgentInputEvent *event);
 int frdp_ipc_recv_agent_input_event_payload(int fd, frdpAgentInputEvent *event,
                                             uint32_t payload_len);

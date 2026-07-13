@@ -1019,6 +1019,36 @@ cleanup:
 	return rc;
 }
 
+static int test_helper_health_uses_explicit_wire_format(void)
+{
+	int fds[2] = { -1, -1 };
+	frdpIpcHeader header = { 0 };
+	frdpControlResponse response = { 0 };
+	frdpControlResponse decoded = { 0 };
+	int rc = -1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	if ((frdp_ipc_send_helper_health_request(fds[0]) != 0) ||
+	    (frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header)) ||
+	    (header.type != FRDP_IPC_HELPER_HEALTH_REQUEST) || (header.payload_len != 0))
+		goto cleanup;
+	response.success = 1;
+	snprintf(response.message, sizeof(response.message), "%s", "frdp-authd");
+	if ((frdp_ipc_send_helper_health_response(fds[1], &response) != 0) ||
+	    (frdp_ipc_recv_helper_health_response(fds[0], &decoded) != 0) || !decoded.success ||
+	    (strcmp(decoded.message, response.message) != 0) || (decoded.error[0] != '\0'))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
 static int test_agent_messages_use_explicit_wire_format(void)
 {
 	int fds[2] = { -1, -1 };
@@ -1344,6 +1374,75 @@ static uint64_t test_monotonic_ms(void)
 	return ((uint64_t)now.tv_sec * 1000U) + ((uint64_t)now.tv_nsec / 1000000U);
 }
 
+static int test_helper_health_exchange_has_absolute_deadline(void)
+{
+	int fds[2] = { -1, -1 };
+	frdpControlResponse response = { 0 };
+	pid_t child = -1;
+	uint64_t started_ms = 0;
+	uint64_t elapsed_ms = 0;
+	int rc = -1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	child = fork();
+	if (child < 0)
+		goto cleanup;
+	if (child == 0)
+	{
+		int encoded[2] = { -1, -1 };
+		uint8_t request_wire[8] = { 0 };
+		uint8_t response_wire[8U + FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE] = { 0 };
+		frdpControlResponse child_response = { .success = 1 };
+
+		close(fds[0]);
+		if (frdp_ipc_recv(fds[1], request_wire, sizeof(request_wire)) !=
+		    (int)sizeof(request_wire))
+			_exit(1);
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, encoded) != 0)
+			_exit(1);
+		snprintf(child_response.message, sizeof(child_response.message), "%s", "frdp-authd");
+		if ((frdp_ipc_send_helper_health_response(encoded[0], &child_response) != 0) ||
+		    (frdp_ipc_recv(encoded[1], response_wire, sizeof(response_wire)) !=
+		     (int)sizeof(response_wire)))
+			_exit(1);
+		close(encoded[0]);
+		close(encoded[1]);
+		for (size_t x = 0; x < sizeof(response_wire); x++)
+		{
+			if (frdp_ipc_send(fds[1], &response_wire[x], 1) != 0)
+				_exit(0);
+			usleep(20000);
+		}
+		_exit(0);
+	}
+	close(fds[1]);
+	fds[1] = -1;
+	started_ms = test_monotonic_ms();
+	if (started_ms == 0)
+		goto cleanup;
+	errno = 0;
+	if ((frdp_ipc_exchange_helper_health(fds[0], &response, 100) != -1) ||
+	    (errno != ETIMEDOUT))
+		goto cleanup;
+	elapsed_ms = test_monotonic_ms() - started_ms;
+	if ((elapsed_ms < 80U) || (elapsed_ms > 500U))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (child > 0)
+	{
+		(void)kill(child, SIGKILL);
+		(void)waitpid(child, NULL, 0);
+	}
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
 static int test_agent_heartbeat_exchange_has_absolute_deadline(void)
 {
 	int fds[2] = { -1, -1 };
@@ -1520,6 +1619,10 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_session_list_response_uses_explicit_wire_format() != 0)
 		return -1;
 	if (test_session_reload_response_uses_explicit_wire_format() != 0)
+		return -1;
+	if (test_helper_health_uses_explicit_wire_format() != 0)
+		return -1;
+	if (test_helper_health_exchange_has_absolute_deadline() != 0)
 		return -1;
 	if (test_agent_messages_use_explicit_wire_format() != 0)
 		return -1;

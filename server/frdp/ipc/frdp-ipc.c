@@ -1010,7 +1010,8 @@ cleanup:
     return rc;
 }
 
-int frdp_ipc_send_session_reload_response(int fd, const frdpControlResponse *response)
+static int frdp_ipc_send_control_response(int fd, frdpIpcMessageType type,
+                                          const frdpControlResponse *response)
 {
     uint8_t wire[FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE] = {0};
     size_t offset = 0;
@@ -1026,7 +1027,7 @@ int frdp_ipc_send_session_reload_response(int fd, const frdpControlResponse *res
     offset += sizeof(response->message);
     memcpy(&wire[offset], response->error, sizeof(response->error));
 
-    if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_RELOAD_RESPONSE, sizeof(wire)) != 0)
+    if (frdp_ipc_send_header(fd, type, sizeof(wire)) != 0)
         goto cleanup;
     rc = frdp_ipc_send(fd, wire, sizeof(wire));
 
@@ -1035,7 +1036,8 @@ cleanup:
     return rc;
 }
 
-int frdp_ipc_recv_session_reload_response(int fd, frdpControlResponse *response)
+static int frdp_ipc_recv_control_response(int fd, frdpIpcMessageType expected_type,
+                                          frdpControlResponse *response)
 {
     frdpIpcHeader header = { .type = FRDP_IPC_INVALID, .payload_len = 0 };
     uint8_t wire[FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE] = {0};
@@ -1048,7 +1050,7 @@ int frdp_ipc_recv_session_reload_response(int fd, frdpControlResponse *response)
     }
     if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
         return -1;
-    if ((header.type != FRDP_IPC_SESSION_RELOAD_RESPONSE) || (header.payload_len != sizeof(wire))) {
+    if ((header.type != expected_type) || (header.payload_len != sizeof(wire))) {
         errno = EINVAL;
         return -1;
     }
@@ -1065,6 +1067,31 @@ int frdp_ipc_recv_session_reload_response(int fd, frdpControlResponse *response)
 cleanup:
     frdp_ipc_clear_secret(wire, sizeof(wire));
     return rc;
+}
+
+int frdp_ipc_send_session_reload_response(int fd, const frdpControlResponse *response)
+{
+    return frdp_ipc_send_control_response(fd, FRDP_IPC_SESSION_RELOAD_RESPONSE, response);
+}
+
+int frdp_ipc_recv_session_reload_response(int fd, frdpControlResponse *response)
+{
+    return frdp_ipc_recv_control_response(fd, FRDP_IPC_SESSION_RELOAD_RESPONSE, response);
+}
+
+int frdp_ipc_send_helper_health_request(int fd)
+{
+    return frdp_ipc_send_header(fd, FRDP_IPC_HELPER_HEALTH_REQUEST, 0);
+}
+
+int frdp_ipc_send_helper_health_response(int fd, const frdpControlResponse *response)
+{
+    return frdp_ipc_send_control_response(fd, FRDP_IPC_HELPER_HEALTH_RESPONSE, response);
+}
+
+int frdp_ipc_recv_helper_health_response(int fd, frdpControlResponse *response)
+{
+    return frdp_ipc_recv_control_response(fd, FRDP_IPC_HELPER_HEALTH_RESPONSE, response);
 }
 
 int frdp_ipc_send_agent_input_event(int fd, const frdpAgentInputEvent *event)
@@ -1526,6 +1553,90 @@ static int frdp_ipc_wait_deadline(int fd, short events, uint64_t deadline_ms)
         errno = ECONNRESET;
         return -1;
     }
+}
+
+static int frdp_ipc_stream_transfer_deadline(int fd, uint8_t *wire, size_t wire_size, int sending,
+                                              uint64_t deadline_ms)
+{
+    size_t offset = 0;
+
+    while (offset < wire_size) {
+        ssize_t count = 0;
+
+        if (frdp_ipc_wait_deadline(fd, sending ? POLLOUT : POLLIN, deadline_ms) != 0)
+            return -1;
+        if (sending) {
+#ifdef MSG_NOSIGNAL
+            count = send(fd, &wire[offset], wire_size - offset, MSG_NOSIGNAL);
+#else
+            count = send(fd, &wire[offset], wire_size - offset, 0);
+#endif
+        } else
+            count = recv(fd, &wire[offset], wire_size - offset, 0);
+        if (count < 0) {
+            if ((errno == EINTR) || (errno == EAGAIN) || (errno == EWOULDBLOCK))
+                continue;
+            return -1;
+        }
+        if (count == 0) {
+            errno = ECONNRESET;
+            return -1;
+        }
+        offset += (size_t)count;
+    }
+    return 0;
+}
+
+int frdp_ipc_exchange_helper_health(int fd, frdpControlResponse *response, uint32_t timeout_ms)
+{
+    uint8_t request_wire[8] = {0};
+    uint8_t response_wire[8U + FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE] = {0};
+    uint64_t deadline_ms = 0;
+    size_t offset = 8U;
+    int status_flags = -1;
+    int rc = -1;
+    int saved = 0;
+
+    if (!response || (timeout_ms == 0) || (timeout_ms > 600000U)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_monotonic_ms(&deadline_ms) != 0)
+        return -1;
+    deadline_ms += timeout_ms;
+    status_flags = fcntl(fd, F_GETFL);
+    if ((status_flags < 0) || (fcntl(fd, F_SETFL, status_flags | O_NONBLOCK) != 0))
+        return -1;
+    frdp_ipc_write_u32_le(&request_wire[0], FRDP_IPC_HELPER_HEALTH_REQUEST);
+    frdp_ipc_write_u32_le(&request_wire[4], 0);
+    if ((frdp_ipc_stream_transfer_deadline(fd, request_wire, sizeof(request_wire), 1,
+                                           deadline_ms) != 0) ||
+        (frdp_ipc_stream_transfer_deadline(fd, response_wire, sizeof(response_wire), 0,
+                                           deadline_ms) != 0))
+        goto cleanup;
+    if ((frdp_ipc_read_u32_le(&response_wire[0]) != FRDP_IPC_HELPER_HEALTH_RESPONSE) ||
+        (frdp_ipc_read_u32_le(&response_wire[4]) !=
+         FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE)) {
+        errno = EINVAL;
+        goto cleanup;
+    }
+    memset(response, 0, sizeof(*response));
+    response->success = frdp_ipc_read_u32_le(&response_wire[offset]) ? 1 : 0;
+    offset += 4U;
+    memcpy(response->message, &response_wire[offset], sizeof(response->message));
+    offset += sizeof(response->message);
+    memcpy(response->error, &response_wire[offset], sizeof(response->error));
+    rc = 0;
+
+cleanup:
+    saved = errno;
+    if (fcntl(fd, F_SETFL, status_flags) != 0) {
+        if (rc == 0)
+            saved = errno;
+        rc = -1;
+    }
+    errno = saved;
+    return rc;
 }
 
 static void frdp_ipc_encode_agent_heartbeat_packet(uint8_t *wire, frdpIpcMessageType type,

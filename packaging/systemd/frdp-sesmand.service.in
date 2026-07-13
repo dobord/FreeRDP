@@ -24,6 +24,8 @@ LockPersonality=true
 UMask=0077
 LimitNOFILE=1024
 TasksMax=4096
+Restart=on-failure
+RestartSec=1s
 TimeoutStopSec=30s
 
 [Install]

@@ -153,12 +153,12 @@ static int start_helper(const char* binary, const char* name, frdpTestHelper* he
 	return start_helper_with_config(binary, name, NULL, helper);
 }
 
-static int restart_helper_with_config(const char* binary, const char* config_path,
-                                      frdpTestHelper* helper)
+static int restart_helper_internal(const char* binary, const char* config_path,
+                                   frdpTestHelper* helper)
 {
 	struct stat previous = { 0 };
 
-	if (!binary || !config_path || !helper || (helper->pid > 0) ||
+	if (!binary || !helper || (helper->pid > 0) ||
 	    (lstat(helper->socket_path, &previous) != 0))
 		return -1;
 	helper->pid = fork();
@@ -166,8 +166,11 @@ static int restart_helper_with_config(const char* binary, const char* config_pat
 		return -1;
 	if (helper->pid == 0)
 	{
-		execl(binary, binary, "--config", config_path, "--socket", helper->socket_path,
-		      (char*)NULL);
+		if (config_path)
+			execl(binary, binary, "--config", config_path, "--socket", helper->socket_path,
+			      (char*)NULL);
+		else
+			execl(binary, binary, "--socket", helper->socket_path, (char*)NULL);
 		_exit(127);
 	}
 	for (int attempt = 0; attempt < 100; attempt++)
@@ -186,6 +189,19 @@ static int restart_helper_with_config(const char* binary, const char* config_pat
 	(void)waitpid(helper->pid, NULL, 0);
 	helper->pid = -1;
 	return -1;
+}
+
+static int restart_helper_with_config(const char* binary, const char* config_path,
+                                      frdpTestHelper* helper)
+{
+	if (!config_path)
+		return -1;
+	return restart_helper_internal(binary, config_path, helper);
+}
+
+static int restart_helper(const char* binary, frdpTestHelper* helper)
+{
+	return restart_helper_internal(binary, NULL, helper);
 }
 
 static int wait_for_process_gone(pid_t pid)
@@ -445,6 +461,60 @@ static int receive_auth_failure(int fd, const char* expected_error)
 	if (expected_error && strcmp(response.error, expected_error) != 0)
 		return -1;
 	return 0;
+}
+
+static int test_helper_health(const char* socket_path, const char* expected_role)
+{
+	frdpControlResponse response = { 0 };
+	int fd = frdp_ipc_connect(socket_path);
+	int rc = -1;
+
+	if ((fd < 0) || !expected_role)
+		goto cleanup;
+	if ((frdp_ipc_send_helper_health_request(fd) != 0) ||
+	    (frdp_ipc_recv_helper_health_response(fd, &response) != 0) || !response.success ||
+	    !memchr(response.message, '\0', sizeof(response.message)) ||
+	    !memchr(response.error, '\0', sizeof(response.error)) || (response.error[0] != '\0') ||
+	    (strcmp(response.message, expected_role) != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fd >= 0)
+		frdp_ipc_close(fd);
+	SecureZeroMemory(&response, sizeof(response));
+	return rc;
+}
+
+static int test_helper_health_rate_limit(const char* socket_path, const char* expected_role)
+{
+	int limited = 0;
+
+	for (uint32_t x = 0; x < FRDP_IPC_RATE_LIMIT_MAX_REQUESTS + 2U; x++)
+	{
+		frdpControlResponse response = { 0 };
+		int fd = frdp_ipc_connect(socket_path);
+
+		if (fd < 0)
+			return -1;
+		if ((frdp_ipc_send_helper_health_request(fd) != 0) ||
+		    (frdp_ipc_recv_helper_health_response(fd, &response) != 0))
+		{
+			frdp_ipc_close(fd);
+			return -1;
+		}
+		frdp_ipc_close(fd);
+		if (!response.success)
+		{
+			if (strcmp(response.error, "IPC health rate limit exceeded") != 0)
+				return -1;
+			limited = 1;
+			break;
+		}
+		if (strcmp(response.message, expected_role) != 0)
+			return -1;
+	}
+	return limited ? 0 : -1;
 }
 
 static int receive_session_response(int fd, int expected_success, const char* expected_error)
@@ -728,6 +798,8 @@ static int test_authd_component(void)
 
 	if (start_helper(FRDP_AUTHD_BINARY, "frdp-authd-component", &helper) != 0)
 		return -1;
+	if (test_helper_health(helper.socket_path, "frdp-authd") != 0)
+		goto cleanup;
 	if (test_authd_rejects_bad_length(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_authd_rejects_unknown_type(helper.socket_path) != 0)
@@ -746,11 +818,50 @@ static int test_authd_component(void)
 	/* A final request proves that malformed clients did not stop the service loop. */
 	if (test_authd_rejects_bad_length(helper.socket_path) != 0)
 		goto cleanup;
+	if ((test_helper_health_rate_limit(helper.socket_path, "frdp-authd") != 0) ||
+	    (test_authd_rejects_bad_length(helper.socket_path) != 0))
+		goto cleanup;
 	rc = 0;
 
 cleanup:
 	if (stop_helper(&helper) != 0)
 		rc = -1;
+	return rc;
+}
+
+static int test_authd_crash_restart_health(void)
+{
+	frdpTestHelper helper = { .pid = -1 };
+	int started = 0;
+	int rc = -1;
+
+	if (start_helper(FRDP_AUTHD_BINARY, "frdp-authd-crash-restart", &helper) != 0)
+		return -1;
+	started = 1;
+	if (test_helper_health(helper.socket_path, "frdp-authd") != 0)
+		goto cleanup;
+	if ((kill(helper.pid, SIGKILL) != 0) || (waitpid(helper.pid, NULL, 0) != helper.pid))
+		goto cleanup;
+	helper.pid = -1;
+	started = 0;
+	if (test_helper_health(helper.socket_path, "frdp-authd") == 0)
+		goto cleanup;
+	if (restart_helper(FRDP_AUTHD_BINARY, &helper) != 0)
+		goto cleanup;
+	started = 1;
+	if ((test_helper_health(helper.socket_path, "frdp-authd") != 0) ||
+	    (test_authd_rejects_bad_length(helper.socket_path) != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (started && (stop_helper(&helper) != 0))
+		rc = -1;
+	else if (!started)
+	{
+		unlink(helper.socket_path);
+		rmdir(helper.dir);
+	}
 	return rc;
 }
 
@@ -1972,6 +2083,8 @@ static int test_sesmand_component(void)
 
 	if (start_helper(FRDP_SESMAND_BINARY, "frdp-sesmand-component", &helper) != 0)
 		return -1;
+	if (test_helper_health(helper.socket_path, "frdp-sesmand") != 0)
+		goto cleanup;
 	if (test_sesmand_list_empty(helper.socket_path) != 0)
 		goto cleanup;
 	if (test_sesmand_rejects_unknown_session(helper.socket_path) != 0)
@@ -2009,6 +2122,9 @@ static int test_sesmand_component(void)
 		goto cleanup;
 	/* A final list request proves the registry and service loop remained healthy. */
 	if (test_sesmand_list_empty(helper.socket_path) != 0)
+		goto cleanup;
+	if ((test_helper_health_rate_limit(helper.socket_path, "frdp-sesmand") != 0) ||
+	    (test_sesmand_list_empty(helper.socket_path) != 0))
 		goto cleanup;
 	rc = 0;
 
@@ -2220,6 +2336,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_authd_component() != 0)
 	{
 		printf("frdp-authd IPC component test failed\n");
+		return -1;
+	}
+	if (test_authd_crash_restart_health() != 0)
+	{
+		printf("frdp-authd crash/restart health test failed\n");
 		return -1;
 	}
 	if (test_sesmand_component() != 0)

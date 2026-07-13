@@ -22,6 +22,7 @@ Rotate the service key periodically:
 1. Use `ktutil` or `setspn`/`ktpass` to generate a new keytab for the SPN (TERMSRV/hostname).
 2. Copy the new keytab to each RDP server.
 3. `frdpctl reload` asks `frdp-sesmand --config <path>` to reread `[auth].pam_service`, supported `[session]` resource guards, and agent heartbeat policy. Existing sessions keep their PAM handles, receive a reset failure counter, and use the new heartbeat schedule. Restart the affected daemon during a maintenance window for listener sockets, TLS material, channel policy, clipboard policy, and helper-topology changes.
+4. Installed `frdp-authd`, `frdp-sesmand`, and `frdpd` units use `Restart=on-failure`. `frdpd` performs role-bound helper health checks before listening and fails authentication/session creation closed during a helper restart. Investigate repeated restart loops rather than raising startup or IPC timeouts.
 4. Remove old keys from Active Directory to prevent reuse.
 
 ## Troubleshooting

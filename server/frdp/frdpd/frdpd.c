@@ -66,6 +66,9 @@
 #define FRDPD_PEER_ACTIVE_WAIT_TIMEOUT_MS 50
 #define FRDPD_PEER_IDLE_WAIT_TIMEOUT_MS 250
 #define FRDPD_LOG_STRING_SIZE 1024U
+#define FRDPD_HELPER_READY_ATTEMPTS 50U
+#define FRDPD_HELPER_READY_TIMEOUT_MS 100U
+#define FRDPD_HELPER_READY_RETRY_MS 100U
 
 typedef struct
 {
@@ -2384,6 +2387,44 @@ static BOOL frdpd_validate_runtime_topology(frdpdOptions* options)
 	return FALSE;
 }
 
+static BOOL frdpd_probe_helper(const char* socket_path, const char* expected_role)
+{
+	frdpControlResponse response = { 0 };
+	int fd = -1;
+	BOOL ready = FALSE;
+
+	if (!socket_path || !expected_role)
+		return FALSE;
+	fd = frdp_ipc_connect_timeout(socket_path, FRDPD_HELPER_READY_TIMEOUT_MS);
+	if (fd < 0)
+		goto cleanup;
+	if ((frdp_ipc_exchange_helper_health(fd, &response, FRDPD_HELPER_READY_TIMEOUT_MS) != 0) ||
+	    !response.success ||
+	    !memchr(response.message, '\0', sizeof(response.message)) ||
+	    !memchr(response.error, '\0', sizeof(response.error)) || (response.error[0] != '\0') ||
+	    (strcmp(response.message, expected_role) != 0))
+		goto cleanup;
+	ready = TRUE;
+
+cleanup:
+	if (fd >= 0)
+		(void)frdp_ipc_close(fd);
+	SecureZeroMemory(&response, sizeof(response));
+	return ready;
+}
+
+static BOOL frdpd_wait_for_helper(const char* socket_path, const char* expected_role)
+{
+	for (UINT32 attempt = 0; attempt < FRDPD_HELPER_READY_ATTEMPTS; attempt++)
+	{
+		if (frdpd_probe_helper(socket_path, expected_role))
+			return TRUE;
+		Sleep(FRDPD_HELPER_READY_RETRY_MS);
+	}
+	WLog_ERR(TAG, "helper role '%s' did not become ready on %s", expected_role, socket_path);
+	return FALSE;
+}
+
 static int frdpd_run_server(frdpdOptions* options)
 {
 	int rc = -1;
@@ -2401,6 +2442,9 @@ static int frdpd_run_server(frdpdOptions* options)
 		         config->key_path);
 		return -1;
 	}
+	if (!frdpd_wait_for_helper(config->auth_socket, "frdp-authd") ||
+	    !frdpd_wait_for_helper(config->session_socket, "frdp-sesmand"))
+		return -1;
 
 	if (!frdpd_install_signal_handlers())
 	{

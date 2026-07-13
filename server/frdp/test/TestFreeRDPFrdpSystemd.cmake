@@ -34,6 +34,7 @@ function(require_unit_line unit expected_line)
 endfunction()
 
 foreach(line
+        "Wants=frdp-authd.service frdp-sesmand.service"
         "PrivateTmp=true"
         "PrivateDevices=true"
         "ProtectSystem=strict"
@@ -57,6 +58,8 @@ foreach(line
         "LimitNOFILE=1024")
   require_unit_line(frdpd.service "${line}")
 endforeach()
+require_unit_line(frdpd.service "Restart=on-failure")
+require_unit_line(frdpd.service "RestartSec=1s")
 
 foreach(line
         "ExecStart=${FRDP_INSTALL_FULL_BINDIR}/frdp-authd --config ${FRDP_INSTALL_FULL_SYSCONFDIR}/frdpd/frdpd.toml --socket /run/frdp-authd/authd.sock"
@@ -84,6 +87,8 @@ foreach(line
         "LimitNOFILE=1024")
   require_unit_line(frdp-authd.service "${line}")
 endforeach()
+require_unit_line(frdp-authd.service "Restart=on-failure")
+require_unit_line(frdp-authd.service "RestartSec=1s")
 
 foreach(line
         "ExecStart=${FRDP_INSTALL_FULL_BINDIR}/frdp-sesmand --config ${FRDP_INSTALL_FULL_SYSCONFDIR}/frdpd/frdpd.toml --socket /run/frdp-sesmand/sesmand.sock"
@@ -106,6 +111,8 @@ foreach(line
         "TasksMax=4096")
   require_unit_line(frdp-sesmand.service "${line}")
 endforeach()
+require_unit_line(frdp-sesmand.service "Restart=on-failure")
+require_unit_line(frdp-sesmand.service "RestartSec=1s")
 
 foreach(target sysinit.target basic.target network.target multi-user.target)
   file(WRITE "${systemd_dir}/${target}" "[Unit]\nDescription=${target}\n")
