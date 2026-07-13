@@ -47,7 +47,7 @@ the release record.
 
 | Capability | Status | Required evidence before GA |
 |---|---|---|
-| Xvfb-backed desktop session | Prototype | Real-client graphical session, resize churn, disconnect cleanup, reconnect, and load/soak evidence. |
+| Xvfb-backed desktop session | Prototype | Wire negotiated Display Control transport, replace or augment the fixed-mode Xvfb backend to support geometry changes, then attach real-client graphical session, resize churn, disconnect cleanup, reconnect, and load/soak evidence. |
 | Wayland backend | Not supported | No production backend is implemented. |
 | Text clipboard | Prototype | Runtime `cliprdr` handler, direction/size policy enforcement, client interoperability, and audit evidence. |
 | Audio output | Not supported | Baseline audio handler and policy tests are not implemented. |
