@@ -111,7 +111,7 @@ jobs:
             -DCHANNEL_URBDRC=OFF
 
       - name: Build focused FRDP fuzzers
-        run: cmake --build build-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig TestFuzzFreeRDPFrdpAuthToken TestFuzzFreeRDPFrdpAuthdPam TestFuzzFreeRDPFrdpPam TestFuzzFreeRDPFrdpIpcCodec TestFuzzFreeRDPFrdpFramePolicy TestFuzzFreeRDPFrdpInputPolicy TestFuzzFreeRDPFrdpDisplayPolicy TestFuzzFreeRDPFrdpSessionLifecycle
+        run: cmake --build build-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig TestFuzzFreeRDPFrdpAuthToken TestFuzzFreeRDPFrdpAuthdPam TestFuzzFreeRDPFrdpPam TestFuzzFreeRDPFrdpIpcCodec TestFuzzFreeRDPFrdpClipboard TestFuzzFreeRDPFrdpFramePolicy TestFuzzFreeRDPFrdpInputPolicy TestFuzzFreeRDPFrdpDisplayPolicy TestFuzzFreeRDPFrdpSessionLifecycle
 
       - name: Run focused FRDP fuzzer smoke
         run: |
@@ -120,6 +120,7 @@ jobs:
           printf 'FRDPauthd-pam' > frdp-authd-pam-fuzz-seed.bin
           printf 'FRDPfrdpd-pam' > frdpd-pam-fuzz-seed.bin
           printf 'FRDPipc-codec' > frdp-ipc-codec-fuzz-seed.bin
+          printf '\x00\x00\x10\x00FreeRDP clipboard \xF0\x9F\x8C\x8D' > frdp-clipboard-fuzz-seed.bin
           printf 'FRDPframe-policy' > frdp-frame-policy-fuzz-seed.bin
           printf 'FRDPinput-policy' > frdp-input-policy-fuzz-seed.bin
           printf 'FRDPdisplay-policy' > frdp-display-policy-fuzz-seed.bin
@@ -134,6 +135,8 @@ jobs:
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpPam -runs=32 -max_len=512 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpIpcCodec frdp-ipc-codec-fuzz-seed.bin -runs=1 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpIpcCodec -runs=32 -max_len=512 -artifact_prefix=build-frdp-fuzz/
+          build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpClipboard frdp-clipboard-fuzz-seed.bin -runs=1 -artifact_prefix=build-frdp-fuzz/
+          build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpClipboard -runs=64 -max_len=4096 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpFramePolicy frdp-frame-policy-fuzz-seed.bin -runs=1 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpFramePolicy -runs=32 -max_len=256 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpInputPolicy frdp-input-policy-fuzz-seed.bin -runs=1 -artifact_prefix=build-frdp-fuzz/

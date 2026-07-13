@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -50,7 +51,7 @@ static void fuzz_header_decode(const uint8_t* data, size_t size)
 
 static int selector_uses_message_stream(uint32_t selector)
 {
-	switch (selector % 15U)
+	switch (selector % 19U)
 	{
 		case 1:
 		case 4:
@@ -60,6 +61,8 @@ static int selector_uses_message_stream(uint32_t selector)
 		case 11:
 		case 13:
 		case 14:
+		case 17:
+		case 18:
 			return 1;
 		default:
 			return 0;
@@ -77,7 +80,7 @@ static void fuzz_payload_decode(const uint8_t* data, size_t size, const uint8_t*
 	if (feed_socket(feed, feed_size, fds) != 0)
 		return;
 
-	switch (selector % 15U)
+	switch (selector % 19U)
 	{
 		case 0:
 		{
@@ -163,10 +166,43 @@ static void fuzz_payload_decode(const uint8_t* data, size_t size, const uint8_t*
 			(void)frdp_ipc_recv_agent_heartbeat_response(fds[1], &heartbeat);
 			break;
 		}
-		default:
+		case 14:
 		{
 			frdpControlResponse response = { 0 };
 			(void)frdp_ipc_recv_helper_health_response(fds[1], &response);
+			break;
+		}
+		case 15:
+		{
+			frdpAgentClipboardRequest request = { 0 };
+			uint8_t* text = NULL;
+			(void)frdp_ipc_recv_agent_clipboard_set_request_payload(fds[1], &request, &text,
+			                                                        declared_len);
+			free(text);
+			break;
+		}
+		case 16:
+		{
+			frdpAgentClipboardRequest request = { 0 };
+			(void)frdp_ipc_recv_agent_clipboard_get_request_payload(fds[1], &request, declared_len);
+			break;
+		}
+		case 17:
+		{
+			frdpAgentClipboardResponse response = { 0 };
+			uint8_t* text = NULL;
+			(void)frdp_ipc_recv_agent_clipboard_response(
+			    fds[1], FRDP_IPC_AGENT_CLIPBOARD_SET_RESPONSE, &response, &text);
+			free(text);
+			break;
+		}
+		default:
+		{
+			frdpAgentClipboardResponse response = { 0 };
+			uint8_t* text = NULL;
+			(void)frdp_ipc_recv_agent_clipboard_response(
+			    fds[1], FRDP_IPC_AGENT_CLIPBOARD_GET_RESPONSE, &response, &text);
+			free(text);
 			break;
 		}
 	}
@@ -187,7 +223,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* Data, size_t Size)
 	declared_len = read_u32(Data, Size, 0);
 	payload = (Size > 4U) ? &Data[4] : Data;
 	payload_size = (Size > 4U) ? Size - 4U : 0;
-	for (uint32_t selector = 0; selector < 15U; selector++)
+	for (uint32_t selector = 0; selector < 19U; selector++)
 		fuzz_payload_decode(Data, Size, payload, payload_size, declared_len, selector);
 
 	return 0;
