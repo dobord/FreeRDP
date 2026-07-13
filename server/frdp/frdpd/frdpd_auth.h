@@ -35,9 +35,13 @@ typedef struct
 	uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS];
 	BOOL has_posix_account;
 	char authorization_id[192];
+	char broker_error[128];
 } frdpdAuthResult;
 
 BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
                                  const SEC_WINNT_AUTH_IDENTITY* identity, frdpdAuthResult* result);
+
+BOOL frdpd_auth_identity_matches_proof(const SEC_WINNT_AUTH_IDENTITY* identity,
+                                       const SecPkgContext_AuthIdentity* proof);
 
 #endif /* FREERDP_SERVER_FRDPD_AUTH_H */

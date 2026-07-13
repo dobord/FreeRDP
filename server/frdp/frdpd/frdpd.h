@@ -32,6 +32,9 @@ extern "C"
 		const char* key_path;
 		const char* pam_service;
 		const char* auth_socket;
+		const char* ntlm_sam_file;
+		int ntlm_sam_fd;
+		char ntlm_sam_fd_path[64];
 		const char* session_socket;
 		UINT16 port;
 		UINT32 max_connections;

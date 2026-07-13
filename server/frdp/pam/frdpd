@@ -5,7 +5,7 @@
 # Review site policy before enabling MFA or modules that require extra prompts.
 
 auth      required   pam_env.so
-auth      sufficient pam_sss.so use_first_pass
+auth      sufficient pam_sss.so try_first_pass
 auth      required   pam_deny.so
 
 account   required   pam_sss.so

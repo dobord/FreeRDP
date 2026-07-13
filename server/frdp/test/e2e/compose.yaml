@@ -171,6 +171,7 @@ services:
   samba-dc:
     profiles: ["samba"]
     image: ${FRDP_SAMBA_E2E_IMAGE:-frdpd-e2e-samba:dev}
+    cap_add: ["SYS_ADMIN"]
     build:
       context: ../../../..
       dockerfile: server/frdp/test/e2e/Dockerfile.samba

@@ -9,6 +9,8 @@ max_connections = 8
 mode = "pam-sssd"
 pam_service = "frdpd"
 auth_socket = "/run/frdp-authd/authd.sock"
+ntlm_fallback = true
+ntlm_sam_file = "/etc/frdpd/ntlm.sam"
 
 [session]
 session_socket = "/run/frdp-sesmand/sesmand.sock"

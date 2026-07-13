@@ -63,7 +63,14 @@ build_args()
 		"/sec:nla"
 		"/size:1024x768"
 		"/bpp:24"
-		"/network:lan"
+		"/audio-mode:none"
+		"-gfx"
+		"-disp"
+		"-dynamic-resolution"
+		"-clipboard"
+		"-heartbeat"
+		"-multitransport"
+		"/tune:FreeRDP_NetworkAutoDetect:false"
 		"/log-level:INFO"
 	)
 	if [[ -n $FRDP_RDP_DOMAIN ]]; then

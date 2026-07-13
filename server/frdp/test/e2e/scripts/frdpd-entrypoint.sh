@@ -146,6 +146,7 @@ configure_freeipa_identity()
  .${domain} = ${realm}
  ${domain} = ${realm}
 EOF
+	chmod 0644 /etc/krb5.conf
 
 	mkdir -p /etc/sssd
 	cat > /etc/sssd/sssd.conf <<EOF
@@ -182,6 +183,7 @@ krb5_server = ${server}
 krb5_kpasswd = ${server}
 krb5_validate = false
 krb5_store_password_if_offline = false
+krb5_ccname_template = FILE:/tmp/krb5cc_%U
 cache_credentials = false
 enumerate = false
 use_fully_qualified_names = false
@@ -219,6 +221,7 @@ configure_samba_identity()
  .${domain} = ${realm}
  ${domain} = ${realm}
 EOF
+	chmod 0644 /etc/krb5.conf
 
 	if ! adcli testjoin --domain="$domain" --domain-controller="$dc" >/dev/null 2>&1; then
 		printf '%s\n' "$admin_password" | adcli join "$domain" \
@@ -249,6 +252,7 @@ access_provider = ad
 ad_domain = ${domain}
 ad_server = ${dc}
 krb5_realm = ${realm}
+krb5_ccname_template = FILE:/tmp/krb5cc_%U
 ldap_id_mapping = true
 cache_credentials = false
 krb5_store_password_if_offline = false
@@ -299,6 +303,25 @@ generate_tls_identity()
 	install -m 0600 /opt/frdp-e2e/frdpd.toml "$FRDP_CONFIG"
 }
 
+nt_hash()
+{
+	printf '%s' "$1" | iconv -f UTF-8 -t UTF-16LE |
+		openssl dgst -md4 -provider legacy | awk '{ print $NF }'
+}
+
+generate_ntlm_test_sam()
+{
+	local user_hash deny_hash
+	user_hash=$(nt_hash "$FRDP_TEST_PASSWORD")
+	deny_hash=$(nt_hash "$FRDP_DENY_PASSWORD")
+	[[ $user_hash =~ ^[0-9a-f]{32}$ ]] || fail "failed to derive test-user NT hash"
+	[[ $deny_hash =~ ^[0-9a-f]{32}$ ]] || fail "failed to derive denied-user NT hash"
+	printf '%s:::%s:::\n%s:::%s:::\n' \
+		"$FRDP_TEST_USER" "$user_hash" "$FRDP_DENY_USER" "$deny_hash" \
+		> /etc/frdpd/ntlm.sam
+	chmod 0600 /etc/frdpd/ntlm.sam
+}
+
 shutdown_children()
 {
 	local pid
@@ -319,14 +342,15 @@ shutdown_children()
 trap 'shutdown_children; exit 143' TERM INT
 trap shutdown_children EXIT
 
-mkdir -p /run/frdp-authd /run/frdp-sesmand /tmp/.X11-unix /artifacts
-chmod 0700 /run/frdp-authd /run/frdp-sesmand
+mkdir -p /run/frdp-authd /run/frdp-sesmand /run/frdp-auth-token /tmp/.X11-unix /artifacts
+chmod 0700 /run/frdp-authd /run/frdp-sesmand /run/frdp-auth-token
 chmod 1777 /tmp /tmp/.X11-unix
 rm -f "$FRDP_AUTH_SOCKET" "$FRDP_SESSION_SOCKET"
 
 log "configuring identity provider: $FRDP_IDENTITY_PROVIDER"
 configure_identity
 generate_tls_identity
+generate_ntlm_test_sam
 
 frdp-authd --config "$FRDP_CONFIG" --socket "$FRDP_AUTH_SOCKET" &
 children+=("$!")

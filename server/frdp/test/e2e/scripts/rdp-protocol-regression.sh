@@ -60,6 +60,14 @@ build_base_args()
 		"/p:${FRDP_TEST_PASSWORD}"
 		"/cert:ignore"
 		"/sec:nla"
+		"/audio-mode:none"
+		"-gfx"
+		"-disp"
+		"-dynamic-resolution"
+		"-clipboard"
+		"-heartbeat"
+		"-multitransport"
+		"/tune:FreeRDP_NetworkAutoDetect:false"
 		"/log-level:INFO"
 	)
 	if [[ -n $FRDP_RDP_DOMAIN ]]; then

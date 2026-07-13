@@ -191,7 +191,9 @@ static int test_server_auth_session_fields(void)
 		return -1;
 	if (strcmp(config.auth_socket, "/run/frdp-authd/authd.sock") != 0)
 		return -1;
-	if (config.ntlm_fallback != 1)
+	if (config.ntlm_fallback != 0)
+		return -1;
+	if (config.ntlm_sam_file[0] != '\0')
 		return -1;
 	if (config.kerberos != 0)
 		return -1;
@@ -300,9 +302,13 @@ static int test_auth_ntlm_fallback_policy(void)
 	if (config.ntlm_fallback != 0)
 		return -1;
 	if (load_config_body("frdp-auth-ntlm-fallback-true.toml",
-	                     "[auth]\nntlm_fallback = true\n", &config) != 0)
+	                     "[auth]\nntlm_fallback = true\n"
+	                     "ntlm_sam_file = \"/etc/frdpd/ntlm.sam\"\n",
+	                     &config) != 0)
 		return -1;
 	if (config.ntlm_fallback != 1)
+		return -1;
+	if (strcmp(config.ntlm_sam_file, "/etc/frdpd/ntlm.sam") != 0)
 		return -1;
 	return 0;
 }
@@ -721,6 +727,16 @@ static int test_invalid_channel_config(void)
 		return -1;
 	if (expect_load_failure("frdp-invalid-ntlm-fallback.toml",
 	                        "[auth]\nntlm_fallback = maybe\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-ntlm-sam-file.toml",
+	                        "[auth]\nntlm_sam_file = \"/a\"\nntlm_sam_file = \"/b\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-relative-ntlm-sam-file.toml",
+	                        "[auth]\nntlm_sam_file = \"ntlm.sam\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-ntlm-sam-file-without-fallback.toml",
+	                        "[auth]\nntlm_fallback = false\n"
+	                        "ntlm_sam_file = \"/etc/frdpd/ntlm.sam\"\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-duplicate-kerberos.toml",
 	                        "[auth]\nkerberos = false\nkerberos = true\n") != 0)

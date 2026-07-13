@@ -431,6 +431,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_pam_service = 0;
     int seen_auth_socket = 0;
     int seen_ntlm_fallback = 0;
+    int seen_ntlm_sam_file = 0;
     int seen_kerberos = 0;
     int seen_keytab = 0;
     int seen_accepted_spn = 0;
@@ -452,7 +453,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_audit_enabled = 0;
     /* Set defaults */
     memset(config, 0, sizeof(*config));
-    config->ntlm_fallback = 1;
+    config->ntlm_fallback = 0;
     config->session_heartbeat.interval_ms = FRDP_SESSION_HEARTBEAT_DEFAULT_INTERVAL_MS;
     config->session_heartbeat.timeout_ms = FRDP_SESSION_HEARTBEAT_DEFAULT_TIMEOUT_MS;
     config->session_heartbeat.failure_threshold = FRDP_SESSION_HEARTBEAT_DEFAULT_FAILURES;
@@ -724,6 +725,19 @@ int frdp_config_load(const char *path, frdpConfig *config)
                     return -1;
                 }
             }
+            else if (strcmp(key, "ntlm_sam_file") == 0)
+            {
+                if (seen_ntlm_sam_file) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_ntlm_sam_file = 1;
+                if (!is_absolute_path(val) ||
+                    copy_string(config->ntlm_sam_file, sizeof(config->ntlm_sam_file), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
             else if (strcmp(key, "keytab") == 0)
             {
                 if (seen_keytab) {
@@ -980,7 +994,10 @@ int frdp_config_load(const char *path, frdpConfig *config)
         return -1;
     if (!config->kerberos && (seen_keytab || seen_accepted_spn))
         return -1;
-    if (config->kerberos && (!seen_keytab || !seen_accepted_spn || config->ntlm_fallback))
+    if (config->kerberos &&
+        (!seen_ntlm_fallback || !seen_keytab || !seen_accepted_spn || config->ntlm_fallback))
+        return -1;
+    if (seen_ntlm_sam_file && !config->ntlm_fallback)
         return -1;
     return 0;
 }

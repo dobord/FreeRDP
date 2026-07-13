@@ -8,6 +8,7 @@
 #include <freerdp/config.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <signal.h>
@@ -15,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #ifdef __linux__
 #include <sys/prctl.h>
@@ -34,6 +36,7 @@
 #include <winpr/wtsapi.h>
 
 #include <freerdp/constants.h>
+#include <freerdp/channels/channels.h>
 #include <freerdp/channels/wtsvc.h>
 #include <freerdp/codec/color.h>
 #include <freerdp/freerdp.h>
@@ -85,6 +88,44 @@ typedef struct
 } frdpdOptions;
 
 static volatile sig_atomic_t g_frdpd_running = 1;
+
+#ifdef WITH_FRDPD_NTLM
+static BOOL frdpd_prepare_ntlm_sam_file(frdpdServerConfig* config)
+{
+	struct stat st = { 0 };
+	struct stat path_st = { 0 };
+	int fd = -1;
+	int length = 0;
+
+	WINPR_ASSERT(config);
+	if (!config->ntlm_fallback)
+		return TRUE;
+	if (!config->ntlm_sam_file || (config->ntlm_sam_file[0] != '/'))
+		return FALSE;
+
+	fd = open(config->ntlm_sam_file, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd < 0)
+		return FALSE;
+	if ((fstat(fd, &st) != 0) || !S_ISREG(st.st_mode) || (st.st_uid != geteuid()) ||
+	    ((st.st_mode & 0777) != 0600) || (st.st_nlink != 1))
+		goto fail;
+
+	length = snprintf(config->ntlm_sam_fd_path, sizeof(config->ntlm_sam_fd_path),
+	                  "/proc/self/fd/%d", fd);
+	if ((length <= 0) || ((size_t)length >= sizeof(config->ntlm_sam_fd_path)) ||
+	    (stat(config->ntlm_sam_fd_path, &path_st) != 0) || (path_st.st_dev != st.st_dev) ||
+	    (path_st.st_ino != st.st_ino))
+		goto fail;
+
+	config->ntlm_sam_fd = fd;
+	config->ntlm_sam_file = config->ntlm_sam_fd_path;
+	return TRUE;
+
+fail:
+	(void)close(fd);
+	return FALSE;
+}
+#endif
 
 static BOOL frdpd_disable_core_dumps(void)
 {
@@ -1101,6 +1142,7 @@ static void frdpd_auth_result_cleanup(frdpdAuthResult* result)
 	SecureZeroMemory(result->groups, sizeof(result->groups));
 	result->has_posix_account = FALSE;
 	SecureZeroMemory(result->authorization_id, sizeof(result->authorization_id));
+	SecureZeroMemory(result->broker_error, sizeof(result->broker_error));
 }
 
 static BOOL frdpd_close_managed_session(const frdpdServerConfig* config, frdpdPeerContext* context,
@@ -1432,6 +1474,7 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 
 	if (automatic)
 	{
+		SecPkgContext_AuthIdentity proof = WINPR_C_ARRAY_INIT;
 		const BOOL package_known = frdpd_peer_query_nla_package(
 		    client, context->correlation_id, log_hostname, nla_package, sizeof(nla_package));
 		if (package_known)
@@ -1448,6 +1491,20 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 			          "package is not Kerberos",
 			          context->correlation_id, log_hostname);
 			return FALSE;
+		}
+
+		if (config->ntlm_fallback)
+		{
+			const SECURITY_STATUS status = freerdp_nla_QueryContextAttributes(
+			    client->context, SECPKG_ATTR_AUTH_IDENTITY, &proof);
+			if ((status != SEC_E_OK) || !frdpd_auth_identity_matches_proof(identity, &proof))
+			{
+				WLog_WARN(TAG,
+				          "correlation_id=%s rejecting NLA login from %s because the proof "
+				          "identity does not match the delegated credentials",
+				          context->correlation_id, log_hostname);
+				return FALSE;
+			}
 		}
 	}
 
@@ -1466,10 +1523,17 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 
 	if (!ok)
 	{
-		frdpd_auth_result_cleanup(&result);
-		WLog_WARN(TAG, "correlation_id=%s PAM rejected RDP login from %s: %s (%d)",
+		char log_broker_error[FRDPD_LOG_STRING_SIZE] = { 0 };
+		const char* broker_error = frdpd_log_value(
+		    result.broker_error[0] ? result.broker_error : NULL, log_broker_error,
+		    sizeof(log_broker_error), "none");
+
+		WLog_WARN(TAG,
+		          "correlation_id=%s PAM rejected RDP login from %s: %s (%d), broker_error=%s",
 		          context->correlation_id, log_hostname,
-		          frdpd_pam_auth_status_string(context->auth_status), context->pam_status);
+		          frdpd_pam_auth_status_string(context->auth_status), context->pam_status,
+		          broker_error);
+		frdpd_auth_result_cleanup(&result);
 		return FALSE;
 	}
 
@@ -1790,6 +1854,11 @@ static BOOL frdpd_configure_security(freerdp_peer* client, const frdpdServerConf
 	    !freerdp_settings_set_string(settings, FreeRDP_AuthenticationPackageList,
 	                                 FRDPD_KERBEROS_ONLY_PACKAGE_LIST))
 		return FALSE;
+#ifdef WITH_FRDPD_NTLM
+	if (config->ntlm_fallback &&
+	    !freerdp_settings_set_string(settings, FreeRDP_NtlmSamFile, config->ntlm_sam_file))
+		return FALSE;
+#endif
 	if (!freerdp_settings_set_uint32(settings, FreeRDP_EncryptionLevel,
 	                                 ENCRYPTION_LEVEL_CLIENT_COMPATIBLE))
 		return FALSE;
@@ -2178,6 +2247,8 @@ static BOOL frdpd_apply_file_config(frdpdOptions* options)
 		options->server.auth_socket = config->auth_socket;
 	}
 	options->server.ntlm_fallback = config->ntlm_fallback ? TRUE : FALSE;
+	if (!frdpd_string_is_empty(config->ntlm_sam_file))
+		options->server.ntlm_sam_file = config->ntlm_sam_file;
 	if (!frdpd_string_is_empty(config->session_socket))
 	{
 		if (!frdpd_socket_path_is_valid(config->session_socket))
@@ -2373,18 +2444,48 @@ static BOOL frdpd_validate_runtime_topology(frdpdOptions* options)
 	has_auth_socket = config->auth_socket && (config->auth_socket[0] != '\0');
 	has_session_socket = config->session_socket && (config->session_socket[0] != '\0');
 
-	if (has_auth_socket || has_session_socket)
+	if (!has_auth_socket && !has_session_socket)
 	{
-		if (!has_auth_socket || !has_session_socket)
-		{
-			WLog_ERR(TAG, "frdpd helper topology requires both auth_socket and session_socket");
-			return FALSE;
-		}
-		return TRUE;
+		WLog_ERR(TAG, "frdpd normal startup requires --auth-socket and --session-socket");
+		return FALSE;
 	}
+	if (!has_auth_socket || !has_session_socket)
+	{
+		WLog_ERR(TAG, "frdpd helper topology requires both auth_socket and session_socket");
+		return FALSE;
+	}
+	return TRUE;
+}
 
-	WLog_ERR(TAG, "frdpd normal startup requires --auth-socket and --session-socket");
-	return FALSE;
+static BOOL frdpd_validate_ntlm_config(frdpdServerConfig* config)
+{
+	WINPR_ASSERT(config);
+
+#ifdef WITH_FRDPD_NTLM
+	if (!frdpd_prepare_ntlm_sam_file(config))
+	{
+		WLog_ERR(TAG,
+		         "NTLM fallback requires an owner-only regular ntlm_sam_file owned by frdpd");
+		return FALSE;
+	}
+#endif
+	return TRUE;
+}
+
+static BOOL frdpd_validate_build_features(const frdpdServerConfig* config)
+{
+	WINPR_ASSERT(config);
+
+#ifndef WITH_FRDPD_NTLM
+	if (config->ntlm_fallback)
+	{
+		WLog_ERR(TAG,
+		         "NTLM authentication was disabled at build time; rebuild with "
+		         "-DWITH_FRDPD_NTLM=ON or set ntlm_fallback=false");
+		return FALSE;
+	}
+#endif
+	return TRUE;
 }
 
 static BOOL frdpd_probe_helper(const char* socket_path, const char* expected_role)
@@ -2433,15 +2534,18 @@ static int frdpd_run_server(frdpdOptions* options)
 	freerdp_listener* listener = NULL;
 	frdpdServerConfig* config = &options->server;
 
+	if (!frdpd_validate_build_features(config))
+		return -1;
 	if (!frdpd_validate_runtime_topology(options))
 		return -1;
-
 	if (!winpr_PathFileExists(config->cert_path) || !winpr_PathFileExists(config->key_path))
 	{
 		WLog_ERR(TAG, "Certificate or key file not found: cert=%s key=%s", config->cert_path,
 		         config->key_path);
 		return -1;
 	}
+	if (!frdpd_validate_ntlm_config(config))
+		return -1;
 	if (!frdpd_wait_for_helper(config->auth_socket, "frdp-authd") ||
 	    !frdpd_wait_for_helper(config->session_socket, "frdp-sesmand"))
 		return -1;
@@ -2449,6 +2553,11 @@ static int frdpd_run_server(frdpdOptions* options)
 	if (!frdpd_install_signal_handlers())
 	{
 		WLog_ERR(TAG, "Failed to install signal handlers");
+		return -1;
+	}
+	if (!WTSRegisterWtsApiFunctionTable(FreeRDP_InitWtsApi()))
+	{
+		WLog_ERR(TAG, "Failed to initialize the FreeRDP virtual channel manager");
 		return -1;
 	}
 
@@ -2489,6 +2598,7 @@ fail:
 int main(int argc, char* argv[])
 {
 	frdpdOptions options = { 0 };
+	int rc = 0;
 
 	if (!frdpd_disable_core_dumps())
 		return 1;
@@ -2498,7 +2608,8 @@ int main(int argc, char* argv[])
 	options.server.key_path = "server.key";
 	options.server.pam_service = "frdpd";
 	options.server.allow_tls_fallback = FALSE;
-	options.server.ntlm_fallback = TRUE;
+	options.server.ntlm_fallback = FALSE;
+	options.server.ntlm_sam_fd = -1;
 	options.server.domain_mode = FRDPD_DOMAIN_PLAIN;
 	if (frdpd_args_have_help(argc, argv))
 	{
@@ -2534,5 +2645,8 @@ int main(int argc, char* argv[])
 	if (options.pam_auth_test)
 		return frdpd_run_pam_auth_test(&options);
 
-	return frdpd_run_server(&options);
+	rc = frdpd_run_server(&options);
+	if (options.server.ntlm_sam_fd >= 0)
+		(void)close(options.server.ntlm_sam_fd);
+	return rc;
 }

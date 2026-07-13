@@ -131,6 +131,7 @@ Deliverables:
 - [x] remove in-process PAM auth/session ownership from the peer-worker runtime; normal startup requires `frdp-authd`/`frdp-sesmand`, and the old direct PAM fallback build option/CLI path has been removed;
 - [x] PAM service `frdpd` installable example;
 - [x] password-backed CredSSP -> PAM flow in `server/frdp/frdpd`;
+- [x] build-time optional NTLM proof support (`WITH_FRDPD_NTLM`, default `ON`) through an owner-only WinPR SAM, followed by mandatory password/account verification through `frdp-authd -> PAM/SSSD`;
 - [x] PAM auth/account smoke-test CLI in `server/frdp/frdpd` (`--pam-auth-test`);
 - [x] PAM credential establish/delete lifecycle in the integrated `server/frdp/frdpd` path;
 - [x] NSS/SSSD uid/gid/groups lookup integrated with the authenticated session path (`frdp-authd` looks up bounded supplementary groups, `frdp-sesmand` rechecks them, and the child applies the verified group payload with `setgroups()` before uid/gid drop);
@@ -188,7 +189,7 @@ Deliverables:
 - [ ] GSSAPI/Kerberos acceptor path (standalone `frdp-krb-authd` skeleton now disables core dumps, selects a keytab, can bind to a configured host-based acceptor name, base64-decodes its token argument before `gss_accept_sec_context()`, and rejects delegated-credential contexts; `frdpd.toml` validates Kerberos identity fields but startup still fails closed for `kerberos = true` because `frdpd` does not extract/pass real CredSSP SPNEGO tokens);
 - [ ] principal -> POSIX account mapping (partial: standalone skeleton now rejects service/instance principals, can normalize simple `user@REALM` names before POSIX lookup, and performs bounded supplementary-group lookup after mapping with focused CTest coverage, but SSSD-backed enterprise principal mapping is not integrated with the daemon/session handoff);
 - [ ] PAM account/session without a password where approved (partial: `frdp-sesmand` opens PAM account/session without a password and now has focused coverage that its non-interactive session conversation accepts only informational PAM messages and rejects password/login prompts; Kerberos-to-session approval policy is not integrated);
-- [x] NTLM fallback feature flag (`ntlm_fallback = false` feeds CredSSP/Negotiate package selection with NTLM disabled and rejects non-Kerberos or unqueryable selected SSPI packages before PAM; full Kerberos identity/session integration remains separate);
+- [x] NTLM fallback feature flag (`WITH_FRDPD_NTLM` is default-on and can remove NTLM at build time; runtime `ntlm_fallback = true` requires a protected SAM, while `false` feeds CredSSP/Negotiate package selection with NTLM disabled and rejects non-Kerberos or unqueryable selected SSPI packages before PAM; full Kerberos identity/session integration remains separate);
 - [ ] security review of credential delegation assumptions (partial: standalone helper now rejects `GSS_C_DELEG_FLAG` contexts and releases any delegated credential handle; integrated `frdpd` now rejects unsupported Remote Credential Guard ticket handoff, but the remaining CredSSP/Kerberos delegation policy still needs review).
 
 Exit criteria: a domain-joined Windows client authenticates with Kerberos where possible; the NTLM-disabled test passes; account restrictions are enforced by SSSD/PAM.

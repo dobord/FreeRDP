@@ -1,6 +1,6 @@
 # Non-interactive SSSD PAM stack for FRDP identity-provider E2E profiles.
 auth      required   pam_env.so
-auth      required   pam_sss.so use_first_pass
+auth      required   pam_sss.so try_first_pass
 
 account   required   pam_sss.so
 

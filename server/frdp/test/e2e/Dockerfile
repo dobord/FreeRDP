@@ -71,6 +71,15 @@ RUN cmake -S /src -B /opt/freerdp-build -GNinja \
         -DWITH_CLIENT=ON \
         -DWITH_X11=ON \
         -DWITH_FRDPD=ON \
+        -DWITH_FRDPD_NTLM=ON \
+        -DCHANNEL_AINPUT_CLIENT=OFF \
+        -DCHANNEL_AUDIN_CLIENT=OFF \
+        -DCHANNEL_DISP_CLIENT=OFF \
+        -DCHANNEL_ECHO_CLIENT=OFF \
+        -DCHANNEL_GEOMETRY_CLIENT=OFF \
+        -DCHANNEL_RDPGFX_CLIENT=OFF \
+        -DCHANNEL_RDPSND_CLIENT=OFF \
+        -DCHANNEL_VIDEO_CLIENT=OFF \
         -DWITH_SHADOW=OFF \
         -DWITH_PROXY=OFF \
         -DWITH_SAMPLE=OFF \
@@ -86,6 +95,8 @@ RUN cmake -S /src -B /opt/freerdp-build -GNinja \
         -DWITH_FUSE=OFF \
         -DWITH_OPENCL=OFF \
         -DCHANNEL_URBDRC=OFF \
+    && ! grep -Eq '^#define CHANNEL_(AINPUT|AUDIN|DISP|ECHO|GEOMETRY|RDPGFX|RDPSND|VIDEO)_CLIENT' \
+        /opt/freerdp-build/include/freerdp/config.h \
     && cmake --build /opt/freerdp-build --target \
         frdpd \
         frdp-authd \

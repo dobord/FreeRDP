@@ -6,7 +6,7 @@ disable_warnings_for_directory(${CMAKE_CURRENT_BINARY_DIR})
 set(${MODULE_PREFIX}_DRIVER ${MODULE_NAME}.c)
 set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFreeRDPFrdpCtlIpc.c
                          TestFreeRDPFrdpHelperStop.c TestFreeRDPFrdpServiceIpc.c
-                         TestFreeRDPFrdpAuthdPam.c
+                         TestFreeRDPFrdpAuthdPam.c TestFreeRDPFrdpNtlmIdentity.c
                          TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpInputPolicy.c
                          TestFreeRDPFrdpDisplayPolicy.c TestFreeRDPFrdpProcessIdentity.c
                          TestFreeRDPFrdpSessionState.c
@@ -36,6 +36,8 @@ add_executable(${MODULE_NAME}
     ../frdpd/frame_policy.h
     ../frdpd/frdpd_pam.c
     ../frdpd/frdpd_pam.h
+    ../frdpd/frdpd_auth.c
+    ../frdpd/frdpd_auth.h
     ../frdp-authd/authd_pam.c
     ../frdp-authd/authd_pam.h
     ../frdp-sesmand/sesmand_pam.c
@@ -104,6 +106,7 @@ add_test(NAME TestFreeRDPFrdpSesmand
 
 add_test(NAME TestFreeRDPFrdpd
          COMMAND ${CMAKE_COMMAND} -DFRDPD_BINARY=$<TARGET_FILE:frdpd>
+                 -DFRDPD_NTLM_ENABLED=$<BOOL:${WITH_FRDPD_NTLM}>
                  -DFRDP_SAMPLE_CONFIG_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../config/frdpd.toml
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpd.cmake)
 

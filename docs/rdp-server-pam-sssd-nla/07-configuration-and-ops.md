@@ -67,17 +67,17 @@ Install or review the dedicated PAM service `/etc/pam.d/frdpd` from `server/frdp
 - correct behavior for expired passwords, locked accounts, and denied groups.
 
 The NLA password-backed flow is non-interactive. The normal `frdp-authd` broker path sets the password
-as `PAM_AUTHTOK` and answers at most one PAM password prompt with the CredSSP/NLA
+through the PAM conversation callback and answers at most one password prompt with the CredSSP/NLA
 password because CredSSP/NLA is not a general-purpose prompt
-transport. The PAM service should use modules/options that consume the existing authentication token,
-such as `use_first_pass` or an equivalent SSSD profile. MFA, password-change, or extra prompt flows
+transport. The PAM service should use modules/options that request at most the standard hidden password,
+such as `try_first_pass` or an equivalent SSSD profile. MFA, password-change, or extra prompt flows
 require a separate UX design and fail closed until explicitly implemented.
 
 Example non-interactive baseline:
 
 ```text
 auth      required   pam_env.so
-auth      sufficient pam_sss.so use_first_pass
+auth      sufficient pam_sss.so try_first_pass
 auth      required   pam_deny.so
 account   required   pam_sss.so
 session   required   pam_limits.so

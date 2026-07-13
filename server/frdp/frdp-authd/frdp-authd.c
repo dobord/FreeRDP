@@ -372,9 +372,6 @@ static int authenticate_user(const char *service, const char *rhost, const char 
             ret = pam_set_item(pamh, PAM_RUSER, user);
         }
         if (ret == PAM_SUCCESS) {
-            ret = pam_set_item(pamh, PAM_AUTHTOK, buf);
-        }
-        if (ret == PAM_SUCCESS) {
             ret = pam_authenticate(pamh, 0);
         }
         if (ret == PAM_SUCCESS) {
@@ -390,7 +387,6 @@ static int authenticate_user(const char *service, const char *rhost, const char 
             if (ret == PAM_SUCCESS && cred_ret != PAM_SUCCESS)
                 ret = cred_ret;
         }
-        pam_set_item(pamh, PAM_AUTHTOK, "");
         pam_end(pamh, ret);
     }
 

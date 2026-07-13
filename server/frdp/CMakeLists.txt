@@ -21,6 +21,7 @@ if(NOT UUID_LIBRARY)
 endif()
 
 option(WITH_FRDPD_STRICT_WARNINGS "Build FRDP daemon targets with strict compiler warnings as errors" OFF)
+option(WITH_FRDPD_NTLM "Build NTLM authentication support for frdpd" ON)
 
 function(frdp_apply_strict_warnings target)
   if(NOT WITH_FRDPD_STRICT_WARNINGS)

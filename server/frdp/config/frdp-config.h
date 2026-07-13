@@ -76,6 +76,7 @@ typedef struct {
     char pam_service[64];
     char auth_socket[108];
     int ntlm_fallback;
+    char ntlm_sam_file[256];
     int kerberos;
     char keytab[256];
     char accepted_spn[256];
