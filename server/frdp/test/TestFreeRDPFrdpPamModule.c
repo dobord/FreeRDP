@@ -11,6 +11,7 @@
 #endif
 
 #define FRDP_PAM_TEST_AUDIT_ENV "FRDP_PAM_TEST_AUDIT_FILE"
+#define FRDP_PAM_TEST_BLOCK_AUTH_ENV "FRDP_PAM_TEST_BLOCK_AUTH"
 
 static int append_audit_record(const char* record)
 {
@@ -47,6 +48,13 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
 	(void)flags;
 	(void)argc;
 	(void)argv;
+	if (append_audit_record("authenticate-start\n") != 0)
+		return PAM_SYSTEM_ERR;
+	if (getenv(FRDP_PAM_TEST_BLOCK_AUTH_ENV))
+	{
+		for (;;)
+			pause();
+	}
 	return PAM_SUCCESS;
 }
 

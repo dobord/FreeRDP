@@ -964,7 +964,8 @@ static int write_pam_fixture_file(const char* path, const char* contents)
 static int start_helper_with_pam_wrapper(const char* binary, const char* name,
 	                                     const char* service_dir, const char* service,
 	                                     const char* key_path, const char* pam_user,
-	                                     const char* audit_path, frdpTestHelper* helper)
+	                                     const char* audit_path, int block_auth,
+	                                     frdpTestHelper* helper)
 {
 	if (!binary || !name || !service_dir || !service || !key_path || !helper)
 		return -1;
@@ -986,7 +987,8 @@ static int start_helper_with_pam_wrapper(const char* binary, const char* name,
 		    (setenv("PAM_WRAPPER_SERVICE_DIR", service_dir, 1) != 0) ||
 		    (setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0) ||
 		    (pam_user && (setenv("PAM_USER", pam_user, 1) != 0)) ||
-		    (audit_path && (setenv("FRDP_PAM_TEST_AUDIT_FILE", audit_path, 1) != 0)))
+		    (audit_path && (setenv("FRDP_PAM_TEST_AUDIT_FILE", audit_path, 1) != 0)) ||
+		    (block_auth && (setenv("FRDP_PAM_TEST_BLOCK_AUTH", "1", 1) != 0)))
 			_exit(127);
 		execl(binary, binary, "--pam-service", service, "--socket", helper->socket_path,
 		      (char*)NULL);
@@ -1050,7 +1052,7 @@ static int run_pam_wrapper_auth_case(const char* name, const char* service_dir,
 	int rc = -1;
 
 	if (start_helper_with_pam_wrapper(FRDP_AUTHD_BINARY, name, service_dir, service, key_path,
-	                                  canonical_user, NULL, &helper) != 0)
+	                                  canonical_user, NULL, 0, &helper) != 0)
 		return -1;
 	if (exchange_authd_login(helper.socket_path, "frdp-pam-alias", "test-password", response) ==
 	    0)
@@ -1068,7 +1070,7 @@ static int run_pam_wrapper_error_limit_case(const char* service_dir, const char*
 	int rc = -1;
 
 	if (start_helper_with_pam_wrapper(FRDP_AUTHD_BINARY, "pam-error", service_dir, service,
-	                                  key_path, canonical_user, NULL, &helper) != 0)
+	                                  key_path, canonical_user, NULL, 0, &helper) != 0)
 		return -1;
 	for (uint32_t x = 0; x <= FRDP_AUTH_FAILURE_LIMIT_DEFAULT_MAX_FAILURES; x++)
 	{
@@ -1918,6 +1920,103 @@ static int file_contents_equal(const char* path, const char* expected)
 	return rc;
 }
 
+static int wait_for_file_contents(const char* path, const char* expected)
+{
+	for (int attempt = 0; attempt < 100; attempt++)
+	{
+		if (file_contents_equal(path, expected) == 0)
+			return 0;
+		usleep(50000);
+	}
+	return -1;
+}
+
+static int test_authd_crash_during_pam(void)
+{
+	static const char service[] = "frdp-auth-crash";
+	static const char expected_audit[] = "authenticate-start\n";
+	frdpTestHelper helper = { .pid = -1 };
+	struct passwd* pwd = getpwuid(geteuid());
+	pid_t requester = -1;
+	char dir[1024] = { 0 };
+	char service_path[1024] = { 0 };
+	char audit_path[1024] = { 0 };
+	char key_path[1024] = { 0 };
+	char contents[2048] = { 0 };
+	int helper_started = 0;
+	int status = 0;
+	int rc = -1;
+
+	if (!pwd || !pwd->pw_name || !pwd->pw_name[0] ||
+	    (make_runtime_dir(dir, sizeof(dir), "pam-auth-crash") != 0))
+		return -1;
+	if ((snprintf(service_path, sizeof(service_path), "%s/%s", dir, service) >=
+	     (int)sizeof(service_path)) ||
+	    (snprintf(audit_path, sizeof(audit_path), "%s/audit.log", dir) >=
+	     (int)sizeof(audit_path)) ||
+	    (snprintf(key_path, sizeof(key_path), "%s/auth-token.key", dir) >=
+	     (int)sizeof(key_path)) ||
+	    (snprintf(contents, sizeof(contents), "auth required %s\n",
+	              FRDP_PAM_SESSION_TEST_MODULE) >= (int)sizeof(contents)) ||
+	    (write_pam_fixture_file(service_path, contents) != 0) ||
+	    (write_pam_fixture_file(audit_path, "") != 0))
+		goto cleanup;
+	if (start_helper_with_pam_wrapper(FRDP_AUTHD_BINARY, "pam-auth-crash", dir, service,
+	                                  key_path, pwd->pw_name, audit_path, 1, &helper) != 0)
+		goto cleanup;
+	helper_started = 1;
+	requester = fork();
+	if (requester < 0)
+		goto cleanup;
+	if (requester == 0)
+	{
+		frdpAuthResponse response = { 0 };
+		const int exchange_rc =
+		    exchange_authd_login(helper.socket_path, pwd->pw_name, "test-password", &response);
+
+		SecureZeroMemory(&response, sizeof(response));
+		_exit(exchange_rc != 0 ? 0 : 1);
+	}
+	if (wait_for_file_contents(audit_path, expected_audit) != 0)
+		goto cleanup;
+	if ((kill(helper.pid, SIGKILL) != 0) || (wait_for_exit(helper.pid, &status) != 0))
+		goto cleanup;
+	helper.pid = -1;
+	if (!WIFSIGNALED(status) || (WTERMSIG(status) != SIGKILL))
+		goto cleanup;
+	if (wait_for_exit(requester, &status) != 0)
+		goto cleanup;
+	requester = -1;
+	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0))
+		goto cleanup;
+	if (test_helper_health(helper.socket_path, "frdp-authd") == 0)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (requester > 0)
+	{
+		kill(requester, SIGKILL);
+		(void)waitpid(requester, NULL, 0);
+	}
+	if (helper_started)
+	{
+		if (helper.pid > 0)
+		{
+			kill(helper.pid, SIGKILL);
+			(void)waitpid(helper.pid, NULL, 0);
+		}
+		unlink(helper.socket_path);
+		rmdir(helper.dir);
+	}
+	unlink(key_path);
+	unlink(audit_path);
+	unlink(service_path);
+	if (dir[0])
+		rmdir(dir);
+	return rc;
+}
+
 static int helper_dir_contains_only_listener(const frdpTestHelper* helper)
 {
 	const char* listener_name = NULL;
@@ -1996,7 +2095,7 @@ static int test_sesmand_pam_session_open_failure(void)
 	    (lookup_current_user(user, sizeof(user), &uid, &gid, groups, &group_count) != 0))
 		goto cleanup;
 	if (start_helper_with_pam_wrapper(FRDP_SESMAND_BINARY, "pam-session-failure", dir, service,
-	                                  key_path, NULL, audit_path, &helper) != 0)
+	                                  key_path, NULL, audit_path, 0, &helper) != 0)
 		goto cleanup;
 	helper_started = 1;
 	if ((request_live_session(helper.socket_path, user, "127.0.0.1", "pam-session-denied", NULL,
@@ -2028,6 +2127,11 @@ cleanup:
 	return rc;
 }
 #else
+static int test_authd_crash_during_pam(void)
+{
+	return 0;
+}
+
 static int test_sesmand_pam_session_open_failure(void)
 {
 	return 0;
@@ -3005,6 +3109,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_authd_real_pam_provider() != 0)
 	{
 		printf("frdp-authd real PAM provider test failed\n");
+		return -1;
+	}
+	if (test_authd_crash_during_pam() != 0)
+	{
+		printf("frdp-authd in-flight PAM crash test failed\n");
 		return -1;
 	}
 	if (test_sesmand_pam_session_open_failure() != 0)
