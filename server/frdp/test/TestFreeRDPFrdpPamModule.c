@@ -91,9 +91,13 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 			pause();
 	}
 #endif
+#if defined(FRDP_PAM_TEST_ALLOW_SESSION_OPEN)
+	return PAM_SUCCESS;
+#else
 	if (append_audit_record("open-session-denied\n") != 0)
 		return PAM_SYSTEM_ERR;
 	return PAM_SESSION_ERR;
+#endif
 }
 
 PAM_EXTERN int pam_sm_close_session(pam_handle_t* pamh, int flags, int argc, const char** argv)
@@ -102,5 +106,11 @@ PAM_EXTERN int pam_sm_close_session(pam_handle_t* pamh, int flags, int argc, con
 	(void)flags;
 	(void)argc;
 	(void)argv;
+	if (append_audit_record("close-session-start\n") != 0)
+		return PAM_SYSTEM_ERR;
+#if defined(FRDP_PAM_TEST_ALWAYS_BLOCK_SESSION_CLOSE)
+	for (;;)
+		pause();
+#endif
 	return append_audit_record("close-session\n") == 0 ? PAM_SUCCESS : PAM_SYSTEM_ERR;
 }
