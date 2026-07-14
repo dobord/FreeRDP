@@ -1031,6 +1031,9 @@ cleanup:
 }
 
 #if defined(FRDP_PAM_WRAPPER_LIBRARY) && defined(FRDP_PAM_WRAPPER_MODULE_DIR)
+static int file_contents_equal(const char* path, const char* expected);
+static int wait_for_file_contents(const char* path, const char* expected);
+
 static int write_pam_fixture_file(const char* path, const char* contents)
 {
 	FILE* fp = NULL;
@@ -1100,14 +1103,15 @@ fail:
 	return -1;
 }
 
-static int exchange_authd_login(const char* socket_path, const char* user, const char* password,
-	                            frdpAuthResponse* response)
+static int exchange_authd_login_from(const char* socket_path, const char* user,
+	                                 const char* password, const char* rhost,
+	                                 frdpAuthResponse* response)
 {
 	frdpAuthRequest request = { 0 };
 	int fd = -1;
 	int rc = -1;
 
-	if (!socket_path || !user || !password || !response)
+	if (!socket_path || !user || !password || !rhost || !response)
 		return -1;
 	fd = frdp_ipc_connect(socket_path);
 	if (fd < 0)
@@ -1117,7 +1121,7 @@ static int exchange_authd_login(const char* socket_path, const char* user, const
 	     (int)sizeof(request.correlation_id)) ||
 	    (snprintf(request.user, sizeof(request.user), "%s", user) >=
 	     (int)sizeof(request.user)) ||
-	    (snprintf(request.rhost, sizeof(request.rhost), "%s", "203.0.113.30") >=
+	    (snprintf(request.rhost, sizeof(request.rhost), "%s", rhost) >=
 	     (int)sizeof(request.rhost)) ||
 	    (snprintf(request.password, sizeof(request.password), "%s", password) >=
 	     (int)sizeof(request.password)))
@@ -1131,6 +1135,12 @@ cleanup:
 	SecureZeroMemory(&request, sizeof(request));
 	frdp_ipc_close(fd);
 	return rc;
+}
+
+static int exchange_authd_login(const char* socket_path, const char* user, const char* password,
+	                            frdpAuthResponse* response)
+{
+	return exchange_authd_login_from(socket_path, user, password, "203.0.113.30", response);
 }
 
 static int run_pam_wrapper_auth_case(const char* name, const char* service_dir,
@@ -1175,6 +1185,86 @@ cleanup:
 	SecureZeroMemory(&response, sizeof(response));
 	if (stop_helper(&helper) != 0)
 		rc = -1;
+	return rc;
+}
+
+static int test_authd_pam_canonical_alias_failure_limit(const char* canonical_user,
+	                                                    const char* key_path)
+{
+	static const char service[] = "frdp-pam-canonical-deny";
+	static const char expected_audit[] =
+	    "authenticate-start\nauthenticate-start\nauthenticate-start\nauthenticate-start\n"
+	    "authenticate-start\nauthenticate-start\nauthenticate-start\nauthenticate-start\n"
+	    "authenticate-start\nauthenticate-start\nauthenticate-start\naccount\n"
+	    "setcred-establish\nsetcred-delete\nauthenticate-start\n";
+	frdpTestHelper helper = { .pid = -1 };
+	frdpAuthResponse response = { 0 };
+	char dir[1024] = { 0 };
+	char service_path[1024] = { 0 };
+	char audit_path[1024] = { 0 };
+	char contents[2048] = { 0 };
+	char rhost[64] = { 0 };
+	int rc = -1;
+
+	if (!canonical_user || !canonical_user[0] || !key_path ||
+	    (make_runtime_dir(dir, sizeof(dir), "pam-canonical-limit") != 0))
+		return -1;
+	if ((snprintf(service_path, sizeof(service_path), "%s/%s", dir, service) >=
+	     (int)sizeof(service_path)) ||
+	    (snprintf(audit_path, sizeof(audit_path), "%s/audit.log", dir) >=
+	     (int)sizeof(audit_path)) ||
+	    (snprintf(contents, sizeof(contents), "auth required %s\naccount required %s\n",
+	              FRDP_PAM_AUTH_CANONICAL_DENY_TEST_MODULE,
+	              FRDP_PAM_AUTH_CANONICAL_DENY_TEST_MODULE) >= (int)sizeof(contents)) ||
+	    (write_pam_fixture_file(service_path, contents) != 0) ||
+	    (write_pam_fixture_file(audit_path, "") != 0) ||
+	    (start_helper_with_pam_wrapper(FRDP_AUTHD_BINARY, "pam-canonical-limit", dir, service,
+	                                   key_path, canonical_user, audit_path, 0, &helper) != 0))
+		goto cleanup;
+
+	for (uint32_t x = 0; x < FRDP_AUTH_FAILURE_LIMIT_DEFAULT_MAX_FAILURES; x++)
+	{
+		const char* alias = (x % 2U) == 0 ? "canonical-alias-one" : "canonical-alias-two";
+
+		if ((snprintf(rhost, sizeof(rhost), "203.0.113.%" PRIu32, x + 1U) >=
+		     (int)sizeof(rhost)) ||
+		    (exchange_authd_login_from(helper.socket_path, alias, "test-password", rhost,
+		                               &response) != 0) ||
+		    response.success || response.error[0])
+			goto cleanup;
+		SecureZeroMemory(&response, sizeof(response));
+	}
+	if ((exchange_authd_login_from(helper.socket_path, "canonical-alias-one", "test-password",
+	                              "203.0.113.11", &response) != 0) ||
+	    response.success ||
+	    (strcmp(response.error, "authentication temporarily unavailable") != 0) ||
+	    (wait_for_file_contents(audit_path,
+	                            "authenticate-start\nauthenticate-start\nauthenticate-start\n"
+	                            "authenticate-start\nauthenticate-start\nauthenticate-start\n"
+	                            "authenticate-start\nauthenticate-start\nauthenticate-start\n"
+	                            "authenticate-start\n") != 0))
+		goto cleanup;
+	SecureZeroMemory(&response, sizeof(response));
+	if ((exchange_authd_login_from(helper.socket_path, "canonical-success-alias",
+	                              "test-password", "203.0.113.12", &response) != 0) ||
+	    !response.success || (strcmp(response.user, canonical_user) != 0))
+		goto cleanup;
+	SecureZeroMemory(&response, sizeof(response));
+	if ((exchange_authd_login_from(helper.socket_path, "canonical-alias-one", "test-password",
+	                              "203.0.113.13", &response) != 0) ||
+	    response.success || response.error[0] ||
+	    (wait_for_file_contents(audit_path, expected_audit) != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	SecureZeroMemory(&response, sizeof(response));
+	if ((helper.pid > 0) && (stop_helper(&helper) != 0))
+		rc = -1;
+	unlink(audit_path);
+	unlink(service_path);
+	if (dir[0])
+		rmdir(dir);
 	return rc;
 }
 
@@ -1258,6 +1348,8 @@ static int test_authd_real_pam_provider(void)
 	SecureZeroMemory(&response, sizeof(response));
 
 	if (run_pam_wrapper_error_limit_case(dir, error_service, pwd->pw_name, key_path) != 0)
+		goto cleanup;
+	if (test_authd_pam_canonical_alias_failure_limit(pwd->pw_name, key_path) != 0)
 		goto cleanup;
 	rc = 0;
 

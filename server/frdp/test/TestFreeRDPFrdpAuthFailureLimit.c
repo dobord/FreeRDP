@@ -67,6 +67,94 @@ static int test_expires_windows_and_handles_clock_regression(void)
 	return 0;
 }
 
+static int test_canonical_aliases_share_budget(void)
+{
+	frdpAuthFailureLimiter limiter;
+
+	frdp_auth_failure_limiter_init(&limiter, 3, 60);
+	if ((frdp_auth_failure_limiter_record(&limiter, "alias-one", 100) != 0) ||
+	    (frdp_auth_failure_limiter_bind_alias(&limiter, "alias-one", "canonical", 100) != 0) ||
+	    (frdp_auth_failure_limiter_record(&limiter, "alias-one", 100) != 0) ||
+	    (frdp_auth_failure_limiter_bind_alias(&limiter, "alias-two", "canonical", 100) != 0) ||
+	    (frdp_auth_failure_limiter_record(&limiter, "alias-two", 100) != 0) ||
+	    frdp_auth_failure_limiter_allow(&limiter, "alias-one", 100) ||
+	    frdp_auth_failure_limiter_allow(&limiter, "alias-two", 100) ||
+	    frdp_auth_failure_limiter_allow(&limiter, "canonical", 100))
+		return -1;
+	frdp_auth_failure_limiter_clear(&limiter, "alias-two");
+	if (!frdp_auth_failure_limiter_allow(&limiter, "alias-one", 100) ||
+	    !frdp_auth_failure_limiter_allow(&limiter, "canonical", 100))
+		return -1;
+	return 0;
+}
+
+static int test_alias_rebinding_compresses_chains(void)
+{
+	frdpAuthFailureLimiter limiter;
+
+	frdp_auth_failure_limiter_init(&limiter, 1, 60);
+	if ((frdp_auth_failure_limiter_bind_alias(&limiter, "first", "second", 100) != 0) ||
+	    (frdp_auth_failure_limiter_bind_alias(&limiter, "second", "canonical", 100) != 0) ||
+	    (frdp_auth_failure_limiter_record(&limiter, "first", 100) != 0) ||
+	    frdp_auth_failure_limiter_allow(&limiter, "second", 100) ||
+	    frdp_auth_failure_limiter_allow(&limiter, "canonical", 100) ||
+	    !frdp_auth_failure_limiter_allow(&limiter, "first", 160))
+		return -1;
+	return 0;
+}
+
+static int test_alias_binding_merges_existing_budgets(void)
+{
+	frdpAuthFailureLimiter limiter;
+
+	frdp_auth_failure_limiter_init(&limiter, 3, 60);
+	if ((frdp_auth_failure_limiter_record(&limiter, "alias", 100) != 0) ||
+	    (frdp_auth_failure_limiter_record(&limiter, "canonical", 100) != 0) ||
+	    (frdp_auth_failure_limiter_bind_alias(&limiter, "alias", "canonical", 100) != 0) ||
+	    !frdp_auth_failure_limiter_allow(&limiter, "alias", 100) ||
+	    (frdp_auth_failure_limiter_record(&limiter, "alias", 100) != 0) ||
+	    frdp_auth_failure_limiter_allow(&limiter, "canonical", 100))
+		return -1;
+	return 0;
+}
+
+static int test_conflicting_alias_rebinding_fails_closed(void)
+{
+	frdpAuthFailureLimiter limiter;
+
+	frdp_auth_failure_limiter_init(&limiter, 1, 60);
+	if ((frdp_auth_failure_limiter_bind_alias(&limiter, "alias", "canonical-one", 100) != 0) ||
+	    (frdp_auth_failure_limiter_record(&limiter, "alias", 100) != 0))
+		return -1;
+	errno = 0;
+	if ((frdp_auth_failure_limiter_bind_alias(&limiter, "alias", "canonical-two", 100) != -1) ||
+	    (errno != EEXIST) || frdp_auth_failure_limiter_allow(&limiter, "alias", 100) ||
+	    frdp_auth_failure_limiter_allow(&limiter, "canonical-one", 100) ||
+	    !frdp_auth_failure_limiter_allow(&limiter, "canonical-two", 100))
+		return -1;
+	return 0;
+}
+
+static int test_alias_capacity_is_bounded_and_expires(void)
+{
+	frdpAuthFailureLimiter limiter;
+	char alias[FRDP_AUTH_FAILURE_LIMIT_KEY_SIZE] = { 0 };
+
+	frdp_auth_failure_limiter_init(&limiter, 2, 60);
+	for (uint32_t x = 0; x < FRDP_AUTH_FAILURE_LIMIT_MAX_ENTRIES; x++)
+	{
+		if ((snprintf(alias, sizeof(alias), "alias-%" PRIu32, x) >= (int)sizeof(alias)) ||
+		    (frdp_auth_failure_limiter_bind_alias(&limiter, alias, "canonical", 100) != 0))
+			return -1;
+	}
+	errno = 0;
+	if ((frdp_auth_failure_limiter_bind_alias(&limiter, "overflow", "canonical", 100) != -1) ||
+	    (errno != ENOSPC) ||
+	    (frdp_auth_failure_limiter_bind_alias(&limiter, "overflow", "canonical", 160) != 0))
+		return -1;
+	return 0;
+}
+
 static int test_capacity_is_bounded_and_fail_closed(void)
 {
 	frdpAuthFailureLimiter limiter;
@@ -120,6 +208,16 @@ int TestFreeRDPFrdpAuthFailureLimit(int argc, char* argv[])
 	if (test_account_keys_fold_ascii_case() != 0)
 		return -1;
 	if (test_expires_windows_and_handles_clock_regression() != 0)
+		return -1;
+	if (test_canonical_aliases_share_budget() != 0)
+		return -1;
+	if (test_alias_rebinding_compresses_chains() != 0)
+		return -1;
+	if (test_alias_binding_merges_existing_budgets() != 0)
+		return -1;
+	if (test_conflicting_alias_rebinding_fails_closed() != 0)
+		return -1;
+	if (test_alias_capacity_is_bounded_and_expires() != 0)
 		return -1;
 	if (test_capacity_is_bounded_and_fail_closed() != 0)
 		return -1;

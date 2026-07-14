@@ -133,9 +133,12 @@ frdpAuthdPamStatus frdp_authd_pam_authenticate_with_ops(
         ret = ops->acct_mgmt(pamh, 0);
         status = frdp_authd_pam_account_status(ret);
     }
-    if ((status == FRDP_AUTHD_PAM_OK) &&
-        (frdp_authd_pam_copy_user(pamh, ops->get_item, pam_user, pam_user_size) != 0))
-        status = FRDP_AUTHD_PAM_ERROR;
+    if (status == FRDP_AUTHD_PAM_OK) {
+        if (frdp_authd_pam_copy_user(pamh, ops->get_item, pam_user, pam_user_size) != 0)
+            status = FRDP_AUTHD_PAM_ERROR;
+    } else if (status == FRDP_AUTHD_PAM_DENIED) {
+        (void)frdp_authd_pam_copy_user(pamh, ops->get_item, pam_user, pam_user_size);
+    }
     if (status == FRDP_AUTHD_PAM_OK) {
         ret = ops->setcred(pamh, PAM_ESTABLISH_CRED);
         credentials_established = (ret == PAM_SUCCESS);
@@ -152,7 +155,7 @@ frdpAuthdPamStatus frdp_authd_pam_authenticate_with_ops(
     }
     if (ops->end(pamh, ret) != PAM_SUCCESS)
         status = FRDP_AUTHD_PAM_ERROR;
-    if (status != FRDP_AUTHD_PAM_OK)
+    if (status == FRDP_AUTHD_PAM_ERROR)
         memset(pam_user, 0, pam_user_size);
     return status;
 }

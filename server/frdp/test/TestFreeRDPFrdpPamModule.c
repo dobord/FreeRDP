@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #if defined(HAVE_PAM_PAM_APPL_H)
@@ -12,6 +13,7 @@
 
 #define FRDP_PAM_TEST_AUDIT_ENV "FRDP_PAM_TEST_AUDIT_FILE"
 #define FRDP_PAM_TEST_BLOCK_AUTH_ENV "FRDP_PAM_TEST_BLOCK_AUTH"
+#define FRDP_PAM_TEST_CANONICAL_USER_ENV "PAM_USER"
 
 static int append_audit_record(const char* record)
 {
@@ -42,9 +44,32 @@ static int append_audit_record(const char* record)
 	return close(fd);
 }
 
+#if defined(FRDP_PAM_TEST_CANONICAL_DENY)
+static int audit_file_size(off_t* size)
+{
+	const char* path = getenv(FRDP_PAM_TEST_AUDIT_ENV);
+	struct stat st = { 0 };
+	int fd = -1;
+	int rc = -1;
+
+	if (!path || !path[0] || !size)
+		return -1;
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd < 0)
+		return -1;
+	if ((fstat(fd, &st) == 0) && S_ISREG(st.st_mode))
+	{
+		*size = st.st_size;
+		rc = 0;
+	}
+	if (close(fd) != 0)
+		rc = -1;
+	return rc;
+}
+#endif
+
 PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, const char** argv)
 {
-	(void)pamh;
 	(void)flags;
 	(void)argc;
 	(void)argv;
@@ -55,6 +80,21 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t* pamh, int flags, int argc, cons
 		for (;;)
 			pause();
 	}
+#if defined(FRDP_PAM_TEST_CANONICAL_DENY)
+	{
+		const char* canonical_user = getenv(FRDP_PAM_TEST_CANONICAL_USER_ENV);
+		off_t size = 0;
+		const int allow =
+		    (audit_file_size(&size) == 0) &&
+		    (size == (off_t)(11U * (sizeof("authenticate-start\n") - 1U)));
+
+		if (!canonical_user || !canonical_user[0] ||
+		    (pam_set_item(pamh, PAM_USER, canonical_user) != PAM_SUCCESS))
+			return PAM_SYSTEM_ERR;
+		return allow ? PAM_SUCCESS : PAM_AUTH_ERR;
+	}
+#endif
+	(void)pamh;
 	return PAM_SUCCESS;
 }
 

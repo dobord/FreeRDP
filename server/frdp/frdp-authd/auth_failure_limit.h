@@ -17,7 +17,15 @@ typedef struct {
 } frdpAuthFailureEntry;
 
 typedef struct {
+    char alias[FRDP_AUTH_FAILURE_LIMIT_KEY_SIZE];
+    char canonical[FRDP_AUTH_FAILURE_LIMIT_KEY_SIZE];
+    uint64_t bound_at;
+    int in_use;
+} frdpAuthFailureAlias;
+
+typedef struct {
     frdpAuthFailureEntry entries[FRDP_AUTH_FAILURE_LIMIT_MAX_ENTRIES];
+    frdpAuthFailureAlias aliases[FRDP_AUTH_FAILURE_LIMIT_MAX_ENTRIES];
     uint32_t max_failures;
     uint32_t window_seconds;
 } frdpAuthFailureLimiter;
@@ -31,6 +39,8 @@ int frdp_auth_failure_limiter_allow(frdpAuthFailureLimiter *limiter, const char 
                                     uint64_t now_seconds);
 int frdp_auth_failure_limiter_record(frdpAuthFailureLimiter *limiter, const char *key,
                                      uint64_t now_seconds);
+int frdp_auth_failure_limiter_bind_alias(frdpAuthFailureLimiter *limiter, const char *alias,
+                                         const char *canonical, uint64_t now_seconds);
 void frdp_auth_failure_limiter_clear(frdpAuthFailureLimiter *limiter, const char *key);
 
 #endif

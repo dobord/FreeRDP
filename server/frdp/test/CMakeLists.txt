@@ -124,18 +124,24 @@ if(PAM_WRAPPER_LIBRARY AND PAM_WRAPPER_MODULE_DIR AND NOT WITH_SANITIZE_ADDRESS)
   add_library(frdp-pam-session-block-test MODULE EXCLUDE_FROM_ALL TestFreeRDPFrdpPamModule.c)
   add_library(frdp-pam-session-close-block-test MODULE EXCLUDE_FROM_ALL
               TestFreeRDPFrdpPamModule.c)
+  add_library(frdp-pam-auth-canonical-deny-test MODULE EXCLUDE_FROM_ALL
+              TestFreeRDPFrdpPamModule.c)
   target_include_directories(frdp-pam-session-test SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
   target_include_directories(frdp-pam-session-block-test SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
   target_include_directories(frdp-pam-session-close-block-test SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
+  target_include_directories(frdp-pam-auth-canonical-deny-test SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
   if(HAVE_PAM_PAM_APPL_H)
     target_compile_definitions(frdp-pam-session-test PRIVATE HAVE_PAM_PAM_APPL_H)
     target_compile_definitions(frdp-pam-session-block-test PRIVATE HAVE_PAM_PAM_APPL_H)
     target_compile_definitions(frdp-pam-session-close-block-test PRIVATE HAVE_PAM_PAM_APPL_H)
+    target_compile_definitions(frdp-pam-auth-canonical-deny-test PRIVATE HAVE_PAM_PAM_APPL_H)
   endif()
   target_compile_definitions(frdp-pam-session-block-test
       PRIVATE FRDP_PAM_TEST_ALWAYS_BLOCK_SESSION)
   target_compile_definitions(frdp-pam-session-close-block-test PRIVATE
       FRDP_PAM_TEST_ALLOW_SESSION_OPEN FRDP_PAM_TEST_ALWAYS_BLOCK_SESSION_CLOSE)
+  target_compile_definitions(frdp-pam-auth-canonical-deny-test PRIVATE
+      FRDP_PAM_TEST_CANONICAL_DENY)
   set_target_properties(frdp-pam-session-test PROPERTIES
       C_VISIBILITY_PRESET default
       PREFIX "")
@@ -145,20 +151,26 @@ if(PAM_WRAPPER_LIBRARY AND PAM_WRAPPER_MODULE_DIR AND NOT WITH_SANITIZE_ADDRESS)
   set_target_properties(frdp-pam-session-close-block-test PROPERTIES
       C_VISIBILITY_PRESET default
       PREFIX "")
+  set_target_properties(frdp-pam-auth-canonical-deny-test PROPERTIES
+      C_VISIBILITY_PRESET default
+      PREFIX "")
   frdp_apply_strict_warnings(frdp-pam-session-test)
   frdp_apply_strict_warnings(frdp-pam-session-block-test)
   frdp_apply_strict_warnings(frdp-pam-session-close-block-test)
+  frdp_apply_strict_warnings(frdp-pam-auth-canonical-deny-test)
   set_property(TARGET frdp-pam-session-test PROPERTY FOLDER "Server/frdp/Test")
   set_property(TARGET frdp-pam-session-block-test PROPERTY FOLDER "Server/frdp/Test")
   set_property(TARGET frdp-pam-session-close-block-test PROPERTY FOLDER "Server/frdp/Test")
+  set_property(TARGET frdp-pam-auth-canonical-deny-test PROPERTY FOLDER "Server/frdp/Test")
   add_dependencies(${MODULE_NAME} frdp-pam-session-test frdp-pam-session-block-test
-                   frdp-pam-session-close-block-test)
+                   frdp-pam-session-close-block-test frdp-pam-auth-canonical-deny-test)
   target_compile_definitions(${MODULE_NAME} PRIVATE
       FRDP_PAM_WRAPPER_LIBRARY="${PAM_WRAPPER_LIBRARY}"
       FRDP_PAM_WRAPPER_MODULE_DIR="${PAM_WRAPPER_MODULE_DIR}"
       FRDP_PAM_SESSION_TEST_MODULE="$<TARGET_FILE:frdp-pam-session-test>"
       FRDP_PAM_SESSION_BLOCK_TEST_MODULE="$<TARGET_FILE:frdp-pam-session-block-test>"
-      FRDP_PAM_SESSION_CLOSE_BLOCK_TEST_MODULE="$<TARGET_FILE:frdp-pam-session-close-block-test>")
+      FRDP_PAM_SESSION_CLOSE_BLOCK_TEST_MODULE="$<TARGET_FILE:frdp-pam-session-close-block-test>"
+      FRDP_PAM_AUTH_CANONICAL_DENY_TEST_MODULE="$<TARGET_FILE:frdp-pam-auth-canonical-deny-test>")
 endif()
 if(XVFB_EXECUTABLE)
   target_compile_definitions(${MODULE_NAME} PRIVATE FRDP_XVFB_EXECUTABLE="${XVFB_EXECUTABLE}")

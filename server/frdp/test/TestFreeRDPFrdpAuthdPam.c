@@ -6,6 +6,7 @@
 
 static const void* fake_pam_item = NULL;
 static int fake_pam_status = PAM_SUCCESS;
+static int fake_pam_auth_status = PAM_SUCCESS;
 static int fake_pam_item_type = 0;
 static int fake_pam_steps[16] = { 0 };
 static size_t fake_pam_step_count = 0;
@@ -81,7 +82,7 @@ static int fake_pam_set_item(pam_handle_t* pamh, int item_type, const void* item
 static int fake_pam_authenticate(pam_handle_t* pamh, int flags)
 {
 	return (pamh && flags == 0 && fake_pam_record(FAKE_PAM_AUTHENTICATE) == 0)
-	           ? PAM_SUCCESS
+	           ? fake_pam_auth_status
 	           : PAM_SYSTEM_ERR;
 }
 
@@ -103,7 +104,7 @@ static int fake_pam_setcred(pam_handle_t* pamh, int flags)
 
 static int fake_pam_end(pam_handle_t* pamh, int pam_status)
 {
-	return (pamh && pam_status == PAM_SUCCESS && fake_pam_record(FAKE_PAM_END) == 0)
+	return (pamh && pam_status == fake_pam_auth_status && fake_pam_record(FAKE_PAM_END) == 0)
 	           ? PAM_SUCCESS
 	           : PAM_SYSTEM_ERR;
 }
@@ -307,6 +308,7 @@ static int test_authd_pam_canonical_user_lifecycle(void)
 	fake_pam_step_count = 0;
 	fake_pam_item = "canonical-alice";
 	fake_pam_status = PAM_SUCCESS;
+	fake_pam_auth_status = PAM_SUCCESS;
 	if (frdp_authd_pam_authenticate_with_ops(&ops, "frdpd", "192.0.2.1", "alias", password,
 	                                         output, sizeof(output)) != FRDP_AUTHD_PAM_OK ||
 	    strcmp(output, "canonical-alice") != 0 ||
@@ -314,6 +316,34 @@ static int test_authd_pam_canonical_user_lifecycle(void)
 	    memcmp(fake_pam_steps, expected, sizeof(expected)) != 0)
 		return -1;
 	return 0;
+}
+
+static int test_authd_pam_denied_canonical_user(void)
+{
+	static const int expected[] = { FAKE_PAM_START, FAKE_PAM_RHOST, FAKE_PAM_TTY,
+		                              FAKE_PAM_RUSER, FAKE_PAM_AUTHENTICATE,
+		                              FAKE_PAM_GET_USER, FAKE_PAM_END };
+	const frdpAuthdPamOps ops = {
+		fake_pam_start,       fake_pam_set_item, fake_pam_authenticate, fake_pam_account,
+		fake_pam_get_item,    fake_pam_setcred,  fake_pam_end
+	};
+	char output[64] = { 0 };
+	char password[] = "secret";
+	int rc = -1;
+
+	memset(fake_pam_steps, 0, sizeof(fake_pam_steps));
+	fake_pam_step_count = 0;
+	fake_pam_item = "canonical-alice";
+	fake_pam_status = PAM_SUCCESS;
+	fake_pam_auth_status = PAM_AUTH_ERR;
+	if ((frdp_authd_pam_authenticate_with_ops(&ops, "frdpd", "192.0.2.1", "alias", password,
+	                                          output, sizeof(output)) == FRDP_AUTHD_PAM_DENIED) &&
+	    (strcmp(output, "canonical-alice") == 0) &&
+	    (fake_pam_step_count == (sizeof(expected) / sizeof(expected[0]))) &&
+	    (memcmp(fake_pam_steps, expected, sizeof(expected)) == 0))
+		rc = 0;
+	fake_pam_auth_status = PAM_SUCCESS;
+	return rc;
 }
 
 int TestFreeRDPFrdpAuthdPam(int argc, char *argv[])
@@ -354,6 +384,11 @@ int TestFreeRDPFrdpAuthdPam(int argc, char *argv[])
 	if (test_authd_pam_canonical_user_lifecycle() != 0)
 	{
 		printf("authd PAM canonical user lifecycle test failed\n");
+		return -1;
+	}
+	if (test_authd_pam_denied_canonical_user() != 0)
+	{
+		printf("authd PAM denied canonical user test failed\n");
 		return -1;
 	}
 	return 0;

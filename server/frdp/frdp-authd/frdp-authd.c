@@ -673,6 +673,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                 } else {
                     char authorization_id[sizeof(((frdpAuthResponse *)0)->authorization_id)] = {0};
                     char account_limit_key[FRDP_AUTH_FAILURE_LIMIT_KEY_SIZE] = {0};
+                    char canonical_limit_key[FRDP_AUTH_FAILURE_LIMIT_KEY_SIZE] = {0};
                     char pam_user[sizeof(((frdpAuthResponse *)0)->user)] = {0};
                     char posix_user[sizeof(((frdpAuthResponse *)0)->user)] = {0};
                     uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
@@ -714,20 +715,45 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                         auth_status = authenticate_user(pam_service, rhost, user, password,
                                                         pam_user, sizeof(pam_user));
                         authenticated = auth_status == FRDP_AUTHD_PAM_OK;
-                        if ((auth_status == FRDP_AUTHD_PAM_DENIED) &&
-                            ((frdp_auth_failure_limiter_record(&account_failure_limiter,
-                                                               account_limit_key,
-                                                               now_seconds) != 0) ||
-                             (frdp_auth_failure_limiter_record(&source_failure_limiter, rhost,
-                                                               now_seconds) != 0))) {
-                            send_auth_response(cfd, 0, "authentication temporarily unavailable",
-                                               NULL, (uid_t)-1, (gid_t)-1, NULL, 0, 0);
-                            rate_limit_ready = 0;
+                        if (auth_status == FRDP_AUTHD_PAM_DENIED) {
+                            int canonical_budget_ready = 1;
+                            int account_recorded = 0;
+                            int source_recorded = 0;
+
+                            if (pam_user[0] &&
+                                ((frdp_auth_failure_limiter_account_key(
+                                      pam_user, sizeof(pam_user), pam_user, canonical_limit_key,
+                                      sizeof(canonical_limit_key)) != 0) ||
+                                 (frdp_auth_failure_limiter_bind_alias(
+                                      &account_failure_limiter, account_limit_key,
+                                      canonical_limit_key, now_seconds) != 0) ||
+                                 !frdp_auth_failure_limiter_allow(&account_failure_limiter,
+                                                                  account_limit_key,
+                                                                  now_seconds))) {
+                                canonical_budget_ready = 0;
+                            }
+                            account_recorded = frdp_auth_failure_limiter_record(
+                                &account_failure_limiter, account_limit_key, now_seconds);
+                            source_recorded = frdp_auth_failure_limiter_record(
+                                &source_failure_limiter, rhost, now_seconds);
+                            if ((account_recorded != 0) || (source_recorded != 0) ||
+                                !canonical_budget_ready) {
+                                rate_limit_ready = 0;
+                            }
+                            if (!rate_limit_ready)
+                                send_auth_response(cfd, 0,
+                                                   "authentication temporarily unavailable", NULL,
+                                                   (uid_t)-1, (gid_t)-1, NULL, 0, 0);
                         }
                     }
                     if (authenticated) {
                         frdp_auth_failure_limiter_clear(&account_failure_limiter,
                                                         account_limit_key);
+                        if (frdp_auth_failure_limiter_account_key(
+                                pam_user, sizeof(pam_user), pam_user, canonical_limit_key,
+                                sizeof(canonical_limit_key)) == 0)
+                            frdp_auth_failure_limiter_clear(&account_failure_limiter,
+                                                            canonical_limit_key);
                         pwd = getpwnam(pam_user);
                         if (pwd) {
                             const int name_rc = pwd->pw_name
@@ -778,6 +804,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                                         correlation_id);
                     clear_secret(authorization_id, sizeof(authorization_id));
                     clear_secret(account_limit_key, sizeof(account_limit_key));
+                    clear_secret(canonical_limit_key, sizeof(canonical_limit_key));
                     clear_secret(pam_user, sizeof(pam_user));
                     clear_secret(posix_user, sizeof(posix_user));
                     clear_secret((char *)groups, sizeof(groups));
