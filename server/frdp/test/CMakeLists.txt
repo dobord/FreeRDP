@@ -109,9 +109,21 @@ target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CM
                                                    FRDP_SESMAND_BINARY="$<TARGET_FILE:frdp-sesmand>"
                                                    FRDP_SESSION_AGENT_BINARY="$<TARGET_FILE:frdp-session-agent>")
 if(PAM_WRAPPER_LIBRARY AND PAM_WRAPPER_MODULE_DIR AND NOT WITH_SANITIZE_ADDRESS)
+  add_library(frdp-pam-session-test MODULE EXCLUDE_FROM_ALL TestFreeRDPFrdpPamModule.c)
+  target_include_directories(frdp-pam-session-test SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
+  if(HAVE_PAM_PAM_APPL_H)
+    target_compile_definitions(frdp-pam-session-test PRIVATE HAVE_PAM_PAM_APPL_H)
+  endif()
+  set_target_properties(frdp-pam-session-test PROPERTIES
+      C_VISIBILITY_PRESET default
+      PREFIX "")
+  frdp_apply_strict_warnings(frdp-pam-session-test)
+  set_property(TARGET frdp-pam-session-test PROPERTY FOLDER "Server/frdp/Test")
+  add_dependencies(${MODULE_NAME} frdp-pam-session-test)
   target_compile_definitions(${MODULE_NAME} PRIVATE
       FRDP_PAM_WRAPPER_LIBRARY="${PAM_WRAPPER_LIBRARY}"
-      FRDP_PAM_WRAPPER_MODULE_DIR="${PAM_WRAPPER_MODULE_DIR}")
+      FRDP_PAM_WRAPPER_MODULE_DIR="${PAM_WRAPPER_MODULE_DIR}"
+      FRDP_PAM_SESSION_TEST_MODULE="$<TARGET_FILE:frdp-pam-session-test>")
 endif()
 if(XVFB_EXECUTABLE)
   target_compile_definitions(${MODULE_NAME} PRIVATE FRDP_XVFB_EXECUTABLE="${XVFB_EXECUTABLE}")

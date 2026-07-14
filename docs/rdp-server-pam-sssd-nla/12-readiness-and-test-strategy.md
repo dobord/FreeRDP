@@ -181,13 +181,15 @@ also starts the real `frdp-authd` against isolated `pam_set_items` and
 `pam_matrix` stacks. It proves password conversation, post-account `PAM_USER`
 canonicalization into the NSS identity and authorization response, account
 denial, and separate fail-closed classification of unavailable PAM identity
-infrastructure. Extend it with:
+infrastructure. A test-only PAM module additionally records the real
+`frdp-sesmand` account/credential/session phase trace, rejects
+`pam_open_session`, and proves the failed signed V3 open leaves no session,
+agent socket, display reservation, or durable metadata. Extend it with:
 
 The provider-backed case is omitted from AddressSanitizer builds because
 `pam_wrapper` loads libpam with `RTLD_DEEPBIND`, which ASan rejects; the rest of
 the focused FRDP suite remains covered by ASan/UBSan.
 
-- deterministic provider-backed session-open failure and audit recording;
 - additional concurrent clients and slowloris timeout variants; broader truncated-message boundary variants are now covered for implemented auth/session/list/reload IPC control families;
 - additional peer UID rejection; CLI server socket path validation now has focused component coverage, while broader peer-credential validation across helper roles remains open;
 - live-socket/stale-socket startup behavior;
