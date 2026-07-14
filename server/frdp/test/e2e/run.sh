@@ -10,7 +10,11 @@ profile_timeout=${FRDP_E2E_PROFILE_TIMEOUT:-1800}
 
 mkdir -p "$artifacts"
 artifacts=$(cd "$artifacts" && pwd -P)
-[[ $artifacts != "$repo_root" ]] || { echo "FRDP_E2E_ARTIFACTS must not be the repository root" >&2; exit 2; }
+if [[ $(basename "$artifacts") != artifacts || $artifacts == /artifacts ||
+	$artifacts == "$repo_root" ]]; then
+	echo "FRDP_E2E_ARTIFACTS must be a dedicated non-root directory named artifacts" >&2
+	exit 2
+fi
 export FRDP_E2E_ARTIFACTS="$artifacts"
 
 positive_integer()
@@ -66,14 +70,73 @@ cleanup()
 	fi
 }
 
+validate_rdp_auth_artifacts()
+{
+	local profile=$1
+	local server_service=$2
+	local server_id server_log server_env test_user deny_user accepted rejected
+	local total_accepted total_rejected
+	local ntlm_proof_rejected wrong_password_rejected disabled_account_rejected
+
+	server_id=$("${compose[@]}" --profile "$profile" ps -a -q "$server_service" 2>/dev/null || true)
+	if [[ -z $server_id || $server_id == *$'\n'* ]]; then
+		printf 'profile %s did not produce exactly one %s container\n' \
+			"$profile" "$server_service" >&2
+		return 1
+	fi
+	server_log="$artifacts/$profile/server-auth.log"
+	docker logs --timestamps "$server_id" >"$server_log" 2>&1 || return 1
+	server_env=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$server_id") ||
+		return 1
+	test_user=$(sed -n 's/^FRDP_TEST_USER=//p' <<<"$server_env")
+	deny_user=$(sed -n 's/^FRDP_DENY_USER=//p' <<<"$server_env")
+	if [[ -z $test_user || $test_user == *$'\n'* || -z $deny_user || $deny_user == *$'\n'* ]]; then
+		printf 'profile %s server has ambiguous E2E user configuration\n' "$profile" >&2
+		return 1
+	fi
+	accepted=$(grep -Fc "PAM accepted RDP login for $test_user from" "$server_log" || true)
+	total_accepted=$(grep -c 'PAM accepted RDP login' "$server_log" || true)
+	wrong_password_rejected=$(
+		grep -F "PAM rejected RDP login for $test_user from" "$server_log" |
+			grep -c ': denied ' || true
+	)
+	disabled_account_rejected=$(
+		grep -F "PAM rejected RDP login for $deny_user from" "$server_log" |
+			grep -c ': denied ' || true
+	)
+	ntlm_proof_rejected=$(grep -Fc 'Message Integrity Check (MIC) verification failed!' \
+		"$server_log" || true)
+	rejected=$((wrong_password_rejected + disabled_account_rejected))
+	total_rejected=$(grep -c 'PAM rejected RDP login.*: denied ' "$server_log" || true)
+	if [[ $accepted -ne 3 || $total_accepted -ne 3 || $rejected -ne 2 ||
+		$total_rejected -ne 2 ]]; then
+		printf 'profile %s expected 3 PAM accepts and 2 PAM denials, got %s and %s\n' \
+			"$profile" "$total_accepted" "$total_rejected" >&2
+		return 1
+	fi
+	if [[ $ntlm_proof_rejected -ne 1 || $wrong_password_rejected -ne 0 ||
+		$disabled_account_rejected -ne 2 ]]; then
+		printf 'profile %s did not produce one NTLM proof rejection and two disabled-user PAM denials\n' \
+			"$profile" >&2
+		return 1
+	fi
+	if grep -q 'proof identity does not match the delegated credentials' "$server_log"; then
+		printf 'profile %s encountered an NTLM proof/delegated identity mismatch\n' \
+			"$profile" >&2
+		return 1
+	fi
+}
+
 run_profile()
 {
 	local profile=$1
 	local exit_service=$2
+	local auth_server_service=${3:-}
 	local status=0
 	local output="$artifacts/$profile/compose-up.log"
 	local container_ids="$artifacts/$profile/container-ids.txt"
 
+	rm -rf -- "${artifacts:?}/$profile"
 	mkdir -p "$artifacts/$profile"
 	: >"$output"
 	"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
@@ -107,6 +170,10 @@ run_profile()
 		docker logs --timestamps "$container_id" >"$artifacts/$profile/container-logs/$container_name.log" 2>&1 || true
 		docker inspect "$container_id" >"$artifacts/$profile/container-inspect/$container_name.json" 2>&1 || true
 	done <"$container_ids"
+	if [[ $status -eq 0 && -n $auth_server_service ]] &&
+		! validate_rdp_auth_artifacts "$profile" "$auth_server_service"; then
+		status=1
+	fi
 	printf '%s\n' "$status" >"$artifacts/$profile/exit-code.txt"
 	cleanup
 	return "$status"
@@ -134,22 +201,22 @@ case "$profile" in
 		run_profile component component-tests
 		;;
 	local)
-		run_profile local rdp-client-local
+		run_profile local rdp-client-local frdpd-local
 		;;
 	samba)
-		run_profile samba rdp-client-samba
+		run_profile samba rdp-client-samba frdpd-samba
 		;;
 	freeipa)
 		if [[ ! -e /sys/fs/cgroup/cgroup.controllers ]]; then
 			echo "warning: the FreeIPA profile is designed for a cgroups-v2 Docker host" >&2
 		fi
-		run_profile freeipa rdp-client-freeipa
+		run_profile freeipa rdp-client-freeipa frdpd-freeipa
 		;;
 	all)
 		run_profile component component-tests
-		run_profile local rdp-client-local
-		run_profile samba rdp-client-samba
-		run_profile freeipa rdp-client-freeipa
+		run_profile local rdp-client-local frdpd-local
+		run_profile samba rdp-client-samba frdpd-samba
+		run_profile freeipa rdp-client-freeipa frdpd-freeipa
 		;;
 	*)
 		usage

@@ -1597,6 +1597,7 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 	char log_hostname[FRDPD_LOG_STRING_SIZE] = { 0 };
 	char nla_package[FRDPD_LOG_STRING_SIZE] = { 0 };
 	char log_user[FRDPD_LOG_STRING_SIZE] = { 0 };
+	char requested_user[FRDPD_LOG_STRING_SIZE] = { 0 };
 
 	WINPR_ASSERT(client);
 	if (!client->context)
@@ -1666,6 +1667,7 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 		.domain_mode = config->domain_mode,
 	};
 
+	(void)frdpd_auth_identity_user_utf8(identity, requested_user, sizeof(requested_user));
 	const BOOL ok = frdpd_authenticate_identity(&auth, identity, &result);
 	frdpd_peer_clear_owned_auth_identity(client, identity);
 	context->auth_status = result.status;
@@ -1678,8 +1680,11 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 		    frdpd_log_value(result.broker_error[0] ? result.broker_error : NULL, log_broker_error,
 		                    sizeof(log_broker_error), "none");
 
-		WLog_WARN(TAG, "correlation_id=%s PAM rejected RDP login from %s: %s (%d), broker_error=%s",
-		          context->correlation_id, log_hostname,
+		WLog_WARN(TAG,
+		          "correlation_id=%s PAM rejected RDP login for %s from %s: %s (%d), "
+		          "broker_error=%s",
+		          context->correlation_id,
+		          frdpd_log_value(requested_user, log_user, sizeof(log_user), "unknown"), log_hostname,
 		          frdpd_pam_auth_status_string(context->auth_status), context->pam_status,
 		          broker_error);
 		frdpd_auth_result_cleanup(&result);

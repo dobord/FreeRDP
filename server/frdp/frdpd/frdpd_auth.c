@@ -197,6 +197,34 @@ out:
 	return success;
 }
 
+BOOL frdpd_auth_identity_user_utf8(const SEC_WINNT_AUTH_IDENTITY* identity, char* user,
+                                   size_t user_size)
+{
+	char* copy = NULL;
+	char* domain = NULL;
+	BOOL success = FALSE;
+
+	if (!user || (user_size == 0))
+		return FALSE;
+	user[0] = '\0';
+	if (!identity)
+		return FALSE;
+	if (!frdpd_auth_identity_fields_are_valid(identity) ||
+	    !frdpd_auth_copy_identity_user_domain(identity, &copy, &domain) || !copy)
+		goto out;
+	const int rc = snprintf(user, user_size, "%s", copy);
+	if ((rc < 0) || ((size_t)rc >= user_size))
+		goto out;
+	success = TRUE;
+
+out:
+	free(copy);
+	free(domain);
+	if (!success)
+		user[0] = '\0';
+	return success;
+}
+
 static BOOL frdpd_auth_copy_identity_fields(const SEC_WINNT_AUTH_IDENTITY* identity, char** user,
                                             char** domain, char** password)
 {

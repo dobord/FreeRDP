@@ -101,6 +101,7 @@ build_args()
 		"+clipboard"
 		"-heartbeat"
 		"-multitransport"
+		"-auto-reconnect"
 		"/tune:FreeRDP_NetworkAutoDetect:false"
 		"/log-level:TRACE"
 	)
@@ -133,6 +134,64 @@ run_auth_only()
 	log "auth-only '$label' produced expected result: $expected"
 }
 
+assert_no_managed_sessions()
+{
+	local label=$1
+	local logfile="$FRDP_ARTIFACT_DIR/session-list-after-auth-${label}.txt"
+	local runtime_log="$FRDP_ARTIFACT_DIR/session-runtime-after-auth-${label}.txt"
+	local socket_dir socket_name
+
+	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$logfile" 2>&1 ||
+		fail "failed to list sessions after auth-only '$label'"
+	grep -Fxq 'No active sessions' "$logfile" ||
+		fail "auth-only '$label' left a managed session"
+	socket_dir=$(dirname "$FRDP_SESSION_SOCKET")
+	socket_name=$(basename "$FRDP_SESSION_SOCKET")
+	find "$socket_dir" -mindepth 1 -maxdepth 1 ! -name "$socket_name" -printf '%f\n' \
+		>"$runtime_log"
+	[[ ! -s $runtime_log ]] ||
+		fail "auth-only '$label' left managed session runtime artifacts"
+}
+
+cleanup_auth_only_session()
+{
+	local i session_id='' session_user='' session_count=0
+	local logfile="$FRDP_ARTIFACT_DIR/session-list-after-auth-valid.txt"
+
+	for ((i = 0; i < 20; i++)); do
+		frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$logfile" 2>&1 ||
+			fail "failed to list sessions after valid auth-only probe"
+		if grep -Fxq 'No active sessions' "$logfile"; then
+			session_count=0
+			session_id=''
+			session_user=''
+		else
+			session_count=$(awk 'NR > 1 { count++ } END { print count + 0 }' "$logfile")
+			read -r session_id session_user < <(awk 'NR == 2 { print $1, $2 }' "$logfile") || true
+		fi
+		if [[ $session_count -eq 1 && $session_user == "$FRDP_TEST_USER" && -n $session_id ]]; then
+			break
+		fi
+		sleep 0.25
+	done
+	[[ $session_count -eq 1 && $session_user == "$FRDP_TEST_USER" && -n $session_id ]] ||
+		fail "valid auth-only probe produced an unexpected session registry"
+	frdpctl kill-session "$session_id" --socket "$FRDP_SESSION_SOCKET" \
+		>"$FRDP_ARTIFACT_DIR/session-kill-after-auth-valid.txt" 2>&1 ||
+		fail "failed to clean the valid auth-only session $session_id"
+	for ((i = 0; i < FRDP_E2E_TIMEOUT; i++)); do
+		frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
+			>"$FRDP_ARTIFACT_DIR/session-list-after-auth-valid-cleanup.txt" 2>&1 || true
+		if grep -Fxq 'No active sessions' \
+			"$FRDP_ARTIFACT_DIR/session-list-after-auth-valid-cleanup.txt"; then
+			log "valid auth-only managed session was cleaned"
+			return 0
+		fi
+		sleep 1
+	done
+	fail "valid auth-only managed session $session_id was not cleaned"
+}
+
 stop_process()
 {
 	local pid=$1
@@ -162,6 +221,7 @@ command -v xdotool >/dev/null 2>&1 || fail "xdotool executable was not found"
 command -v xclip >/dev/null 2>&1 || fail "xclip executable was not found"
 command -v ps >/dev/null 2>&1 || fail "ps executable was not found"
 command -v nc >/dev/null 2>&1 || fail "nc executable was not found"
+command -v find >/dev/null 2>&1 || fail "find executable was not found"
 command -v stdbuf >/dev/null 2>&1 || fail "stdbuf executable was not found"
 command -v frdpctl >/dev/null 2>&1 || fail "frdpctl executable was not found"
 
@@ -184,8 +244,11 @@ done
 frdpctl status --socket "$FRDP_SESSION_SOCKET" | tee "$FRDP_ARTIFACT_DIR/session-status-before.txt"
 
 run_auth_only valid success "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"
+cleanup_auth_only_session
 run_auth_only wrong-password failure "$FRDP_TEST_USER" "${FRDP_TEST_PASSWORD}--wrong"
+assert_no_managed_sessions wrong-password
 run_auth_only disabled-account failure "$FRDP_DENY_USER" "$FRDP_DENY_PASSWORD"
+assert_no_managed_sessions disabled-account
 
 Xvfb :99 -screen 0 1024x768x24 -nolisten tcp >"$FRDP_ARTIFACT_DIR/client-xvfb.log" 2>&1 &
 xvfb_pid=$!

@@ -203,6 +203,24 @@ static int identity_matches(const char* user, const char* domain,
 	return identity_matches_mode(user, domain, proof, FRDPD_DOMAIN_DOWNLEVEL);
 }
 
+static int identity_user_is_utf8(const char* expected)
+{
+	SEC_WINNT_AUTH_IDENTITY identity = WINPR_C_ARRAY_INIT;
+	char user[32] = { 0 };
+	int rc = -1;
+
+	memset(user, 'x', sizeof(user));
+	if (frdpd_auth_identity_user_utf8(NULL, user, sizeof(user)) || user[0] != '\0')
+		return -1;
+	if (sspi_SetAuthIdentity(&identity, expected, "EXAMPLE", "password") < 0)
+		return -1;
+	if (frdpd_auth_identity_user_utf8(&identity, user, sizeof(user)) &&
+	    strcmp(user, expected) == 0)
+		rc = 0;
+	sspi_FreeAuthIdentity(&identity);
+	return rc;
+}
+
 static int embedded_identity_fields_are_rejected(const SecPkgContext_AuthIdentity* proof)
 {
 	static const WCHAR embedded_user[] = { 'A', 'l', 0, 'i', 'c', 'e' };
@@ -239,6 +257,7 @@ static int counted_ansi_identity_fields_are_bounded(const SecPkgContext_AuthIden
 	static unsigned char embedded_user[] = { 'a', 'l', 0, 'i', 'c', 'e' };
 	static unsigned char embedded_password[] = { 'p', 0, 'a', 's', 's' };
 	SEC_WINNT_AUTH_IDENTITY_A identity = WINPR_C_ARRAY_INIT;
+	char log_user[8] = { 0 };
 
 	identity.User = user;
 	identity.UserLength = ARRAYSIZE(user);
@@ -247,6 +266,14 @@ static int counted_ansi_identity_fields_are_bounded(const SecPkgContext_AuthIden
 	identity.Password = password;
 	identity.PasswordLength = ARRAYSIZE(password);
 	identity.Flags = SEC_WINNT_AUTH_IDENTITY_ANSI;
+	if (!frdpd_auth_identity_user_utf8((const SEC_WINNT_AUTH_IDENTITY*)&identity, log_user,
+	                                  sizeof(log_user)) ||
+	    strcmp(log_user, "alice") != 0)
+		return -1;
+	memset(log_user, 'x', sizeof(log_user));
+	if (frdpd_auth_identity_user_utf8((const SEC_WINNT_AUTH_IDENTITY*)&identity, log_user, 5) ||
+	    log_user[0] != '\0')
+		return -1;
 	if (!frdpd_auth_identity_matches_proof((const SEC_WINNT_AUTH_IDENTITY*)&identity, proof,
 	                                       FRDPD_DOMAIN_DOWNLEVEL))
 		return -1;
@@ -283,6 +310,8 @@ int TestFreeRDPFrdpNtlmIdentity(int argc, char* argv[])
 	WINPR_UNUSED(argv);
 	memcpy(proof.User, "Alice", sizeof("Alice"));
 	memcpy(proof.Domain, "EXAMPLE", sizeof("EXAMPLE"));
+	if (identity_user_is_utf8("alice") != 0)
+		return -1;
 	if (identity_matches("alice", "example", &proof) != 1)
 		return -1;
 	if (identity_matches("bob", "EXAMPLE", &proof) != 0)

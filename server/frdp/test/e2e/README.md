@@ -65,15 +65,16 @@ The first FreeIPA start provisions the realm and can take several minutes. The i
 
 ## What the RDP probe checks
 
-`rdp-probe.sh` uses the `xfreerdp` built from the same source tree and performs five checks:
+`rdp-probe.sh` uses the `xfreerdp` built from the same source tree and performs six checks:
 
 1. `/auth-only` succeeds for the enabled user.
-2. `/auth-only` fails for an incorrect password.
-3. `/auth-only` fails for a locked or disabled account.
-4. A normal graphical connection under client-side Xvfb remains connected, appears as `active`, and transfers supplementary-plane Unicode clipboard text in both directions under the configured policy.
-5. The connection becomes `disconnected` after client termination, and a second graphical client reattaches to the only matching session with the same session id, display and agent PID; its disconnect and explicit `kill-session` leave an empty registry.
+2. The managed session created by the successful probe is explicitly cleaned.
+3. `/auth-only` fails for an incorrect password and leaves no managed session or durable session runtime artifact.
+4. `/auth-only` fails for a locked or disabled account and leaves no managed session or durable session runtime artifact.
+5. A normal graphical connection under client-side Xvfb remains connected, appears as `active`, and transfers supplementary-plane Unicode clipboard text in both directions under the configured policy.
+6. The connection becomes `disconnected` after client termination, and a second graphical client reattaches to the only matching session with the same session id, display and agent PID; its disconnect and explicit `kill-session` leave an empty registry.
 
-The client mounts only the session-manager socket volume. This allows it to observe the real manager registry without inspecting server process memory. Logs, session listings and an XWD capture of the client display are written below `artifacts/<profile>/`. The harness also preserves the rendered Compose model, timestamped aggregate logs, per-container logs, per-container inspect JSON and the component profile CTest `LastTest.log` when available.
+The client mounts only the session-manager socket volume. This allows it to observe the real manager registry and durable socket, metadata and display-reservation artifacts without inspecting server process memory. Before each run, the harness clears `artifacts/<profile>/` so stale output cannot satisfy a check; `FRDP_E2E_ARTIFACTS` must resolve to a dedicated non-root directory named `artifacts`. Logs, session listings and an XWD capture of the client display are written there. Successful RDP profiles also preserve `server-auth.log` and require exactly three server-side PAM accepts, one NTLM MIC rejection for the wrong password before PAM, two named PAM/SSSD denials produced by the disabled-user probe's connection path, and no NTLM proof/delegated-identity mismatch. Automatic client reconnect is explicitly disabled. The harness additionally preserves the rendered Compose model, timestamped aggregate logs, per-container logs, per-container inspect JSON and the component profile CTest `LastTest.log` when available.
 
 ## Useful direct commands
 
