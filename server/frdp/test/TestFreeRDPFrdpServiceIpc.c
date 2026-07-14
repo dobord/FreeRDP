@@ -2632,6 +2632,147 @@ cleanup:
 	return rc;
 }
 
+#if defined(__linux__)
+static int connect_unvalidated_socket(const char* socket_path)
+{
+	struct sockaddr_un addr = { 0 };
+	struct timeval timeout = { .tv_sec = 5, .tv_usec = 0 };
+	int fd = -1;
+
+	if (!socket_path || (strlen(socket_path) >= sizeof(addr.sun_path)))
+		return -1;
+	fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	if (fd < 0)
+		return -1;
+	addr.sun_family = AF_UNIX;
+	snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", socket_path);
+	if ((setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0) ||
+	    (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0) ||
+	    (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0))
+	{
+		close(fd);
+		return -1;
+	}
+	return fd;
+}
+
+static int run_cross_uid_request(const char* socket_path, int auth_helper, uid_t uid, gid_t gid)
+{
+	int fd = -1;
+	int rc = -1;
+
+	if ((setgroups(0, NULL) != 0) || (setgid(gid) != 0) || (setuid(uid) != 0) ||
+	    (geteuid() != uid))
+		return -1;
+	fd = connect_unvalidated_socket(socket_path);
+	if (fd < 0)
+		return -1;
+	if (auth_helper)
+	{
+		frdpAuthResponse response = { 0 };
+
+		if ((frdp_ipc_recv_auth_response_v2(fd, &response) == 0) && !response.success &&
+		    (strcmp(response.error, "unauthorized IPC peer") == 0))
+			rc = 0;
+		SecureZeroMemory(&response, sizeof(response));
+	}
+	else
+		rc = receive_session_response(fd, 0, "unauthorized IPC peer");
+	frdp_ipc_close(fd);
+	return rc;
+}
+
+static int test_helper_rejects_different_uid(const char* binary, const char* name,
+	                                         int auth_helper, uid_t uid, gid_t gid)
+{
+	frdpTestHelper helper = { .pid = -1 };
+	pid_t child = -1;
+	int status = 0;
+	int permissions_changed = 0;
+	int rc = -1;
+
+	if (start_helper(binary, name, &helper) != 0)
+		return -1;
+	if (chmod(helper.dir, 0711) != 0)
+		goto cleanup;
+	permissions_changed = 1;
+	if (chmod(helper.socket_path, 0666) != 0)
+		goto cleanup;
+	child = fork();
+	if (child < 0)
+		goto cleanup;
+	if (child == 0)
+		_exit(run_cross_uid_request(helper.socket_path, auth_helper, uid, gid) == 0 ? 0 : 1);
+	{
+		pid_t waited = -1;
+
+		do
+			waited = waitpid(child, &status, 0);
+		while ((waited < 0) && (errno == EINTR));
+
+		if (waited == child)
+			child = -1;
+		if ((waited < 0) || !WIFEXITED(status) || (WEXITSTATUS(status) != 0))
+			goto cleanup;
+	}
+	if ((chmod(helper.socket_path, 0600) != 0) || (chmod(helper.dir, 0700) != 0))
+		goto cleanup;
+	permissions_changed = 0;
+	if ((test_helper_health(helper.socket_path, auth_helper ? "frdp-authd" : "frdp-sesmand") !=
+	     0) ||
+	    (auth_helper ? (test_authd_rejects_bad_length(helper.socket_path) != 0)
+	                 : (test_sesmand_list_empty(helper.socket_path) != 0)))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (child > 0)
+	{
+		kill(child, SIGKILL);
+		(void)waitpid(child, NULL, 0);
+	}
+	if (permissions_changed)
+	{
+		(void)chmod(helper.socket_path, 0600);
+		(void)chmod(helper.dir, 0700);
+	}
+	if (stop_helper(&helper) != 0)
+		rc = -1;
+	return rc;
+}
+#endif
+
+static int test_helpers_reject_different_uid(void)
+{
+#if !defined(__linux__)
+	printf("helper cross-UID rejection skipped: Linux peer credentials unavailable\n");
+	return 0;
+#else
+	struct passwd* pwd = NULL;
+	uid_t peer_uid = (uid_t)65534;
+	gid_t peer_gid = (gid_t)65534;
+
+	if (geteuid() != 0)
+	{
+		printf("helper cross-UID rejection skipped: root required for UID drop\n");
+		return 0;
+	}
+	pwd = getpwnam("nobody");
+	if (pwd && (pwd->pw_uid != 0))
+	{
+		peer_uid = pwd->pw_uid;
+		peer_gid = pwd->pw_gid;
+	}
+	if ((peer_uid == 0) ||
+	    (test_helper_rejects_different_uid(FRDP_AUTHD_BINARY, "frdp-authd-cross-uid", 1,
+	                                       peer_uid, peer_gid) != 0) ||
+	    (test_helper_rejects_different_uid(FRDP_SESMAND_BINARY, "frdp-sesmand-cross-uid", 0,
+	                                       peer_uid, peer_gid) != 0))
+		return -1;
+	return 0;
+#endif
+}
+
 static int test_sesmand_rate_limit(void)
 {
 	frdpTestHelper helper;
@@ -2844,6 +2985,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_sesmand_component() != 0)
 	{
 		printf("frdp-sesmand IPC component test failed\n");
+		return -1;
+	}
+	if (test_helpers_reject_different_uid() != 0)
+	{
+		printf("helper cross-UID rejection test failed\n");
 		return -1;
 	}
 	if (test_authd_rate_limit() != 0)
