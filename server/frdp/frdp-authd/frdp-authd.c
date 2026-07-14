@@ -760,6 +760,9 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                                                     authorization_id, sizeof(authorization_id)) != 0)
                         send_auth_response(cfd, 0, "authorization id generation failed", NULL,
                                            (uid_t)-1, (gid_t)-1, NULL, 0, 0);
+                    else if (auth_status == FRDP_AUTHD_PAM_ERROR)
+                        send_auth_response(cfd, 0, "authentication service error", NULL,
+                                           (uid_t)-1, (gid_t)-1, NULL, 0, 0);
                     else {
                         send_auth_response_with_user(
                             cfd, authenticated, NULL, authenticated ? posix_user : NULL,

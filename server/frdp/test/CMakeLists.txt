@@ -18,6 +18,7 @@ set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFree
                          TestFreeRDPFrdpSessionRecovery.c TestFreeRDPFrdpSesmandPam.c
                          TestFreeRDPFrdpPam.c)
 find_program(XVFB_EXECUTABLE Xvfb)
+find_package(pam_wrapper CONFIG QUIET)
 if(XVFB_EXECUTABLE)
   list(APPEND ${MODULE_PREFIX}_TESTS TestFreeRDPFrdpAgentStop.c)
 endif()
@@ -107,6 +108,11 @@ target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CM
                                                    FRDP_AUTHD_TEST_DENY_BINARY="$<TARGET_FILE:frdp-authd-test-deny>"
                                                    FRDP_SESMAND_BINARY="$<TARGET_FILE:frdp-sesmand>"
                                                    FRDP_SESSION_AGENT_BINARY="$<TARGET_FILE:frdp-session-agent>")
+if(PAM_WRAPPER_LIBRARY AND PAM_WRAPPER_MODULE_DIR AND NOT WITH_SANITIZE_ADDRESS)
+  target_compile_definitions(${MODULE_NAME} PRIVATE
+      FRDP_PAM_WRAPPER_LIBRARY="${PAM_WRAPPER_LIBRARY}"
+      FRDP_PAM_WRAPPER_MODULE_DIR="${PAM_WRAPPER_MODULE_DIR}")
+endif()
 if(XVFB_EXECUTABLE)
   target_compile_definitions(${MODULE_NAME} PRIVATE FRDP_XVFB_EXECUTABLE="${XVFB_EXECUTABLE}")
   target_include_directories(${MODULE_NAME} SYSTEM PRIVATE ${X11_INCLUDE_DIR})

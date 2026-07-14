@@ -176,10 +176,18 @@ Component tests start real binaries while replacing only external systems that
 are not the component under test. The focused CTest target now starts real
 `frdp-authd` and `frdp-sesmand` processes, sends malformed and valid control
 messages, and covers truncated header/body clients that close the connection.
-Extend it with:
+With the optional `libpam-wrapper` test dependency present, the focused test
+also starts the real `frdp-authd` against isolated `pam_set_items` and
+`pam_matrix` stacks. It proves password conversation, post-account `PAM_USER`
+canonicalization into the NSS identity and authorization response, account
+denial, and separate fail-closed classification of unavailable PAM identity
+infrastructure. Extend it with:
 
-- a purpose-built PAM test module with deterministic success, account denial,
-  session-open failure and audit recording;
+The provider-backed case is omitted from AddressSanitizer builds because
+`pam_wrapper` loads libpam with `RTLD_DEEPBIND`, which ASan rejects; the rest of
+the focused FRDP suite remains covered by ASan/UBSan.
+
+- deterministic provider-backed session-open failure and audit recording;
 - additional concurrent clients and slowloris timeout variants; broader truncated-message boundary variants are now covered for implemented auth/session/list/reload IPC control families;
 - additional peer UID rejection; CLI server socket path validation now has focused component coverage, while broader peer-credential validation across helper roles remains open;
 - live-socket/stale-socket startup behavior;

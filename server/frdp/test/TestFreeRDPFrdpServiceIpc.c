@@ -940,6 +940,251 @@ cleanup:
 	return rc;
 }
 
+#if defined(FRDP_PAM_WRAPPER_LIBRARY) && defined(FRDP_PAM_WRAPPER_MODULE_DIR)
+static int write_authd_fixture_file(const char* path, const char* contents)
+{
+	FILE* fp = NULL;
+	int write_rc = -1;
+
+	if (!path || !contents)
+		return -1;
+	fp = fopen(path, "wx");
+	if (!fp)
+		return -1;
+	write_rc = fputs(contents, fp);
+	if (fclose(fp) != 0)
+		write_rc = -1;
+	if (write_rc >= 0)
+		return 0;
+	unlink(path);
+	return -1;
+}
+
+static int start_authd_with_pam_wrapper(const char* name, const char* service_dir,
+	                                    const char* service, const char* canonical_user,
+	                                    const char* key_path, frdpTestHelper* helper)
+{
+	if (!name || !service_dir || !service || !canonical_user || !key_path || !helper)
+		return -1;
+	memset(helper, 0, sizeof(*helper));
+	helper->pid = -1;
+	if (make_runtime_dir(helper->dir, sizeof(helper->dir), name) != 0)
+		return -1;
+	if (snprintf(helper->socket_path, sizeof(helper->socket_path), "%s/%s.sock", helper->dir,
+	             name) >= (int)sizeof(helper->socket_path))
+		goto fail;
+
+	helper->pid = fork();
+	if (helper->pid < 0)
+		goto fail;
+	if (helper->pid == 0)
+	{
+		if ((setenv("LD_PRELOAD", FRDP_PAM_WRAPPER_LIBRARY, 1) != 0) ||
+		    (setenv("PAM_WRAPPER", "1", 1) != 0) ||
+		    (setenv("PAM_WRAPPER_SERVICE_DIR", service_dir, 1) != 0) ||
+		    (setenv("PAM_USER", canonical_user, 1) != 0) ||
+		    (setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0))
+			_exit(127);
+		execl(FRDP_AUTHD_BINARY, FRDP_AUTHD_BINARY, "--pam-service", service, "--socket",
+		      helper->socket_path, (char*)NULL);
+		_exit(127);
+	}
+	if (wait_for_socket(helper->socket_path) != 0)
+		goto fail;
+	return 0;
+
+fail:
+	if (helper->pid > 0)
+	{
+		kill(helper->pid, SIGKILL);
+		(void)waitpid(helper->pid, NULL, 0);
+	}
+	unlink(helper->socket_path);
+	rmdir(helper->dir);
+	memset(helper, 0, sizeof(*helper));
+	helper->pid = -1;
+	return -1;
+}
+
+static int exchange_authd_login(const char* socket_path, const char* user, const char* password,
+	                            frdpAuthResponse* response)
+{
+	frdpAuthRequest request = { 0 };
+	int fd = -1;
+	int rc = -1;
+
+	if (!socket_path || !user || !password || !response)
+		return -1;
+	fd = frdp_ipc_connect(socket_path);
+	if (fd < 0)
+		return -1;
+	if ((snprintf(request.correlation_id, sizeof(request.correlation_id), "%s",
+	              "33333333-3333-4333-8333-333333333333") >=
+	     (int)sizeof(request.correlation_id)) ||
+	    (snprintf(request.user, sizeof(request.user), "%s", user) >=
+	     (int)sizeof(request.user)) ||
+	    (snprintf(request.rhost, sizeof(request.rhost), "%s", "203.0.113.30") >=
+	     (int)sizeof(request.rhost)) ||
+	    (snprintf(request.password, sizeof(request.password), "%s", password) >=
+	     (int)sizeof(request.password)))
+		goto cleanup;
+	if ((frdp_ipc_send_auth_request_v2(fd, &request) != 0) ||
+	    (frdp_ipc_recv_auth_response_v2(fd, response) != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	SecureZeroMemory(&request, sizeof(request));
+	frdp_ipc_close(fd);
+	return rc;
+}
+
+static int run_pam_wrapper_auth_case(const char* name, const char* service_dir,
+	                                 const char* service, const char* canonical_user,
+	                                 const char* key_path, frdpAuthResponse* response)
+{
+	frdpTestHelper helper = { .pid = -1 };
+	int rc = -1;
+
+	if (start_authd_with_pam_wrapper(name, service_dir, service, canonical_user, key_path,
+	                                &helper) != 0)
+		return -1;
+	if (exchange_authd_login(helper.socket_path, "frdp-pam-alias", "test-password", response) ==
+	    0)
+		rc = 0;
+	if (stop_helper(&helper) != 0)
+		rc = -1;
+	return rc;
+}
+
+static int run_pam_wrapper_error_limit_case(const char* service_dir, const char* service,
+	                                        const char* canonical_user, const char* key_path)
+{
+	frdpTestHelper helper = { .pid = -1 };
+	frdpAuthResponse response = { 0 };
+	int rc = -1;
+
+	if (start_authd_with_pam_wrapper("pam-error", service_dir, service, canonical_user, key_path,
+	                                &helper) != 0)
+		return -1;
+	for (uint32_t x = 0; x <= FRDP_AUTH_FAILURE_LIMIT_DEFAULT_MAX_FAILURES; x++)
+	{
+		SecureZeroMemory(&response, sizeof(response));
+		if ((exchange_authd_login(helper.socket_path, "frdp-pam-alias", "test-password",
+		                          &response) != 0) ||
+		    response.success || (strcmp(response.error, "authentication service error") != 0))
+			goto cleanup;
+	}
+	rc = 0;
+
+cleanup:
+	SecureZeroMemory(&response, sizeof(response));
+	if (stop_helper(&helper) != 0)
+		rc = -1;
+	return rc;
+}
+
+static int test_authd_real_pam_provider(void)
+{
+	static const char success_service[] = "frdp-pam-success";
+	static const char denied_service[] = "frdp-pam-denied";
+	static const char error_service[] = "frdp-pam-error";
+	frdpAuthResponse response = { 0 };
+	struct passwd* pwd = getpwuid(geteuid());
+	char dir[1024] = { 0 };
+	char success_path[1024] = { 0 };
+	char denied_path[1024] = { 0 };
+	char error_path[1024] = { 0 };
+	char passdb_path[1024] = { 0 };
+	char denied_passdb_path[1024] = { 0 };
+	char missing_passdb_path[1024] = { 0 };
+	char key_path[1024] = { 0 };
+	char contents[4096] = { 0 };
+	int rc = -1;
+
+	if (!pwd || !pwd->pw_name || !pwd->pw_name[0] ||
+	    (make_runtime_dir(dir, sizeof(dir), "pam-provider") != 0))
+		return -1;
+	if ((snprintf(success_path, sizeof(success_path), "%s/%s", dir, success_service) >=
+	     (int)sizeof(success_path)) ||
+	    (snprintf(denied_path, sizeof(denied_path), "%s/%s", dir, denied_service) >=
+	     (int)sizeof(denied_path)) ||
+	    (snprintf(error_path, sizeof(error_path), "%s/%s", dir, error_service) >=
+	     (int)sizeof(error_path)) ||
+	    (snprintf(passdb_path, sizeof(passdb_path), "%s/success.passdb", dir) >=
+	     (int)sizeof(passdb_path)) ||
+	    (snprintf(denied_passdb_path, sizeof(denied_passdb_path), "%s/denied.passdb", dir) >=
+	     (int)sizeof(denied_passdb_path)) ||
+	    (snprintf(missing_passdb_path, sizeof(missing_passdb_path), "%s/missing.passdb", dir) >=
+	     (int)sizeof(missing_passdb_path)) ||
+	    (snprintf(key_path, sizeof(key_path), "%s/auth-token.key", dir) >=
+	     (int)sizeof(key_path)))
+		goto cleanup;
+
+	if ((snprintf(contents, sizeof(contents), "%s:test-password:%s\n", pwd->pw_name,
+	              success_service) >= (int)sizeof(contents)) ||
+	    (write_authd_fixture_file(passdb_path, contents) != 0) ||
+	    (snprintf(contents, sizeof(contents), "%s:test-password:some-other-service\n",
+	              pwd->pw_name) >= (int)sizeof(contents)) ||
+	    (write_authd_fixture_file(denied_passdb_path, contents) != 0))
+		goto cleanup;
+
+	if ((snprintf(contents, sizeof(contents),
+	              "auth required %s/pam_set_items.so\n"
+	              "auth required %s/pam_matrix.so passdb=%s\n"
+	              "account required %s/pam_matrix.so passdb=%s\n",
+	              FRDP_PAM_WRAPPER_MODULE_DIR, FRDP_PAM_WRAPPER_MODULE_DIR, passdb_path,
+	              FRDP_PAM_WRAPPER_MODULE_DIR, passdb_path) >= (int)sizeof(contents)) ||
+	    (write_authd_fixture_file(success_path, contents) != 0) ||
+	    (snprintf(contents, sizeof(contents),
+	              "auth required %s/pam_set_items.so\n"
+	              "auth required %s/pam_matrix.so passdb=%s\n"
+	              "account required %s/pam_matrix.so passdb=%s\n",
+	              FRDP_PAM_WRAPPER_MODULE_DIR, FRDP_PAM_WRAPPER_MODULE_DIR, denied_passdb_path,
+	              FRDP_PAM_WRAPPER_MODULE_DIR, denied_passdb_path) >= (int)sizeof(contents)) ||
+	    (write_authd_fixture_file(denied_path, contents) != 0) ||
+	    (snprintf(contents, sizeof(contents), "auth required %s/pam_matrix.so passdb=%s\n",
+	              FRDP_PAM_WRAPPER_MODULE_DIR, missing_passdb_path) >= (int)sizeof(contents)) ||
+	    (write_authd_fixture_file(error_path, contents) != 0))
+		goto cleanup;
+
+	if ((run_pam_wrapper_auth_case("pam-success", dir, success_service, pwd->pw_name, key_path,
+	                               &response) != 0) ||
+	    !response.success || (strcmp(response.user, pwd->pw_name) != 0) ||
+	    (response.uid != (uint64_t)pwd->pw_uid) || (response.gid != (uint64_t)pwd->pw_gid) ||
+	    !response.has_posix_account || !response.authorization_id[0] ||
+	    (response.group_count == 0) || (response.group_count > FRDP_IPC_MAX_AUTH_GROUPS))
+		goto cleanup;
+	SecureZeroMemory(&response, sizeof(response));
+
+	if ((run_pam_wrapper_auth_case("pam-denied", dir, denied_service, pwd->pw_name, key_path,
+	                               &response) != 0) ||
+	    response.success || response.error[0])
+		goto cleanup;
+	SecureZeroMemory(&response, sizeof(response));
+
+	if (run_pam_wrapper_error_limit_case(dir, error_service, pwd->pw_name, key_path) != 0)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	SecureZeroMemory(&response, sizeof(response));
+	unlink(key_path);
+	unlink(error_path);
+	unlink(denied_path);
+	unlink(success_path);
+	unlink(denied_passdb_path);
+	unlink(passdb_path);
+	rmdir(dir);
+	return rc;
+}
+#else
+static int test_authd_real_pam_provider(void)
+{
+	return 0;
+}
+#endif
+
 static int test_monotonic_seconds(uint64_t* seconds)
 {
 	struct timespec now = { 0 };
@@ -2465,6 +2710,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_authd_account_and_source_failure_limit() != 0)
 	{
 		printf("frdp-authd account/source failure-limit test failed\n");
+		return -1;
+	}
+	if (test_authd_real_pam_provider() != 0)
+	{
+		printf("frdp-authd real PAM provider test failed\n");
 		return -1;
 	}
 	if (test_sesmand_rate_limit() != 0)
