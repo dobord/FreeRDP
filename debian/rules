@@ -2,7 +2,7 @@
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
 BUILD_DIR = ../build-debian-frdpd-package
-SERVER_TARGETS = winpr-tools frdpd frdp-authd frdp-sesmand frdp-session-agent frdpctl
+SERVER_TARGETS = winpr-tools winpr-hash frdpd frdp-authd frdp-sesmand frdp-session-agent frdpctl
 LTO_FLAGS = -flto=auto -ffat-lto-objects
 BUILD_FLAGS = DEB_BUILD_MAINT_OPTIONS='$(DEB_BUILD_MAINT_OPTIONS)' dpkg-buildflags
 PARALLEL_JOBS = $(or $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS))),$(shell nproc))

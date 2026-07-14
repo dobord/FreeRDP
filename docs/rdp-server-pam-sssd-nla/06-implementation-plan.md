@@ -226,8 +226,8 @@ Exit criteria: the security baseline is accepted; no critical crashes are found 
 
 Deliverables:
 
-- [x] CMake install rules for FRDP runtime helper binaries, `frdpd.toml`, PAM service, systemd unit examples, and inactive MAC policy examples verified with the `server` component in an isolated build;
-- [x] package previews (root `debian/` metadata supports a verified server-only binary package smoke build with `dpkg-buildpackage`; `packaging/rpm/frdpd.spec` supports a verified server-only `rpmbuild -bb --nodeps` smoke build with local macros, while distro RPM CI and production distro policy verification remain open);
+- [x] CMake install rules for FRDP runtime helper binaries, `frdpd.toml`, PAM service, systemd unit examples, inactive MAC policy examples, and the default-on NTLM `winpr-hash` provisioning tool verified with the `server` component in isolated default-on and explicit-off builds;
+- [x] package previews (root `debian/` metadata supports a verified server-only binary package build with `dpkg-buildpackage`, including execution of packaged `winpr-hash --password-stdin`; `packaging/rpm/frdpd.spec` explicitly builds/lists the tool and supports an earlier verified server-only `rpmbuild -bb --nodeps` smoke build with local macros, while a fresh target-distro RPM build, distro RPM CI, and production distro policy verification remain open);
 - [x] admin CLI `frdpctl` builds and installs under `WITH_FRDPD`;
 - [x] admin CLI `frdpctl status` / `list-sessions` / `kill-session` operations over `frdp-sesmand` session IPC, including per-session lifecycle state in `list-sessions` and grouped state counts in `status`, with local CTest smoke coverage for request/response behavior;
 - [x] admin CLI `frdpctl reload` session IPC operation, with local request/response CTest coverage including the applied PAM-service success message;

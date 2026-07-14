@@ -37,6 +37,12 @@ endif()
 set(FRDP_CONFIG_FILE "${CMAKE_CURRENT_BINARY_DIR}/frdpd.toml")
 configure_file(config/frdpd.toml.in "${FRDP_CONFIG_FILE}" @ONLY)
 
+if(WITH_FRDPD_NTLM AND TARGET winpr-hash)
+  installwithrpath(TARGETS winpr-hash
+                   DESTINATION ${CMAKE_INSTALL_BINDIR}
+                   COMPONENT server)
+endif()
+
 function(frdp_apply_strict_warnings target)
   if(NOT WITH_FRDPD_STRICT_WARNINGS)
     return()

@@ -27,7 +27,7 @@ a non-installed prototype in the current package.
 %build
 # Configure and build using CMake
 %cmake -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_CLIENT=OFF -DWITH_SAMPLE=OFF -DWITH_SHADOW=OFF -DWITH_PROXY=OFF -DFRDP_SYSTEMD_SYSTEM_UNIT_DIR=%{_unitdir} .
-%cmake_build --target frdpd frdp-authd frdp-sesmand frdp-session-agent frdpctl
+%cmake_build --target winpr-hash frdpd frdp-authd frdp-sesmand frdp-session-agent frdpctl
 
 %install
 # Install built binaries and configuration
@@ -50,6 +50,7 @@ a non-installed prototype in the current package.
 /usr/bin/frdp-sesmand
 /usr/bin/frdp-session-agent
 /usr/bin/frdpctl
+/usr/bin/winpr-hash
 %dir %{_sysconfdir}/frdpd
 %config(noreplace) %{_sysconfdir}/frdpd/frdpd.toml
 %config(noreplace) %{_sysconfdir}/frdpd/frdpd.env

@@ -96,6 +96,11 @@ add_executable(${MODULE_NAME}
     ../frdp-sesmand/session_state.h)
 add_dependencies(${MODULE_NAME} frdpd frdpctl frdp-authd frdp-authd-test-deny frdp-sesmand
                  frdp-session-agent)
+set(FRDP_NTLM_PROVISIONING_AVAILABLE FALSE)
+if(WITH_FRDPD_NTLM AND TARGET winpr-hash)
+  add_dependencies(${MODULE_NAME} winpr-hash)
+  set(FRDP_NTLM_PROVISIONING_AVAILABLE TRUE)
+endif()
 
 target_include_directories(${MODULE_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_include_directories(${MODULE_NAME} SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
@@ -206,6 +211,13 @@ add_test(NAME TestFreeRDPFrdpd
                  -DFRDPD_NTLM_ENABLED=$<BOOL:${WITH_FRDPD_NTLM}>
                  "-DFRDP_SAMPLE_CONFIG_PATH=${FRDP_CONFIG_FILE}"
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpd.cmake)
+
+add_test(NAME TestFreeRDPFrdpInstall
+         COMMAND ${CMAKE_COMMAND}
+                 -DFRDP_BUILD_DIR=${CMAKE_BINARY_DIR}
+                 -DFRDP_INSTALL_BINDIR=${CMAKE_INSTALL_BINDIR}
+                 -DFRDP_NTLM_PROVISIONING_AVAILABLE=${FRDP_NTLM_PROVISIONING_AVAILABLE}
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpInstall.cmake)
 
 add_test(NAME TestFreeRDPFrdpIpcDemo
          COMMAND ${CMAKE_COMMAND} -DFRDPD_IPC_DEMO_BINARY=$<TARGET_FILE:frdpd-ipc-demo>

@@ -55,7 +55,9 @@ its identities synchronized with the accounts that PAM/SSSD will authorize.
    restarted service is healthy.
 
 An explicit `-DWITH_FRDPD_NTLM=OFF` build generates a configuration without an
-active SAM path and does not require this store.
+active SAM path, omits `winpr-hash` from the server component, and does not
+require this store. The default-on preview Debian and RPM packages include the
+tool with the server runtime.
 
 ## Troubleshooting
 
