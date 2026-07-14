@@ -16,12 +16,12 @@ xfreerdp
 |---|---|---|
 | `component` | Built FRDP binaries and focused CTest suite | Config/channel policy, IPC primitives, `frdpctl`, helper stop handling, malformed requests against real `frdp-authd` and `frdp-sesmand` processes |
 | `local` | TLS, NLA/CredSSP, local `pam_unix`, helper IPC, managed Xvfb session | Valid authentication succeeds; wrong password and locked account fail; a full RDP client exchanges Unicode clipboard text in both directions, then creates, detaches, reconnects to, and removes one stable session |
-| `samba` | Provisioned Samba AD DC, DNS/Kerberos/LDAP, `adcli` machine join, `sssd-ad`, PAM, RDP | Domain user success, wrong password failure, disabled AD user failure, NSS lookup, managed RDP disconnect/reconnect lifecycle |
+| `samba` | Provisioned Samba AD DC, DNS/Kerberos/LDAP, `adcli` machine join, `sssd-ad`, PAM, RDP | Domain user success, wrong password failure, disabled AD user failure, NSS user lookup plus supplementary AD-group membership, managed RDP disconnect/reconnect lifecycle |
 | `freeipa` | Official FreeIPA server image, LDAP identity, Kerberos password authentication through SSSD, PAM, RDP | IPA user success, wrong password failure, disabled IPA principal failure, NSS lookup, managed RDP disconnect/reconnect lifecycle |
 
 The FreeIPA baseline deliberately uses SSSD's LDAP identity provider and Kerberos authentication provider with `krb5_validate=false`. It therefore validates real FreeIPA LDAP/KDC and PAM/SSSD behavior without requiring a host enrollment/keytab inside the FRDP container. A separate joined-host profile using `id_provider=ipa`, host keytab validation and explicit HBAC rules is still required before claiming production FreeIPA policy coverage.
 
-The Samba profile does perform a machine join and uses the SSSD AD provider. GPO access control is set to `permissive` so the test is deterministic while still exercising AD identity, password authentication and disabled-account handling.
+The Samba profile does perform a machine join and uses the SSSD AD provider. It creates the configurable `FRDP_TEST_GROUP` (`rdp-users` by default), adds the allowed account, and requires the joined host to resolve that supplementary group through NSS/SSSD before starting `frdpd`. GPO access control is set to `permissive` so the test is deterministic while still exercising AD identity, password authentication and disabled-account handling.
 
 ## Running
 

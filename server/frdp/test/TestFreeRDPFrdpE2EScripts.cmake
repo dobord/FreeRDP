@@ -65,8 +65,30 @@ foreach(expected
         "profiles: [\"component\"]"
         "profiles: [\"local\"]"
         "profiles: [\"samba\"]"
-        "profiles: [\"freeipa\"]")
+        "profiles: [\"freeipa\"]"
+        "FRDP_TEST_GROUP: \${FRDP_TEST_GROUP:-rdp-users}"
+        "samba-tool group listmembers"
+        "grep -Fxq")
   expect_contains("${compose}" "${expected}" "E2E compose file")
+endforeach()
+
+file(READ "${FRDP_E2E_DIR}/scripts/samba-entrypoint.sh" samba_entrypoint)
+foreach(expected
+        "FRDP_TEST_GROUP:-rdp-users"
+        "samba-tool group add"
+        "samba-tool group addmembers"
+        "samba-tool group listmembers")
+  expect_contains("${samba_entrypoint}" "${expected}" "Samba entrypoint")
+endforeach()
+
+file(READ "${FRDP_E2E_DIR}/scripts/frdpd-entrypoint.sh" frdpd_entrypoint)
+foreach(expected
+        "wait_supplementary_group"
+        "getent group \"$group\""
+        "id -G \"$user\""
+        "SSSD resolved supplementary group"
+        "SSSD did not resolve supplementary group")
+  expect_contains("${frdpd_entrypoint}" "${expected}" "frdpd entrypoint")
 endforeach()
 
 file(READ "${FRDP_E2E_DIR}/run.sh" runner)

@@ -373,9 +373,9 @@ BOOL frdpd_auth_identity_matches_proof(const SEC_WINNT_AUTH_IDENTITY* identity,
 	match = frdpd_auth_identity_component_equal(delegated.user, delegated.user_length,
 	                                            authenticated.user,
 	                                            authenticated.user_length);
-	if (match && ((delegated.domain_length != 0) || (authenticated.domain_length != 0)))
+	if (match && (raw_delegated.domain_length != 0))
 		match = frdpd_auth_identity_component_equal(
-		    delegated.domain, delegated.domain_length, authenticated.domain,
+		    raw_delegated.domain, raw_delegated.domain_length, authenticated.domain,
 		    authenticated.domain_length);
 
 out:

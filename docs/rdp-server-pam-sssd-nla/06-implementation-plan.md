@@ -127,7 +127,7 @@ Deliverables:
 - [x] minimal listener accepting RDP clients through the integrated `server/frdp/frdpd` target;
 - [x] TLS/NLA server-side configuration path in the integrated `server/frdp/frdpd` target;
 - [ ] Windows mstsc, Microsoft Remote Desktop, FreeRDP client matrix;
-- [ ] AD/SSSD lab with test users and groups;
+- [x] reproducible Samba AD/SSSD lab with enabled/disabled test users and an asserted supplementary AD-group membership on the joined FRDP host;
 - [x] threat model draft (`13-threat-model.md`; validation gates and final security review remain open).
 
 Exit criteria: a client connects to a stub server, the NLA negotiation path is understood, and the PAM/SSSD lab is reproducible.

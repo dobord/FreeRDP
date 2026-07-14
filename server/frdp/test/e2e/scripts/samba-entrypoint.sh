@@ -8,6 +8,7 @@ user=${FRDP_TEST_USER:-rdpuser}
 password=${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
 deny_user=${FRDP_DENY_USER:-rdpdisabled}
 deny_password=${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+test_group=${FRDP_TEST_GROUP:-rdp-users}
 
 if [[ ! -s /var/lib/samba/private/sam.ldb ]]; then
 	rm -f /etc/samba/smb.conf
@@ -33,6 +34,13 @@ else
 fi
 samba-tool user enable "$user" >/dev/null 2>&1 || true
 samba-tool user setexpiry "$user" --noexpiry >/dev/null
+
+if ! samba-tool group show "$test_group" >/dev/null 2>&1; then
+	samba-tool group add "$test_group" >/dev/null
+fi
+if ! samba-tool group listmembers "$test_group" | grep -Fxq -- "$user"; then
+	samba-tool group addmembers "$test_group" "$user" >/dev/null
+fi
 
 if samba-tool user show "$deny_user" >/dev/null 2>&1; then
 	samba-tool user setpassword "$deny_user" --newpassword="$deny_password" >/dev/null

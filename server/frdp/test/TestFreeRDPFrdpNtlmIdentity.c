@@ -289,13 +289,13 @@ int TestFreeRDPFrdpNtlmIdentity(int argc, char* argv[])
 		return -1;
 	if (identity_matches("Alice", "OTHER", &proof) != 0)
 		return -1;
-	if (identity_matches("Alice", NULL, &proof) != 0)
+	if (identity_matches("Alice", NULL, &proof) != 1)
 		return -1;
 	if (embedded_identity_fields_are_rejected(&proof) != 0)
 		return -1;
 	if (counted_ansi_identity_fields_are_bounded(&proof) != 0)
 		return -1;
-	if (identity_matches_mode("alice", "EXAMPLE", &proof, FRDPD_DOMAIN_PLAIN) != 0)
+	if (identity_matches_mode("alice", "EXAMPLE", &proof, FRDPD_DOMAIN_PLAIN) != 1)
 		return -1;
 	if (identity_matches("alice@example", NULL, &proof) != 1)
 		return -1;
@@ -328,7 +328,18 @@ int TestFreeRDPFrdpNtlmIdentity(int argc, char* argv[])
 	memcpy(proof.User, "Alice", sizeof("Alice"));
 	if (identity_matches("alice", NULL, &proof) != 1)
 		return -1;
-	if (identity_matches_mode("alice", "EXAMPLE", &proof, FRDPD_DOMAIN_PLAIN) != 1)
+	if (identity_matches("alice", "EXAMPLE", &proof) != 0)
+		return -1;
+	if (identity_matches_mode("alice", "EXAMPLE", &proof, FRDPD_DOMAIN_PLAIN) != 0)
+		return -1;
+	if (identity_matches_mode("alice", "EXAMPLE", &proof, FRDPD_DOMAIN_UPN) != 0)
+		return -1;
+	memcpy(proof.Domain, "OTHER", sizeof("OTHER"));
+	if (identity_matches("alice", "EXAMPLE", &proof) != 0)
+		return -1;
+	if (identity_matches_mode("alice", "EXAMPLE", &proof, FRDPD_DOMAIN_PLAIN) != 0)
+		return -1;
+	if (identity_matches_mode("alice", "EXAMPLE", &proof, FRDPD_DOMAIN_UPN) != 0)
 		return -1;
 	if (identity_matches("alice", "EXAMPLE@OTHER", &proof) != 0)
 		return -1;

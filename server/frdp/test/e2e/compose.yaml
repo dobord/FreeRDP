@@ -186,6 +186,7 @@ services:
       FRDP_AD_ADMIN_PASSWORD: ${FRDP_AD_ADMIN_PASSWORD:-SambaAdminPassw0rd!}
       FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
       FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
+      FRDP_TEST_GROUP: ${FRDP_TEST_GROUP:-rdp-users}
       FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
       FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
     healthcheck:
@@ -195,6 +196,8 @@ services:
           smbclient -L //127.0.0.1
           -U "Administrator%$${FRDP_AD_ADMIN_PASSWORD}" -m SMB3 >/dev/null 2>&1
           && samba-tool user show "$${FRDP_TEST_USER}" >/dev/null 2>&1
+          && samba-tool group listmembers "$${FRDP_TEST_GROUP}"
+          | grep -Fxq -- "$${FRDP_TEST_USER}"
       interval: 5s
       timeout: 10s
       retries: 60
@@ -222,6 +225,7 @@ services:
       FRDP_AD_COMPUTER_NAME: FRDPD
       FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
       FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
+      FRDP_TEST_GROUP: ${FRDP_TEST_GROUP:-rdp-users}
       FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
       FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
     depends_on:

@@ -98,6 +98,24 @@ start_sssd()
 	return 1
 }
 
+wait_supplementary_group()
+{
+	local user=$1
+	local group=$2
+	local attempts=${3:-120}
+
+	for ((i = 0; i < attempts; i++)); do
+		local gid
+		gid=$(getent group "$group" 2>/dev/null |
+			awk -F: 'NR == 1 && $3 ~ /^[0-9]+$/ { print $3 }' || true)
+		if [[ -n $gid ]] && id -G "$user" | tr ' ' '\n' | grep -Fxq -- "$gid"; then
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
 configure_local_identity()
 {
 	validate_local_name "$FRDP_TEST_USER" || fail "invalid local test user name"
@@ -205,6 +223,9 @@ configure_samba_identity()
 	local admin_password=${FRDP_AD_ADMIN_PASSWORD:?FRDP_AD_ADMIN_PASSWORD is required}
 	local host_fqdn=${FRDP_AD_HOST_FQDN:-$(hostname -f)}
 	local computer_name=${FRDP_AD_COMPUTER_NAME:-FRDPD}
+	local test_group=${FRDP_TEST_GROUP:-rdp-users}
+
+	validate_local_name "$test_group" || fail "invalid Samba AD test group name"
 
 	wait_tcp "$dc" 389 || fail "Samba AD LDAP did not become reachable"
 	wait_tcp "$dc" 88 || fail "Samba AD Kerberos did not become reachable"
@@ -266,6 +287,9 @@ EOF
 	ensure_sss_nsswitch
 	install_pam_profile frdpd-sssd
 	start_sssd || fail "SSSD did not resolve the Samba AD test user"
+	wait_supplementary_group "$FRDP_TEST_USER" "$test_group" ||
+		fail "SSSD did not resolve supplementary group $test_group for $FRDP_TEST_USER"
+	log "SSSD resolved supplementary group $test_group for $FRDP_TEST_USER"
 }
 
 configure_identity()
