@@ -19,6 +19,7 @@
  */
 #include <winpr/assert.h>
 #include <winpr/cast.h>
+#include <winpr/crt.h>
 
 #include "rc4.h"
 
@@ -62,6 +63,8 @@ winpr_int_RC4_CTX* winpr_int_rc4_new(const BYTE* key, size_t keylength)
 
 void winpr_int_rc4_free(winpr_int_RC4_CTX* ctx)
 {
+	if (ctx)
+		SecureZeroMemory(ctx, sizeof(*ctx));
 	free(ctx);
 }
 

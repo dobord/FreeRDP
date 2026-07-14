@@ -92,6 +92,7 @@ distro CI and full distro policy validation remain open.
 - Focused CTest coverage starts live `frdp-authd` and `frdp-sesmand` helpers, verifies role-bound health responses and separate health rate limits, proves health exhaustion does not consume normal request capacity, kills `frdp-authd` with `SIGKILL`, proves health fails during the outage, restarts it on the same stale socket path, and proves health plus normal negative-path IPC recover. A slow-drip unit test verifies the startup exchange has one absolute deadline. The installed listener/helper units use `Restart=on-failure`; `frdpd.service` uses `Wants=` so a helper restart does not tear down established listener state, while bounded startup health still rejects missing helpers before listening.
 - Integrated `frdpd` now zero-frees the peer-owned FreeRDP auth identity immediately after `frdpd_authenticate_identity()` returns and the brokered result has been copied into `frdpd` session context.
 - WinPR SAM parsing now strictly rejects non-hex LM/NT hash fields; focused coverage repeats the malformed lookup through one open SAM handle to verify partial-entry cleanup and parser recovery.
+- `frdp-authd` now releases its locked password copy immediately after `pam_end()` and before NSS/SSSD account lookup, while WinPR securely clears both the RC4 provider wrapper and the internal key-derived permutation state before freeing them. PAM-module-owned response storage remains outside application ownership.
 
 ## Remaining issues
 

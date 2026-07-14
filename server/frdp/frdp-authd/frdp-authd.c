@@ -417,17 +417,17 @@ static frdpAuthdPamStatus authenticate_user(const char *service, const char *rho
             status = FRDP_AUTHD_PAM_ERROR;
     }
 
+    /* No later operation needs the password after the PAM transaction. */
+    clear_secret(buf, pwlen + 1);
+    munlock(buf, pwlen + 1);
+    munmap(buf, pwlen + 1);
+
     /* Verify that the user exists. */
     if (status == FRDP_AUTHD_PAM_OK) {
         errno = 0;
         if (!getpwnam(user))
             status = (errno == 0) ? FRDP_AUTHD_PAM_DENIED : FRDP_AUTHD_PAM_ERROR;
     }
-
-    /* Clear and unlock secret data. */
-    clear_secret(buf, pwlen + 1);
-    munlock(buf, pwlen + 1);
-    munmap(buf, pwlen + 1);
 
     log_audit_event(user, status == FRDP_AUTHD_PAM_OK, correlation_id);
     return status;

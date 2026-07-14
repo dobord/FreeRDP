@@ -168,6 +168,7 @@ void winpr_RC4_Free(WINPR_RC4_CTX* ctx)
 #elif defined(WITH_OPENSSL)
 	EVP_CIPHER_CTX_free(ctx->ctx);
 #endif
+	SecureZeroMemory(ctx, sizeof(*ctx));
 	free(ctx);
 }
 
