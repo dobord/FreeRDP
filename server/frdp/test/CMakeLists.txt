@@ -3,6 +3,9 @@ set(MODULE_PREFIX "TEST_FREERDP_FRDP")
 
 disable_warnings_for_directory(${CMAKE_CURRENT_BINARY_DIR})
 
+find_program(SYSTEMD_RUN_EXECUTABLE systemd-run)
+find_program(SYSTEMCTL_EXECUTABLE systemctl)
+
 set(${MODULE_PREFIX}_DRIVER ${MODULE_NAME}.c)
 set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFreeRDPFrdpCtlIpc.c
                          TestFreeRDPFrdpHelperStop.c TestFreeRDPFrdpServiceIpc.c
@@ -17,6 +20,9 @@ set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFree
                          TestFreeRDPFrdpSessionMetadata.c TestFreeRDPFrdpSessionResources.c
                          TestFreeRDPFrdpSessionRecovery.c TestFreeRDPFrdpSesmandPam.c
                          TestFreeRDPFrdpPam.c)
+if(SYSTEMD_RUN_EXECUTABLE AND SYSTEMCTL_EXECUTABLE)
+  list(APPEND ${MODULE_PREFIX}_TESTS TestFreeRDPFrdpSystemdRecovery.c)
+endif()
 find_program(XVFB_EXECUTABLE Xvfb)
 find_package(pam_wrapper CONFIG QUIET)
 if(XVFB_EXECUTABLE)
@@ -108,6 +114,11 @@ target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CM
                                                    FRDP_AUTHD_TEST_DENY_BINARY="$<TARGET_FILE:frdp-authd-test-deny>"
                                                    FRDP_SESMAND_BINARY="$<TARGET_FILE:frdp-sesmand>"
                                                    FRDP_SESSION_AGENT_BINARY="$<TARGET_FILE:frdp-session-agent>")
+if(SYSTEMD_RUN_EXECUTABLE AND SYSTEMCTL_EXECUTABLE)
+  target_compile_definitions(${MODULE_NAME} PRIVATE
+      FRDP_SYSTEMD_RUN_BINARY="${SYSTEMD_RUN_EXECUTABLE}"
+      FRDP_SYSTEMCTL_BINARY="${SYSTEMCTL_EXECUTABLE}")
+endif()
 if(PAM_WRAPPER_LIBRARY AND PAM_WRAPPER_MODULE_DIR AND NOT WITH_SANITIZE_ADDRESS)
   add_library(frdp-pam-session-test MODULE EXCLUDE_FROM_ALL TestFreeRDPFrdpPamModule.c)
   add_library(frdp-pam-session-block-test MODULE EXCLUDE_FROM_ALL TestFreeRDPFrdpPamModule.c)
@@ -161,6 +172,10 @@ foreach(test ${${MODULE_PREFIX}_TESTS})
   get_filename_component(TestName ${test} NAME_WE)
   add_test(${TestName} ${TESTING_OUTPUT_DIRECTORY}/${MODULE_NAME} ${TestName})
 endforeach()
+if(SYSTEMD_RUN_EXECUTABLE AND SYSTEMCTL_EXECUTABLE)
+  set_tests_properties(TestFreeRDPFrdpSystemdRecovery
+                       PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+endif()
 
 add_test(NAME TestFreeRDPFrdpCtl
          COMMAND ${CMAKE_COMMAND} -DFRDPCTL_BINARY=$<TARGET_FILE:frdpctl>
