@@ -13,6 +13,7 @@
 #include <sys/mman.h>
 
 #include <winpr/crt.h>
+#include <winpr/string.h>
 
 #include "../ipc/frdp-ipc.h"
 
@@ -128,28 +129,24 @@ static char* frdpd_auth_copy_ansi_field(const char* field, UINT32 length)
 	return copy;
 }
 
-static BOOL frdpd_auth_copy_identity_fields(const SEC_WINNT_AUTH_IDENTITY* identity, char** user,
-	                                         char** domain, char** password)
+static BOOL frdpd_auth_copy_identity_user_domain(const SEC_WINNT_AUTH_IDENTITY* identity,
+                                                 char** user, char** domain)
 {
 	BOOL success = FALSE;
+	UINT32 user_length = 0;
+	UINT32 domain_length = 0;
 
-	if (!identity || !user || !domain || !password)
+	if (!identity || !user || !domain)
 		return FALSE;
 	*user = NULL;
 	*domain = NULL;
-	*password = NULL;
 	if (sspi_GetAuthIdentityFlags(identity) & SEC_WINNT_AUTH_IDENTITY_ANSI)
 	{
 		const char* source_user = NULL;
 		const char* source_domain = NULL;
-		const char* source_password = NULL;
-		UINT32 user_length = 0;
-		UINT32 domain_length = 0;
-		UINT32 password_length = 0;
 
 		if (!sspi_GetAuthIdentityUserDomainA(identity, &source_user, &user_length, &source_domain,
-		                                     &domain_length) ||
-		    !sspi_GetAuthIdentityPasswordA(identity, &source_password, &password_length))
+		                                     &domain_length))
 			goto out;
 		if (user_length > 0)
 		{
@@ -163,6 +160,62 @@ static BOOL frdpd_auth_copy_identity_fields(const SEC_WINNT_AUTH_IDENTITY* ident
 			if (!*domain)
 				goto out;
 		}
+	}
+	else
+	{
+		const WCHAR* source_user = NULL;
+		const WCHAR* source_domain = NULL;
+
+		if (!sspi_GetAuthIdentityUserDomainW(identity, &source_user, &user_length, &source_domain,
+		                                     &domain_length))
+			goto out;
+		if (((user_length > 0) && !source_user) || ((domain_length > 0) && !source_domain))
+			goto out;
+		if (user_length > 0)
+		{
+			*user = ConvertWCharNToUtf8Alloc(source_user, user_length, NULL);
+			if (!*user)
+				goto out;
+		}
+		if (domain_length > 0)
+		{
+			*domain = ConvertWCharNToUtf8Alloc(source_domain, domain_length, NULL);
+			if (!*domain)
+				goto out;
+		}
+	}
+	success = TRUE;
+
+out:
+	if (!success)
+	{
+		free(*domain);
+		free(*user);
+		*user = NULL;
+		*domain = NULL;
+	}
+	return success;
+}
+
+static BOOL frdpd_auth_copy_identity_fields(const SEC_WINNT_AUTH_IDENTITY* identity, char** user,
+                                            char** domain, char** password)
+{
+	BOOL success = FALSE;
+
+	if (!identity || !user || !domain || !password)
+		return FALSE;
+	*user = NULL;
+	*domain = NULL;
+	*password = NULL;
+	if (!frdpd_auth_copy_identity_user_domain(identity, user, domain))
+		goto out;
+	if (sspi_GetAuthIdentityFlags(identity) & SEC_WINNT_AUTH_IDENTITY_ANSI)
+	{
+		const char* source_password = NULL;
+		UINT32 password_length = 0;
+
+		if (!sspi_GetAuthIdentityPasswordA(identity, &source_password, &password_length))
+			goto out;
 		if (password_length > 0)
 		{
 			*password = frdpd_auth_copy_ansi_field(source_password, password_length);
@@ -173,8 +226,19 @@ static BOOL frdpd_auth_copy_identity_fields(const SEC_WINNT_AUTH_IDENTITY* ident
 	}
 	else
 	{
-		success = sspi_CopyAuthIdentityFieldsA(
-		    (const SEC_WINNT_AUTH_IDENTITY_INFO*)identity, user, domain, password);
+		const WCHAR* source_password = NULL;
+		UINT32 password_length = 0;
+
+		if (!sspi_GetAuthIdentityPasswordW(identity, &source_password, &password_length) ||
+		    ((password_length > 0) && !source_password))
+			goto out;
+		if (password_length > 0)
+		{
+			*password = ConvertWCharNToUtf8Alloc(source_password, password_length, NULL);
+			if (!*password)
+				goto out;
+		}
+		success = TRUE;
 	}
 
 out:
@@ -279,7 +343,6 @@ BOOL frdpd_auth_identity_matches_proof(const SEC_WINNT_AUTH_IDENTITY* identity,
 {
 	char* user = NULL;
 	char* domain = NULL;
-	char* password = NULL;
 	char* pam_user = NULL;
 	frdpdAuthIdentityView raw_delegated = { 0 };
 	frdpdAuthIdentityView delegated = { 0 };
@@ -296,7 +359,7 @@ BOOL frdpd_auth_identity_matches_proof(const SEC_WINNT_AUTH_IDENTITY* identity,
 	                                    &proof_domain_length) ||
 	    !frdpd_auth_identity_fields_are_valid(identity))
 		return FALSE;
-	if (!frdpd_auth_copy_identity_fields(identity, &user, &domain, &password))
+	if (!frdpd_auth_copy_identity_user_domain(identity, &user, &domain))
 		goto out;
 
 	if (!frdpd_auth_identity_view(user, user ? strlen(user) : 0, domain,
@@ -316,9 +379,6 @@ BOOL frdpd_auth_identity_matches_proof(const SEC_WINNT_AUTH_IDENTITY* identity,
 		    authenticated.domain_length);
 
 out:
-	if (password)
-		SecureZeroMemory(password, strlen(password));
-	free(password);
 	free(pam_user);
 	free(domain);
 	free(user);
