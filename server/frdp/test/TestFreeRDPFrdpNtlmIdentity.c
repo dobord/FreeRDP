@@ -1,8 +1,141 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <signal.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <winpr/crt.h>
 
 #include "../frdpd/frdpd_auth.h"
+
+static int make_auth_broker_socket(char* dir, size_t dir_size, char* socket_path,
+                                   size_t socket_path_size)
+{
+	struct sockaddr_un addr = { 0 };
+	int rc = -1;
+	int fd = -1;
+
+	rc = snprintf(dir, dir_size, "/tmp/frdp-auth-identity-XXXXXX");
+	if ((rc < 0) || ((size_t)rc >= dir_size) || !mkdtemp(dir))
+		return -1;
+	if (chmod(dir, 0700) != 0)
+		goto fail;
+	rc = snprintf(socket_path, socket_path_size, "%s/auth.sock", dir);
+	if ((rc < 0) || ((size_t)rc >= socket_path_size))
+		goto fail;
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd < 0)
+		goto fail;
+	addr.sun_family = AF_UNIX;
+	rc = snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", socket_path);
+	if ((rc < 0) || ((size_t)rc >= sizeof(addr.sun_path)) ||
+	    bind(fd, (const struct sockaddr*)&addr, sizeof(addr)) != 0 ||
+	    chmod(socket_path, 0600) != 0 || listen(fd, 1) != 0)
+		goto fail;
+	return fd;
+
+fail:
+	if (fd >= 0)
+		close(fd);
+	unlink(socket_path);
+	rmdir(dir);
+	dir[0] = '\0';
+	socket_path[0] = '\0';
+	return -1;
+}
+
+static int serve_auth_response(int listener, const char* user)
+{
+	frdpIpcHeader header = { 0 };
+	frdpAuthRequest request = { 0 };
+	frdpAuthResponse response = { 0 };
+	int fd = accept(listener, NULL, NULL);
+	int rc = -1;
+
+	if (fd < 0 || frdp_ipc_recv_header(fd, &header) != (int)sizeof(header) ||
+	    (header.type != FRDP_IPC_AUTH_REQUEST_V2) ||
+	    frdp_ipc_recv_auth_request_v2_payload(fd, &request, header.payload_len) != 0 ||
+	    strcmp(request.user, "alice@EXAMPLE") != 0)
+		goto cleanup;
+	response.success = 1;
+	snprintf(response.user, sizeof(response.user), "%s", user);
+	snprintf(response.authorization_id, sizeof(response.authorization_id), "test-authorization");
+	response.uid = 1000;
+	response.gid = 1001;
+	response.groups[0] = 1001;
+	response.groups[1] = 2000;
+	response.group_count = 2;
+	response.has_posix_account = 1;
+	rc = frdp_ipc_send_auth_response_v2(fd, &response);
+
+cleanup:
+	if (fd >= 0)
+		close(fd);
+	SecureZeroMemory(&request, sizeof(request));
+	SecureZeroMemory(&response, sizeof(response));
+	return rc;
+}
+
+static int test_auth_adapter_broker_user(const char* broker_user, int expect_success)
+{
+	char dir[128] = { 0 };
+	char socket_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
+	SEC_WINNT_AUTH_IDENTITY identity = WINPR_C_ARRAY_INIT;
+	frdpdAuthConfig config = { 0 };
+	frdpdAuthResult result = { 0 };
+	pid_t child = -1;
+	int listener = -1;
+	int status = 0;
+	int rc = -1;
+
+	listener = make_auth_broker_socket(dir, sizeof(dir), socket_path, sizeof(socket_path));
+	if (listener < 0 || sspi_SetAuthIdentity(&identity, "alice", "EXAMPLE", "password") < 0)
+		goto cleanup;
+	child = fork();
+	if (child < 0)
+		goto cleanup;
+	if (child == 0)
+		_exit(serve_auth_response(listener, broker_user) == 0 ? 0 : 1);
+	config.pam_service = "frdpd";
+	config.auth_socket = socket_path;
+	config.correlation_id = "canonical-test";
+	config.rhost = "192.0.2.1";
+	config.domain_mode = FRDPD_DOMAIN_UPN;
+	const BOOL authenticated = frdpd_authenticate_identity(&config, &identity, &result);
+	if (expect_success)
+	{
+		if (!authenticated || (result.status != FRDPD_PAM_AUTH_OK) || !result.pam_user ||
+		    strcmp(result.pam_user, broker_user) != 0 || result.uid != 1000 || result.gid != 1001 ||
+		    result.group_count != 2 || result.groups[0] != 1001 || result.groups[1] != 2000 ||
+		    strcmp(result.authorization_id, "test-authorization") != 0)
+			goto cleanup;
+	}
+	else if (authenticated || result.pam_user || (result.status != FRDPD_PAM_AUTH_ERROR))
+		goto cleanup;
+	if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+		goto cleanup;
+	child = -1;
+	rc = 0;
+
+cleanup:
+	if (child > 0)
+	{
+		(void)kill(child, SIGKILL);
+		(void)waitpid(child, NULL, 0);
+	}
+	if (listener >= 0)
+		close(listener);
+	sspi_FreeAuthIdentity(&identity);
+	free(result.pam_user);
+	SecureZeroMemory(&result, sizeof(result));
+	unlink(socket_path);
+	rmdir(dir);
+	return rc;
+}
 
 static int identity_matches(const char* user, const char* domain,
                             const SecPkgContext_AuthIdentity* proof)
@@ -37,6 +170,10 @@ int TestFreeRDPFrdpNtlmIdentity(int argc, char* argv[])
 		return -1;
 	proof.User[0] = '\0';
 	if (identity_matches("Alice", "EXAMPLE", &proof) != 0)
+		return -1;
+	if (test_auth_adapter_broker_user("canonical-alice", 1) != 0)
+		return -1;
+	if (test_auth_adapter_broker_user("canonical\nalice", 0) != 0)
 		return -1;
 	return 0;
 }

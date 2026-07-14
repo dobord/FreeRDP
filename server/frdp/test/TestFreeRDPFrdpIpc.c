@@ -587,6 +587,59 @@ cleanup:
 	return rc;
 }
 
+static int test_auth_response_v2_carries_canonical_user(void)
+{
+	int fds[2] = { -1, -1 };
+	frdpAuthResponse response = { 0 };
+	frdpAuthResponse decoded = { 0 };
+	frdpIpcHeader header = { 0 };
+	uint8_t raw[FRDP_IPC_AUTH_RESPONSE_V2_WIRE_SIZE] = { 0 };
+	const size_t user_offset = 4U + sizeof(response.error);
+	const size_t authorization_id_offset = user_offset + sizeof(response.user);
+	const size_t uid_offset = authorization_id_offset + sizeof(response.authorization_id);
+	int rc = -1;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	response.success = 1;
+	snprintf(response.user, sizeof(response.user), "canonical-user");
+	snprintf(response.authorization_id, sizeof(response.authorization_id), "authz-v2");
+	response.uid = UINT64_C(0x0102030405060708);
+	response.gid = 1001;
+	response.groups[0] = 1001;
+	response.group_count = 1;
+	response.has_posix_account = 1;
+
+	if (frdp_ipc_send_auth_response_v2(fds[0], &response) != 0 ||
+	    frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header) ||
+	    (header.type != FRDP_IPC_AUTH_RESPONSE_V2) ||
+	    (header.payload_len != FRDP_IPC_AUTH_RESPONSE_V2_WIRE_SIZE) ||
+	    frdp_ipc_recv(fds[1], raw, sizeof(raw)) != (int)sizeof(raw))
+		goto cleanup;
+	if ((memcmp(&raw[user_offset], "canonical-user", 14) != 0) ||
+	    (memcmp(&raw[authorization_id_offset], "authz-v2", 8) != 0) ||
+	    (raw[uid_offset] != 0x08U) || (raw[uid_offset + 7U] != 0x01U))
+		goto cleanup;
+	if (frdp_ipc_send_header(fds[1], FRDP_IPC_AUTH_RESPONSE_V2, sizeof(raw)) != 0 ||
+	    frdp_ipc_send(fds[1], raw, sizeof(raw)) != 0 ||
+	    frdp_ipc_recv_auth_response_v2(fds[0], &decoded) != 0)
+		goto cleanup;
+	if (!decoded.success || strcmp(decoded.user, response.user) != 0 ||
+	    strcmp(decoded.authorization_id, response.authorization_id) != 0 ||
+	    (decoded.uid != response.uid) || (decoded.gid != response.gid) ||
+	    (decoded.group_count != 1) || (decoded.groups[0] != 1001) ||
+	    !decoded.has_posix_account)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
 static int test_auth_request_uses_explicit_wire_format(void)
 {
 	int fds[2] = { -1, -1 };
@@ -1783,6 +1836,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_credential_decoders_clear_outputs_on_failure() != 0)
 		return -1;
 	if (test_auth_response_uses_explicit_wire_format() != 0)
+		return -1;
+	if (test_auth_response_v2_carries_canonical_user() != 0)
 		return -1;
 	if (test_session_request_v3_uses_explicit_wire_format() != 0)
 		return -1;

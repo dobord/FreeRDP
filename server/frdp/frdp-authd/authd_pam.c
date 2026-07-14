@@ -60,6 +60,103 @@ frdpAuthdPamStatus frdp_authd_pam_account_status(int pam_status)
     }
 }
 
+int frdp_authd_user_is_valid(const char *user, size_t user_size)
+{
+    size_t length = 0;
+
+    if (!user || user_size == 0)
+        return -1;
+    length = strnlen(user, user_size);
+    if ((length == 0) || (length >= user_size))
+        return -1;
+    for (size_t x = 0; x < length; x++) {
+        const unsigned char c = (unsigned char)user[x];
+
+        if ((c < 0x20U) || (c == 0x7fU))
+            return -1;
+    }
+    return 0;
+}
+
+int frdp_authd_pam_copy_user(const pam_handle_t *pamh, frdpAuthdPamGetItemFn get_item,
+                             char *user, size_t user_size)
+{
+    const void *item = NULL;
+    const char *pam_user = NULL;
+
+    if (user && user_size > 0)
+        memset(user, 0, user_size);
+    if (!pamh || !get_item || !user || user_size == 0)
+        return -1;
+    if ((get_item(pamh, PAM_USER, &item) != PAM_SUCCESS) || !item)
+        return -1;
+
+    pam_user = (const char *)item;
+    if (frdp_authd_user_is_valid(pam_user, user_size) != 0)
+        return -1;
+    const size_t length = strlen(pam_user);
+    memcpy(user, pam_user, length + 1U);
+    return 0;
+}
+
+frdpAuthdPamStatus frdp_authd_pam_authenticate_with_ops(
+    const frdpAuthdPamOps *ops, const char *service, const char *rhost, const char *user,
+    char *password, char *pam_user, size_t pam_user_size)
+{
+    struct pam_conv conv = {frdp_authd_pam_conversation, password};
+    pam_handle_t *pamh = NULL;
+    frdpAuthdPamStatus status = FRDP_AUTHD_PAM_ERROR;
+    int credentials_established = 0;
+    int ret = PAM_SYSTEM_ERR;
+
+    if (pam_user && pam_user_size > 0)
+        memset(pam_user, 0, pam_user_size);
+    if (!ops || !ops->start || !ops->set_item || !ops->authenticate || !ops->acct_mgmt ||
+        !ops->get_item || !ops->setcred || !ops->end || !service || !service[0] || !user ||
+        !password || !pam_user || pam_user_size == 0)
+        return status;
+
+    ret = ops->start(service, user, &conv, &pamh);
+    if (ret != PAM_SUCCESS)
+        return status;
+    if (rhost && rhost[0])
+        ret = ops->set_item(pamh, PAM_RHOST, rhost);
+    if (ret == PAM_SUCCESS)
+        ret = ops->set_item(pamh, PAM_TTY, "rdp");
+    if (ret == PAM_SUCCESS)
+        ret = ops->set_item(pamh, PAM_RUSER, user);
+    if (ret == PAM_SUCCESS) {
+        ret = ops->authenticate(pamh, 0);
+        status = frdp_authd_pam_auth_status(ret);
+    }
+    if (status == FRDP_AUTHD_PAM_OK) {
+        ret = ops->acct_mgmt(pamh, 0);
+        status = frdp_authd_pam_account_status(ret);
+    }
+    if ((status == FRDP_AUTHD_PAM_OK) &&
+        (frdp_authd_pam_copy_user(pamh, ops->get_item, pam_user, pam_user_size) != 0))
+        status = FRDP_AUTHD_PAM_ERROR;
+    if (status == FRDP_AUTHD_PAM_OK) {
+        ret = ops->setcred(pamh, PAM_ESTABLISH_CRED);
+        credentials_established = (ret == PAM_SUCCESS);
+        if (!credentials_established)
+            status = FRDP_AUTHD_PAM_ERROR;
+    }
+    if (credentials_established) {
+        const int cred_ret = ops->setcred(pamh, PAM_DELETE_CRED);
+
+        if (cred_ret != PAM_SUCCESS) {
+            ret = cred_ret;
+            status = FRDP_AUTHD_PAM_ERROR;
+        }
+    }
+    if (ops->end(pamh, ret) != PAM_SUCCESS)
+        status = FRDP_AUTHD_PAM_ERROR;
+    if (status != FRDP_AUTHD_PAM_OK)
+        memset(pam_user, 0, pam_user_size);
+    return status;
+}
+
 int frdp_authd_pam_conversation(int num_msg, const struct pam_message **msg,
                                 struct pam_response **resp, void *appdata_ptr)
 {

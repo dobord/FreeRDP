@@ -94,6 +94,22 @@ static BOOL frdpd_auth_copy_ipc_string(char* dst, size_t dst_size, const char* s
 	return (rc >= 0) && ((size_t)rc < dst_size);
 }
 
+static BOOL frdpd_auth_fixed_string_is_valid(const char* value, size_t value_size)
+{
+	const char* end = value && value_size > 0 ? memchr(value, '\0', value_size) : NULL;
+
+	if (!end)
+		return FALSE;
+	for (const char* current = value; current < end; current++)
+	{
+		const unsigned char c = (unsigned char)*current;
+
+		if ((c < 0x20U) || (c == 0x7fU))
+			return FALSE;
+	}
+	return TRUE;
+}
+
 typedef struct
 {
 	char* secret;
@@ -134,6 +150,7 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	char* domain = NULL;
 	char* password = NULL;
 	char* pam_user = NULL;
+	char* broker_user = NULL;
 	const char* local_error = "invalid authentication request";
 	BOOL ok = FALSE;
 	int fd = -1;
@@ -188,7 +205,12 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	frdpd_auth_clear_locked_secret(&request_password_secret);
 
 	local_error = "unable to receive auth broker response";
-	if (frdp_ipc_recv_auth_response(fd, &response) != 0)
+	if (frdp_ipc_recv_auth_response_v2(fd, &response) != 0)
+		goto fail;
+	if (!frdpd_auth_fixed_string_is_valid(response.error, sizeof(response.error)) ||
+	    !frdpd_auth_fixed_string_is_valid(response.user, sizeof(response.user)) ||
+	    !frdpd_auth_fixed_string_is_valid(response.authorization_id,
+	                                      sizeof(response.authorization_id)))
 		goto fail;
 
 	frdpd_auth_result_set(result,
@@ -204,7 +226,7 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	if (ok)
 	{
 		local_error = "invalid auth broker response";
-		if (!result || (response.authorization_id[0] == '\0') ||
+		if (!result || (response.user[0] == '\0') || (response.authorization_id[0] == '\0') ||
 		    !frdpd_auth_copy_ipc_string(result->authorization_id,
 		                                sizeof(result->authorization_id),
 		                                response.authorization_id) ||
@@ -219,6 +241,13 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 			ok = FALSE;
 			goto fail;
 		}
+		broker_user = _strdup(response.user);
+		if (!broker_user)
+		{
+			result->status = FRDPD_PAM_AUTH_ERROR;
+			ok = FALSE;
+			goto fail;
+		}
 		result->uid = (uid_t)response.uid;
 		result->gid = (gid_t)response.gid;
 		result->group_count = response.group_count;
@@ -227,8 +256,8 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 	}
 	if (ok && result)
 	{
-		result->pam_user = pam_user;
-		pam_user = NULL;
+		result->pam_user = broker_user;
+		broker_user = NULL;
 	}
 
 fail:
@@ -242,6 +271,7 @@ fail:
 	free(user);
 	free(domain);
 	free(pam_user);
+	free(broker_user);
 	frdpd_auth_clear_locked_secret(&password_secret);
 	free(password);
 	return ok;

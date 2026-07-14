@@ -55,7 +55,7 @@ int main(int argc, char **argv)
         perror("frdp_ipc_send");
         goto cleanup;
     }
-    if (frdp_ipc_recv_auth_response(fd, &resp) != 0) {
+    if (frdp_ipc_recv_auth_response_v2(fd, &resp) != 0) {
         fprintf(stderr, "Failed to read response\n");
         goto cleanup;
     }

@@ -272,10 +272,10 @@ static int lookup_posix_groups(const char *user, gid_t primary_gid, uint64_t *gr
     return 0;
 }
 
-static int send_auth_response(int fd, int success, const char *error,
-                              const char *authorization_id, uid_t uid, gid_t gid,
-                              const uint64_t *groups, uint32_t group_count,
-                              int has_posix_account)
+static int send_auth_response_with_user(int fd, int success, const char *error,
+                                        const char *user, const char *authorization_id,
+                                        uid_t uid, gid_t gid, const uint64_t *groups,
+                                        uint32_t group_count, int has_posix_account)
 {
     frdpAuthResponse resp;
     int rc = -1;
@@ -284,6 +284,8 @@ static int send_auth_response(int fd, int success, const char *error,
     resp.success = success;
     if (error)
         snprintf(resp.error, sizeof(resp.error), "%s", error);
+    if (user)
+        snprintf(resp.user, sizeof(resp.user), "%s", user);
     if (authorization_id)
         snprintf(resp.authorization_id, sizeof(resp.authorization_id), "%s", authorization_id);
     resp.uid = (uint64_t)uid;
@@ -296,11 +298,20 @@ static int send_auth_response(int fd, int success, const char *error,
     }
     resp.has_posix_account = has_posix_account ? 1 : 0;
 
-    rc = frdp_ipc_send_auth_response(fd, &resp);
+    rc = frdp_ipc_send_auth_response_v2(fd, &resp);
 
 fail:
     clear_secret((char *)&resp, sizeof(resp));
     return rc;
+}
+
+static int send_auth_response(int fd, int success, const char *error,
+                              const char *authorization_id, uid_t uid, gid_t gid,
+                              const uint64_t *groups, uint32_t group_count,
+                              int has_posix_account)
+{
+    return send_auth_response_with_user(fd, success, error, NULL, authorization_id, uid, gid,
+                                        groups, group_count, has_posix_account);
 }
 
 static int verify_peer(int fd)
@@ -351,18 +362,24 @@ static int monotonic_seconds(uint64_t *seconds)
 
 /* Perform a PAM authentication for the given user and password. */
 static frdpAuthdPamStatus authenticate_user(const char *service, const char *rhost,
-                                            const char *correlation_id, const char *user,
-                                            const char *password)
+                                            const char *user,
+                                            const char *password, char *pam_user,
+                                            size_t pam_user_size)
 {
     frdpAuthdPamStatus status = FRDP_AUTHD_PAM_ERROR;
 
-    if (!service || !service[0] || !user || !password)
+    if (pam_user && pam_user_size > 0)
+        memset(pam_user, 0, pam_user_size);
+    if (!service || !service[0] || !user || !password || !pam_user || pam_user_size == 0)
         return status;
 #if defined(FRDP_AUTHD_TEST_DENY_ALL)
     (void)rhost;
-    log_audit_event(user, 0, correlation_id);
     return FRDP_AUTHD_PAM_DENIED;
 #else
+    static const frdpAuthdPamOps pam_ops = {
+        pam_start, pam_set_item, pam_authenticate, pam_acct_mgmt,
+        pam_get_item, pam_setcred, pam_end
+    };
     size_t pwlen = strlen(password);
     /* Allocate a temporary buffer and lock it to prevent swapping. */
     char *buf = mmap(NULL, pwlen + 1, PROT_READ | PROT_WRITE,
@@ -377,59 +394,14 @@ static frdpAuthdPamStatus authenticate_user(const char *service, const char *rho
         return status;
     }
 
-    struct pam_conv conv = {frdp_authd_pam_conversation, buf};
-    pam_handle_t *pamh = NULL;
-    int credentials_established = 0;
-    int ret = pam_start(service, user, &conv, &pamh);
-    if (ret == PAM_SUCCESS) {
-        if (rhost && rhost[0]) {
-            ret = pam_set_item(pamh, PAM_RHOST, rhost);
-        }
-        if (ret == PAM_SUCCESS) {
-            ret = pam_set_item(pamh, PAM_TTY, "rdp");
-        }
-        if (ret == PAM_SUCCESS) {
-            ret = pam_set_item(pamh, PAM_RUSER, user);
-        }
-        if (ret == PAM_SUCCESS) {
-            ret = pam_authenticate(pamh, 0);
-            status = frdp_authd_pam_auth_status(ret);
-        }
-        if (status == FRDP_AUTHD_PAM_OK) {
-            ret = pam_acct_mgmt(pamh, 0);
-            status = frdp_authd_pam_account_status(ret);
-        }
-        /* Establish credentials for the session */
-        if (status == FRDP_AUTHD_PAM_OK) {
-            ret = pam_setcred(pamh, PAM_ESTABLISH_CRED);
-            credentials_established = (ret == PAM_SUCCESS);
-            if (!credentials_established)
-                status = FRDP_AUTHD_PAM_ERROR;
-        }
-        if (credentials_established) {
-            int cred_ret = pam_setcred(pamh, PAM_DELETE_CRED);
-            if (cred_ret != PAM_SUCCESS) {
-                ret = cred_ret;
-                status = FRDP_AUTHD_PAM_ERROR;
-            }
-        }
-        if (pam_end(pamh, ret) != PAM_SUCCESS)
-            status = FRDP_AUTHD_PAM_ERROR;
-    }
+    status = frdp_authd_pam_authenticate_with_ops(&pam_ops, service, rhost, user, buf,
+                                                   pam_user, pam_user_size);
 
     /* No later operation needs the password after the PAM transaction. */
     clear_secret(buf, pwlen + 1);
     munlock(buf, pwlen + 1);
     munmap(buf, pwlen + 1);
 
-    /* Verify that the user exists. */
-    if (status == FRDP_AUTHD_PAM_OK) {
-        errno = 0;
-        if (!getpwnam(user))
-            status = (errno == 0) ? FRDP_AUTHD_PAM_DENIED : FRDP_AUTHD_PAM_ERROR;
-    }
-
-    log_audit_event(user, status == FRDP_AUTHD_PAM_OK, correlation_id);
     return status;
 #endif
 }
@@ -701,10 +673,16 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                 } else {
                     char authorization_id[sizeof(((frdpAuthResponse *)0)->authorization_id)] = {0};
                     char account_limit_key[FRDP_AUTH_FAILURE_LIMIT_KEY_SIZE] = {0};
+                    char pam_user[sizeof(((frdpAuthResponse *)0)->user)] = {0};
+                    char posix_user[sizeof(((frdpAuthResponse *)0)->user)] = {0};
                     uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
                     uint32_t group_count = 0;
                     uint64_t now_seconds = 0;
+                    uid_t auth_uid = (uid_t)-1;
+                    gid_t auth_gid = (gid_t)-1;
                     int authenticated = 0;
+                    int authorized = 0;
+                    int audit_logged = 0;
                     int rate_limit_ready = 0;
                     frdpAuthdPamStatus auth_status = FRDP_AUTHD_PAM_ERROR;
                     struct passwd *account_pwd = NULL;
@@ -729,11 +707,12 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                                                         now_seconds);
                     if (!rate_limit_ready) {
                         log_audit_event(user, 0, correlation_id);
+                        audit_logged = 1;
                         send_auth_response(cfd, 0, "authentication temporarily unavailable", NULL,
                                            (uid_t)-1, (gid_t)-1, NULL, 0, 0);
                     } else {
-                        auth_status = authenticate_user(pam_service, rhost, correlation_id, user,
-                                                        password);
+                        auth_status = authenticate_user(pam_service, rhost, user, password,
+                                                        pam_user, sizeof(pam_user));
                         authenticated = auth_status == FRDP_AUTHD_PAM_OK;
                         if ((auth_status == FRDP_AUTHD_PAM_DENIED) &&
                             ((frdp_auth_failure_limiter_record(&account_failure_limiter,
@@ -749,7 +728,21 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                     if (authenticated) {
                         frdp_auth_failure_limiter_clear(&account_failure_limiter,
                                                         account_limit_key);
-                        pwd = getpwnam(user);
+                        pwd = getpwnam(pam_user);
+                        if (pwd) {
+                            const int name_rc = pwd->pw_name
+                                                    ? snprintf(posix_user, sizeof(posix_user), "%s",
+                                                               pwd->pw_name)
+                                                    : -1;
+
+                            if ((name_rc <= 0) || ((size_t)name_rc >= sizeof(posix_user)) ||
+                                (frdp_authd_user_is_valid(posix_user, sizeof(posix_user)) != 0))
+                                pwd = NULL;
+                            else {
+                                auth_uid = pwd->pw_uid;
+                                auth_gid = pwd->pw_gid;
+                            }
+                        }
                     }
                     if (!rate_limit_ready) {
                         /* The fail-closed response was already sent above. */
@@ -757,26 +750,33 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                         send_auth_response(cfd, 0, "missing POSIX account", NULL, (uid_t)-1,
                                            (gid_t)-1, NULL, 0, 0);
                     else if (authenticated &&
-                             lookup_posix_groups(user, pwd->pw_gid, groups, &group_count) != 0)
+                             lookup_posix_groups(posix_user, auth_gid, groups, &group_count) != 0)
                         send_auth_response(cfd, 0, "POSIX group lookup failed", NULL, (uid_t)-1,
                                            (gid_t)-1, NULL, 0, 0);
                     else if (authenticated &&
-                             frdp_auth_token_create(user, rhost, correlation_id,
-                                                    (uint64_t)pwd->pw_uid,
-                                                    (uint64_t)pwd->pw_gid, groups, group_count, 1,
+                             frdp_auth_token_create(posix_user, rhost, correlation_id,
+                                                    (uint64_t)auth_uid,
+                                                    (uint64_t)auth_gid, groups, group_count, 1,
                                                     authorization_id, sizeof(authorization_id)) != 0)
                         send_auth_response(cfd, 0, "authorization id generation failed", NULL,
                                            (uid_t)-1, (gid_t)-1, NULL, 0, 0);
-                    else
-                        send_auth_response(cfd, authenticated, NULL,
-                                           authenticated ? authorization_id : NULL,
-                                           authenticated ? pwd->pw_uid : (uid_t)-1,
-                                           authenticated ? pwd->pw_gid : (gid_t)-1,
-                                           authenticated ? groups : NULL,
-                                           authenticated ? group_count : 0,
-                                           authenticated ? 1 : 0);
+                    else {
+                        send_auth_response_with_user(
+                            cfd, authenticated, NULL, authenticated ? posix_user : NULL,
+                            authenticated ? authorization_id : NULL,
+                            authenticated ? auth_uid : (uid_t)-1,
+                            authenticated ? auth_gid : (gid_t)-1,
+                            authenticated ? groups : NULL, authenticated ? group_count : 0,
+                            authenticated ? 1 : 0);
+                        authorized = authenticated;
+                    }
+                    if (!audit_logged)
+                        log_audit_event(authorized ? posix_user : user, authorized,
+                                        correlation_id);
                     clear_secret(authorization_id, sizeof(authorization_id));
                     clear_secret(account_limit_key, sizeof(account_limit_key));
+                    clear_secret(pam_user, sizeof(pam_user));
+                    clear_secret(posix_user, sizeof(posix_user));
                     clear_secret((char *)groups, sizeof(groups));
                 }
                 wipe_locked_secret(&password_secret);

@@ -34,7 +34,8 @@ typedef enum {
     FRDP_IPC_AGENT_CLIPBOARD_SET_REQUEST = 23,
     FRDP_IPC_AGENT_CLIPBOARD_SET_RESPONSE = 24,
     FRDP_IPC_AGENT_CLIPBOARD_GET_REQUEST = 25,
-    FRDP_IPC_AGENT_CLIPBOARD_GET_RESPONSE = 26
+    FRDP_IPC_AGENT_CLIPBOARD_GET_RESPONSE = 26,
+    FRDP_IPC_AUTH_RESPONSE_V2 = 27
 } frdpIpcMessageType;
 
 typedef enum {
@@ -64,6 +65,7 @@ typedef struct {
 #define FRDP_IPC_AUTH_REQUEST_V2_WIRE_SIZE (64U + 64U + 128U + 256U)
 #define FRDP_IPC_AUTH_RESPONSE_WIRE_SIZE \
     (4U + 128U + 192U + 8U + 8U + 4U + (FRDP_IPC_MAX_AUTH_GROUPS * 8U) + 4U)
+#define FRDP_IPC_AUTH_RESPONSE_V2_WIRE_SIZE (FRDP_IPC_AUTH_RESPONSE_WIRE_SIZE + 64U)
 #define FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE \
     (64U + 64U + 64U + 128U + 192U + 8U + 8U + 4U + \
      (FRDP_IPC_MAX_AUTH_GROUPS * 8U) + 4U + 4U + 4U + 4U)
@@ -111,6 +113,7 @@ typedef struct {
 typedef struct {
     int success;
     char error[128];
+    char user[64];
     char authorization_id[192];
     uint64_t uid;
     uint64_t gid;
@@ -278,6 +281,8 @@ int frdp_ipc_send_auth_request_v2(int fd, const frdpAuthRequest *request);
 int frdp_ipc_recv_auth_request_v2_payload(int fd, frdpAuthRequest *request, uint32_t payload_len);
 int frdp_ipc_send_auth_response(int fd, const frdpAuthResponse *response);
 int frdp_ipc_recv_auth_response(int fd, frdpAuthResponse *response);
+int frdp_ipc_send_auth_response_v2(int fd, const frdpAuthResponse *response);
+int frdp_ipc_recv_auth_response_v2(int fd, frdpAuthResponse *response);
 int frdp_ipc_send_session_request_v3(int fd, const frdpSessionRequestV3 *request);
 int frdp_ipc_recv_session_request_v3_payload(int fd, frdpSessionRequestV3 *request,
                                              uint32_t payload_len);

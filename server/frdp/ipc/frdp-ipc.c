@@ -669,6 +669,101 @@ cleanup:
     return rc;
 }
 
+int frdp_ipc_send_auth_response_v2(int fd, const frdpAuthResponse *response)
+{
+    uint8_t wire[FRDP_IPC_AUTH_RESPONSE_V2_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response || (response->group_count > FRDP_IPC_MAX_AUTH_GROUPS)) {
+        errno = EINVAL;
+        return -1;
+    }
+    frdp_ipc_write_u32_le(&wire[offset], response->success ? 1U : 0U);
+    offset += 4U;
+    memcpy(&wire[offset], response->error, sizeof(response->error));
+    offset += sizeof(response->error);
+    memcpy(&wire[offset], response->user, sizeof(response->user));
+    offset += sizeof(response->user);
+    memcpy(&wire[offset], response->authorization_id, sizeof(response->authorization_id));
+    offset += sizeof(response->authorization_id);
+    frdp_ipc_write_u64_le(&wire[offset], response->uid);
+    offset += 8U;
+    frdp_ipc_write_u64_le(&wire[offset], response->gid);
+    offset += 8U;
+    frdp_ipc_write_u32_le(&wire[offset], response->group_count);
+    offset += 4U;
+    for (uint32_t x = 0; x < FRDP_IPC_MAX_AUTH_GROUPS; x++) {
+        const uint64_t group = (x < response->group_count) ? response->groups[x] : 0U;
+
+        frdp_ipc_write_u64_le(&wire[offset], group);
+        offset += 8U;
+    }
+    frdp_ipc_write_u32_le(&wire[offset], response->has_posix_account ? 1U : 0U);
+
+    if (frdp_ipc_send_header(fd, FRDP_IPC_AUTH_RESPONSE_V2, sizeof(wire)) != 0)
+        goto cleanup;
+    rc = frdp_ipc_send(fd, wire, sizeof(wire));
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_auth_response_v2(int fd, frdpAuthResponse *response)
+{
+    frdpIpcHeader header = { .type = FRDP_IPC_INVALID, .payload_len = 0 };
+    uint8_t wire[FRDP_IPC_AUTH_RESPONSE_V2_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!response) {
+        errno = EINVAL;
+        return -1;
+    }
+    frdp_ipc_clear_secret(response, sizeof(*response));
+    if (frdp_ipc_recv_header(fd, &header) != (int)sizeof(header))
+        return -1;
+    if ((header.type != FRDP_IPC_AUTH_RESPONSE_V2) || (header.payload_len != sizeof(wire))) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    response->success = frdp_ipc_read_u32_le(&wire[offset]) ? 1 : 0;
+    offset += 4U;
+    memcpy(response->error, &wire[offset], sizeof(response->error));
+    offset += sizeof(response->error);
+    memcpy(response->user, &wire[offset], sizeof(response->user));
+    offset += sizeof(response->user);
+    memcpy(response->authorization_id, &wire[offset], sizeof(response->authorization_id));
+    offset += sizeof(response->authorization_id);
+    response->uid = frdp_ipc_read_u64_le(&wire[offset]);
+    offset += 8U;
+    response->gid = frdp_ipc_read_u64_le(&wire[offset]);
+    offset += 8U;
+    response->group_count = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    if (response->group_count > FRDP_IPC_MAX_AUTH_GROUPS) {
+        errno = EINVAL;
+        frdp_ipc_clear_secret(response, sizeof(*response));
+        goto cleanup;
+    }
+    for (uint32_t x = 0; x < FRDP_IPC_MAX_AUTH_GROUPS; x++) {
+        const uint64_t group = frdp_ipc_read_u64_le(&wire[offset]);
+
+        if (x < response->group_count)
+            response->groups[x] = group;
+        offset += 8U;
+    }
+    response->has_posix_account = frdp_ipc_read_u32_le(&wire[offset]) ? 1 : 0;
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
 int frdp_ipc_send_session_request_v3(int fd, const frdpSessionRequestV3 *request)
 {
     uint8_t wire[FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE] = {0};

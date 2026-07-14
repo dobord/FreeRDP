@@ -465,7 +465,7 @@ static int receive_auth_failure(int fd, const char* expected_error)
 {
 	frdpAuthResponse response = { 0 };
 
-	if (frdp_ipc_recv_auth_response(fd, &response) != 0)
+	if (frdp_ipc_recv_auth_response_v2(fd, &response) != 0)
 		return -1;
 	if (response.success != 0)
 		return -1;
@@ -682,7 +682,7 @@ static int test_authd_bad_length_or_rate_limited(const char* socket_path, int* l
 		return -1;
 	if (send_header(fd, FRDP_IPC_AUTH_REQUEST_V2, sizeof(frdpAuthRequest) - 1U) != 0)
 		goto cleanup;
-	if (frdp_ipc_recv_auth_response(fd, &response) != 0)
+	if (frdp_ipc_recv_auth_response_v2(fd, &response) != 0)
 		goto cleanup;
 	if (response.success != 0 || !memchr(response.error, '\0', sizeof(response.error)))
 		goto cleanup;
@@ -925,7 +925,7 @@ static int send_authd_failed_login(const char* socket_path, const char* user, co
 		goto cleanup;
 	snprintf(request.password, sizeof(request.password), "%s", "invalid-password");
 	if ((frdp_ipc_send_auth_request_v2(fd, &request) != 0) ||
-	    (frdp_ipc_recv_auth_response(fd, &response) != 0) || response.success ||
+	    (frdp_ipc_recv_auth_response_v2(fd, &response) != 0) || response.success ||
 	    !memchr(response.error, '\0', sizeof(response.error)))
 		goto cleanup;
 	if (expect_limited)

@@ -80,7 +80,7 @@ static void fuzz_payload_decode(const uint8_t* data, size_t size, const uint8_t*
 	if (feed_socket(feed, feed_size, fds) != 0)
 		return;
 
-	switch (selector % 19U)
+	switch (selector % 20U)
 	{
 		case 0:
 		{
@@ -203,6 +203,12 @@ static void fuzz_payload_decode(const uint8_t* data, size_t size, const uint8_t*
 			(void)frdp_ipc_recv_agent_clipboard_response(
 			    fds[1], FRDP_IPC_AGENT_CLIPBOARD_GET_RESPONSE, &response, &text);
 			free(text);
+			break;
+		}
+		case 19:
+		{
+			frdpAuthResponse response = { 0 };
+			(void)frdp_ipc_recv_auth_response_v2(fds[1], &response);
 			break;
 		}
 	}
