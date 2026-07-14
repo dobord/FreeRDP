@@ -68,6 +68,8 @@ BOOL NTOWFv1A(LPCSTR Password, UINT32 PasswordLengthInBytes, BYTE* NtHash)
 
 	result = TRUE;
 out_fail:
+	if (PasswordW)
+		SecureZeroMemory(PasswordW, (pwdCharLength + 1U) * sizeof(WCHAR));
 	free(PasswordW);
 	return result;
 }
@@ -83,6 +85,7 @@ BOOL NTOWFv2W(LPCWSTR Password, UINT32 PasswordLengthInBytes, LPCWSTR User,
               UINT32 UserLengthInBytes, LPCWSTR Domain, UINT32 DomainLengthInBytes, BYTE* NtHash)
 {
 	BYTE NtHashV1[WINPR_MD5_DIGEST_LENGTH] = WINPR_C_ARRAY_INIT;
+	BOOL result = FALSE;
 
 	if (!Domain && (DomainLengthInBytes > 0))
 		return FALSE;
@@ -90,9 +93,14 @@ BOOL NTOWFv2W(LPCWSTR Password, UINT32 PasswordLengthInBytes, LPCWSTR User,
 		return FALSE;
 
 	if (!NTOWFv1W(Password, PasswordLengthInBytes, NtHashV1))
-		return FALSE;
+		goto out;
 
-	return NTOWFv2FromHashW(NtHashV1, User, UserLengthInBytes, Domain, DomainLengthInBytes, NtHash);
+	result =
+	    NTOWFv2FromHashW(NtHashV1, User, UserLengthInBytes, Domain, DomainLengthInBytes, NtHash);
+
+out:
+	SecureZeroMemory(NtHashV1, sizeof(NtHashV1));
+	return result;
 }
 
 BOOL NTOWFv2A(LPCSTR Password, UINT32 PasswordLengthInBytes, LPCSTR User, UINT32 UserLengthInBytes,
@@ -144,6 +152,8 @@ BOOL NTOWFv2A(LPCSTR Password, UINT32 PasswordLengthInBytes, LPCSTR User, UINT32
 out_fail:
 	free(UserW);
 	free(DomainW);
+	if (PasswordW)
+		SecureZeroMemory(PasswordW, (pwdCharLength + 1U) * sizeof(WCHAR));
 	free(PasswordW);
 	return result;
 }

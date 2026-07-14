@@ -4,7 +4,7 @@
 .SH SYNOPSIS
 .B @MANPAGE_NAME@
 \fB-u\fP username
-\fB-p\fP password
+(\fB-p\fP password | \fB--password-stdin\fP)
 [\fB-d\fP domain]
 [\fB-f\fP { \fIdefault\fP | sam }]
 [\fB-v\fP { \fI1\fP | 2 }]
@@ -16,6 +16,11 @@ is a small utility that can be used to create a NTLM hash from a username and pa
 The username to use.
 .IP "-p password"
 Password to use.
+.IP "--password-stdin"
+Read the password from standard input instead of a command-line argument. A
+single trailing newline, or CRLF pair, is removed. Embedded line breaks, NUL
+bytes, input longer than 4096 bytes, and use together with \fB-p\fP are rejected.
+This form avoids exposing the password in the process argument list.
 .IP "-d domain"
 A optional parameter to specify the domain of the user.
 .IP "-f format"

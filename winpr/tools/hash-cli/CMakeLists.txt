@@ -39,3 +39,11 @@ installwithrpath(
 
 set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "WinPR/Tools")
 generate_and_install_freerdp_man_from_template(${MODULE_NAME} "1" "${WINPR_API_VERSION}")
+
+if(BUILD_TESTING)
+  add_test(
+    NAME TestWinPRHashCLI
+    COMMAND ${CMAKE_COMMAND}
+            -DWINPR_HASH=$<TARGET_FILE:${MODULE_NAME}>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/TestWinPRHashCLI.cmake)
+endif()

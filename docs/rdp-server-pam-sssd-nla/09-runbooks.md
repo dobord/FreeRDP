@@ -38,6 +38,9 @@ its identities synchronized with the accounts that PAM/SSSD will authorize.
    field empty and provide exactly 32 hexadecimal characters for the NT hash.
    A local/no-domain record therefore has the form
    `user:::0123456789abcdef0123456789abcdef:::`.
+   When an approved secret source supplies a plaintext password, pipe it to
+   `winpr-hash -u user -d domain --password-stdin -f sam`; do not use the
+   legacy `-p` form. Protect the command output as password-equivalent data.
 2. Build the complete replacement in a root-only staging directory. The final
    file must be non-empty, structurally valid, regular, single-link, mode
    `0600`, and owned by the effective UID of `frdpd` (`root` for the shipped
