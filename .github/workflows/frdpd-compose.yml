@@ -92,6 +92,8 @@ jobs:
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
             -DBUILD_FUZZERS=ON \
+            -DWITH_SANITIZE_ADDRESS=ON \
+            -DWITH_SANITIZE_UNDEFINED=ON \
             -DWITH_FRDPD=ON \
             -DWITH_SERVER=ON \
             -DWITH_SHADOW=OFF \
@@ -114,6 +116,9 @@ jobs:
         run: cmake --build build-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig TestFuzzFreeRDPFrdpAuthToken TestFuzzFreeRDPFrdpAuthdPam TestFuzzFreeRDPFrdpPam TestFuzzFreeRDPFrdpNtlmIdentity TestFuzzFreeRDPFrdpIpcCodec TestFuzzFreeRDPFrdpClipboard TestFuzzFreeRDPFrdpFramePolicy TestFuzzFreeRDPFrdpInputPolicy TestFuzzFreeRDPFrdpDisplayPolicy TestFuzzFreeRDPFrdpSessionLifecycle
 
       - name: Run focused FRDP fuzzer smoke
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:allocator_may_return_null=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           printf '[channels]\nstatic_mode = "allowlist"\nstatic_allow = "cliprdr,rdpsnd"\ndynamic_mode = "allowlist"\ndynamic_allow = "rdpgfx"\n[clipboard]\nmode = "text"\ndirection = "client-to-server"\nmax_text_bytes = 4096\n' > frdp-fuzz-seed.toml
           printf 'FRDPalice' > frdp-auth-token-fuzz-seed.bin

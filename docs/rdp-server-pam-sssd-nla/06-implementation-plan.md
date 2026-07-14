@@ -35,8 +35,10 @@ ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:allocator_may_return_null=1:log_path
 cmake -S . -B /tmp/opencode/freerdp-frdp-strict-warnings -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DBUILD_TESTING=ON -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SHADOW=OFF -DWITH_PROXY=OFF -DWITH_SAMPLE=OFF -DWITH_MANPAGES=OFF -DWITH_WAYLAND=OFF -DWITH_SDL=OFF -DWITH_PULSE=OFF -DWITH_ALSA=OFF -DWITH_CUPS=OFF -DWITH_PCSC=OFF -DWITH_FFMPEG=OFF -DWITH_SWSCALE=OFF -DWITH_FUSE=OFF -DWITH_OPENCL=OFF -DCHANNEL_URBDRC=OFF -DWITH_FRDPD_STRICT_WARNINGS=ON
 cmake --build /tmp/opencode/freerdp-frdp-strict-warnings --target TestFreeRDPFrdp
 ctest --test-dir /tmp/opencode/freerdp-frdp-strict-warnings -R '^TestFreeRDPFrdp' --output-on-failure
-cmake -S . -B /tmp/opencode/freerdp-frdp-fuzz -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DBUILD_FUZZERS=ON -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SHADOW=OFF -DWITH_PROXY=OFF -DWITH_SAMPLE=OFF -DWITH_MANPAGES=OFF -DWITH_WAYLAND=OFF -DWITH_SDL=OFF -DWITH_PULSE=OFF -DWITH_ALSA=OFF -DWITH_CUPS=OFF -DWITH_PCSC=OFF -DWITH_FFMPEG=OFF -DWITH_SWSCALE=OFF -DWITH_FUSE=OFF -DWITH_OPENCL=OFF -DCHANNEL_URBDRC=OFF
-cmake --build /tmp/opencode/freerdp-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig TestFuzzFreeRDPFrdpAuthToken TestFuzzFreeRDPFrdpAuthdPam TestFuzzFreeRDPFrdpPam TestFuzzFreeRDPFrdpNtlmIdentity TestFuzzFreeRDPFrdpIpcCodec TestFuzzFreeRDPFrdpFramePolicy TestFuzzFreeRDPFrdpInputPolicy TestFuzzFreeRDPFrdpDisplayPolicy TestFuzzFreeRDPFrdpSessionLifecycle
+cmake -S . -B /tmp/opencode/freerdp-frdp-fuzz -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DBUILD_FUZZERS=ON -DWITH_SANITIZE_ADDRESS=ON -DWITH_SANITIZE_UNDEFINED=ON -DWITH_FRDPD=ON -DWITH_SERVER=ON -DWITH_SHADOW=OFF -DWITH_PROXY=OFF -DWITH_SAMPLE=OFF -DWITH_MANPAGES=OFF -DWITH_WAYLAND=OFF -DWITH_SDL=OFF -DWITH_PULSE=OFF -DWITH_ALSA=OFF -DWITH_CUPS=OFF -DWITH_PCSC=OFF -DWITH_FFMPEG=OFF -DWITH_SWSCALE=OFF -DWITH_FUSE=OFF -DWITH_OPENCL=OFF -DCHANNEL_URBDRC=OFF
+cmake --build /tmp/opencode/freerdp-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig TestFuzzFreeRDPFrdpAuthToken TestFuzzFreeRDPFrdpAuthdPam TestFuzzFreeRDPFrdpPam TestFuzzFreeRDPFrdpNtlmIdentity TestFuzzFreeRDPFrdpIpcCodec TestFuzzFreeRDPFrdpClipboard TestFuzzFreeRDPFrdpFramePolicy TestFuzzFreeRDPFrdpInputPolicy TestFuzzFreeRDPFrdpDisplayPolicy TestFuzzFreeRDPFrdpSessionLifecycle
+export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:allocator_may_return_null=1
+export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
 /tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpConfig -runs=128 -max_len=1024
 printf 'FRDPalice' > /tmp/opencode/frdp-auth-token-fuzz-seed.bin
 /tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpAuthToken /tmp/opencode/frdp-auth-token-fuzz-seed.bin -runs=1
@@ -54,6 +56,9 @@ mkdir -p /tmp/opencode/frdp-ntlm-identity-corpus
 printf 'FRDPipc-codec' > /tmp/opencode/frdp-ipc-codec-fuzz-seed.bin
 /tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpIpcCodec /tmp/opencode/frdp-ipc-codec-fuzz-seed.bin -runs=1
 /tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpIpcCodec -runs=32 -max_len=512
+printf '\x00\x00\x10\x00FreeRDP clipboard \xF0\x9F\x8C\x8D' > /tmp/opencode/frdp-clipboard-fuzz-seed.bin
+/tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpClipboard /tmp/opencode/frdp-clipboard-fuzz-seed.bin -runs=1
+/tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpClipboard -runs=64 -max_len=4096
 printf 'FRDPframe-policy' > /tmp/opencode/frdp-frame-policy-fuzz-seed.bin
 /tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpFramePolicy /tmp/opencode/frdp-frame-policy-fuzz-seed.bin -runs=1
 /tmp/opencode/freerdp-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpFramePolicy -runs=32 -max_len=256
