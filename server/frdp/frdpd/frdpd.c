@@ -28,6 +28,7 @@
 #include <winpr/interlocked.h>
 #include <winpr/path.h>
 #include <winpr/rpc.h>
+#include <winpr/sam.h>
 #include <winpr/sspi.h>
 #include <winpr/ssl.h>
 #include <winpr/synch.h>
@@ -99,6 +100,7 @@ static BOOL frdpd_prepare_ntlm_sam_file(frdpdServerConfig* config)
 {
 	struct stat st = { 0 };
 	struct stat path_st = { 0 };
+	WINPR_SAM* sam = NULL;
 	int fd = -1;
 	int length = 0;
 
@@ -121,12 +123,18 @@ static BOOL frdpd_prepare_ntlm_sam_file(frdpdServerConfig* config)
 	    (stat(config->ntlm_sam_fd_path, &path_st) != 0) || (path_st.st_dev != st.st_dev) ||
 	    (path_st.st_ino != st.st_ino))
 		goto fail;
+	sam = SamOpen(config->ntlm_sam_fd_path, TRUE);
+	if (!sam || !SamValidate(sam))
+		goto fail;
+	SamClose(sam);
+	sam = NULL;
 
 	config->ntlm_sam_fd = fd;
 	config->ntlm_sam_file = config->ntlm_sam_fd_path;
 	return TRUE;
 
 fail:
+	SamClose(sam);
 	(void)close(fd);
 	return FALSE;
 }
@@ -2605,7 +2613,8 @@ static BOOL frdpd_validate_ntlm_config(frdpdServerConfig* config)
 #ifdef WITH_FRDPD_NTLM
 	if (!frdpd_prepare_ntlm_sam_file(config))
 	{
-		WLog_ERR(TAG, "NTLM fallback requires an owner-only regular ntlm_sam_file owned by frdpd");
+		WLog_ERR(TAG, "NTLM fallback requires a valid non-empty owner-only regular "
+		              "ntlm_sam_file owned by frdpd");
 		return FALSE;
 	}
 #endif

@@ -232,6 +232,8 @@ static BOOL testMalformedHashRecovery(const char* path)
 	sam = SamOpen(path, TRUE);
 	if (!sam)
 		goto fail;
+	if (SamValidate(sam) || SamValidate(sam))
+		goto fail;
 	entry = SamLookupUserA(sam, "broken", 6, nullptr, 0);
 	if (entry)
 		goto fail;
@@ -242,6 +244,36 @@ static BOOL testMalformedHashRecovery(const char* path)
 
 fail:
 	SamFreeEntry(sam, entry);
+	SamClose(sam);
+	return rc;
+}
+
+static BOOL testEmbeddedNulRejected(const char* path)
+{
+	static const char content[] =
+	    "valid:::1910bd9285a6b8c9344d9f5cc74e0878:::\n\0hidden:::bad:::\n";
+	WINPR_SAM* sam = nullptr;
+	FILE* fp = fopen(path, "wb");
+	BOOL rc = FALSE;
+
+	if (!fp)
+		goto fail;
+	if (fwrite(content, 1, sizeof(content) - 1, fp) != (sizeof(content) - 1))
+		goto fail;
+	if (fclose(fp) != 0)
+	{
+		fp = nullptr;
+		goto fail;
+	}
+	fp = nullptr;
+	sam = SamOpen(path, TRUE);
+	if (!sam || SamValidate(sam) || SamValidate(sam))
+		goto fail;
+	rc = TRUE;
+
+fail:
+	if (fp)
+		(void)fclose(fp);
 	SamClose(sam);
 	return rc;
 }
@@ -270,6 +302,8 @@ static char* prepare(void)
 	{
 		const char* entry = sam_entries[x];
 		(void)fprintf(fp, "%s\r\n", entry);
+		if (x == 0)
+			(void)fputs("\r\n", fp);
 	}
 	(void)fclose(fp);
 
@@ -289,6 +323,8 @@ int TestSAM(WINPR_ATTR_UNUSED int argc, WINPR_ATTR_UNUSED char* argv[])
 		goto fail;
 	if (!testResetEntry())
 		goto fail;
+	if (!SamValidate(sam) || !SamValidate(sam))
+		goto fail;
 
 	if (!test(sam, "test1", nullptr, "xxxxxx", TRUE))
 		goto fail;
@@ -305,6 +341,8 @@ int TestSAM(WINPR_ATTR_UNUSED int argc, WINPR_ATTR_UNUSED char* argv[])
 	SamClose(sam);
 	sam = nullptr;
 	if (!testMalformedHashRecovery(tmp))
+		goto fail;
+	if (!testEmbeddedNulRejected(tmp))
 		goto fail;
 
 	res = 0;

@@ -23,11 +23,41 @@ Rotate the service key periodically:
 2. Copy the new keytab to each RDP server.
 3. `frdpctl reload` asks `frdp-sesmand --config <path>` to reread `[auth].pam_service`, supported `[session]` resource guards, and agent heartbeat policy. Existing sessions keep their PAM handles, receive a reset failure counter, and use the new heartbeat schedule. Restart the affected daemon during a maintenance window for listener sockets, TLS material, channel policy, clipboard policy, and helper-topology changes.
 4. Installed `frdp-authd`, `frdp-sesmand`, and `frdpd` units use `Restart=on-failure`. `frdpd` performs role-bound helper health checks before listening and fails authentication/session creation closed during a helper restart. Investigate repeated restart loops rather than raising startup or IPC timeouts.
-4. Remove old keys from Active Directory to prevent reuse.
+5. Remove old keys from Active Directory to prevent reuse.
+
+## NTLM SAM provisioning and rotation
+
+The default build enables NTLM proof verification, but PAM/SSSD cannot provide
+the NT hash required to verify an NTLMv2 challenge. Provision
+`/etc/frdpd/ntlm.sam` as a separate password-equivalent secret store and keep
+its identities synchronized with the accounts that PAM/SSSD will authorize.
+
+1. Obtain NT hashes through an approved directory provisioning process. Do not
+   pass plaintext passwords in command arguments, shell history, logs, or the
+   SAM file. Each record uses `user:domain:lm-hash:nt-hash:::`; leave the LM
+   field empty and provide exactly 32 hexadecimal characters for the NT hash.
+   A local/no-domain record therefore has the form
+   `user:::0123456789abcdef0123456789abcdef:::`.
+2. Build the complete replacement in a root-only staging directory. The final
+   file must be non-empty, structurally valid, regular, single-link, mode
+   `0600`, and owned by the effective UID of `frdpd` (`root` for the shipped
+   preview unit). Never edit the active file in place.
+3. Stop `frdpd`, install the staged file under a temporary name in
+   `/etc/frdpd`, then atomically rename it to `ntlm.sam` and start `frdpd`.
+   Startup validates every non-comment record and fails before helper probing or
+   listening on an empty, comments-only, or malformed store.
+4. Treat restart as mandatory after rotation. `frdpd` pins the validated SAM
+   inode for its lifetime, so `frdpctl reload` and replacing the pathname do not
+   move a running listener to the new store. Remove the staging copy after the
+   restarted service is healthy.
+
+An explicit `-DWITH_FRDPD_NTLM=OFF` build generates a configuration without an
+active SAM path and does not require this store.
 
 ## Troubleshooting
 
 - **Authentication fails**: Check `/var/log/auth.log` for PAM/SSSD errors. Verify SPN and keytab, ensure the client’s clock is within 5 minutes of the server.
+- **NTLM listener does not start**: Check ownership, mode, link count, and every SAM record. An empty or comments-only file is intentionally rejected. A valid NTLM proof is still followed by mandatory PAM authentication and account management, so also inspect PAM/SSSD denial logs.
 - **Sessions do not start**: Confirm that Xvfb is installed and accessible. Inspect `journalctl -u frdp-sesmand` for session errors.
 - **Performance issues**: Use the load testing harness to measure resource usage and adjust `max_connections` and session timeouts. Monitor CPU and memory with `top` or systemd metrics.
 - **Blocked channels**: Channel filtering supports `blocklist`/`blacklist` and `allowlist`/`whitelist` modes. The default is empty blocklist mode; use `[channels].static_deny` to reject exact static names, or switch to static allowlist mode with `[channels].static_allow` when a restrictive deployment is required. `[channels].dynamic_deny` / `[channels].dynamic_allow` feed the DVC authorization callback for the implemented Display Control handler. Allowing a name does not by itself enable a handler: `cliprdr` additionally requires active text clipboard policy, while arbitrary static channels, `rdpsnd` audio output, `rdpdr` device redirection, and non-text clipboard formats remain runtime-denied.

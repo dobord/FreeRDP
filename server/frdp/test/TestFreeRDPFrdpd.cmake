@@ -111,7 +111,7 @@ if(FRDPD_NTLM_ENABLED)
   set(dummy_key "${test_dir}/tls.key")
   file(WRITE "${dummy_cert}" "not-a-certificate\n")
   file(WRITE "${dummy_key}" "not-a-key\n")
-  function(run_insecure_ntlm_sam_case case_name sam_path)
+  function(run_invalid_ntlm_sam_case case_name sam_path)
     set(case_config "${test_dir}/${case_name}.toml")
     file(WRITE "${case_config}"
          "[server]\n"
@@ -126,27 +126,42 @@ if(FRDPD_NTLM_ENABLED)
     run_frdpd_case_with_result(
       "${case_name}"
       255
-      "NTLM fallback requires an owner-only regular ntlm_sam_file owned by frdpd"
+      "NTLM fallback requires a valid non-empty owner-only regular ntlm_sam_file owned by frdpd"
       --config "${case_config}")
   endfunction()
 
-  run_insecure_ntlm_sam_case("ntlm-missing-sam" "${test_dir}/missing.sam")
+  run_invalid_ntlm_sam_case("ntlm-missing-sam" "${test_dir}/missing.sam")
 
   set(ntlm_bad_mode_sam "${test_dir}/bad-mode.sam")
   file(WRITE "${ntlm_bad_mode_sam}" "user:::8846f7eaee8fb117ad06bdd830b7586c:::\n")
   file(CHMOD "${ntlm_bad_mode_sam}" PERMISSIONS OWNER_READ GROUP_READ)
-  run_insecure_ntlm_sam_case("ntlm-bad-mode-sam" "${ntlm_bad_mode_sam}")
+  run_invalid_ntlm_sam_case("ntlm-bad-mode-sam" "${ntlm_bad_mode_sam}")
 
   set(ntlm_link_target "${test_dir}/link-target.sam")
   set(ntlm_symlink_sam "${test_dir}/symlink.sam")
   file(WRITE "${ntlm_link_target}" "user:::8846f7eaee8fb117ad06bdd830b7586c:::\n")
   file(CHMOD "${ntlm_link_target}" PERMISSIONS OWNER_READ OWNER_WRITE)
   file(CREATE_LINK "${ntlm_link_target}" "${ntlm_symlink_sam}" SYMBOLIC)
-  run_insecure_ntlm_sam_case("ntlm-symlink-sam" "${ntlm_symlink_sam}")
+  run_invalid_ntlm_sam_case("ntlm-symlink-sam" "${ntlm_symlink_sam}")
 
   set(ntlm_hardlink_sam "${test_dir}/hardlink.sam")
   file(CREATE_LINK "${ntlm_link_target}" "${ntlm_hardlink_sam}")
-  run_insecure_ntlm_sam_case("ntlm-hardlink-sam" "${ntlm_hardlink_sam}")
+  run_invalid_ntlm_sam_case("ntlm-hardlink-sam" "${ntlm_hardlink_sam}")
+
+  set(ntlm_empty_sam "${test_dir}/empty.sam")
+  file(WRITE "${ntlm_empty_sam}" "")
+  file(CHMOD "${ntlm_empty_sam}" PERMISSIONS OWNER_READ OWNER_WRITE)
+  run_invalid_ntlm_sam_case("ntlm-empty-sam" "${ntlm_empty_sam}")
+
+  set(ntlm_comments_sam "${test_dir}/comments.sam")
+  file(WRITE "${ntlm_comments_sam}" "# no accounts\n# provision before startup\n")
+  file(CHMOD "${ntlm_comments_sam}" PERMISSIONS OWNER_READ OWNER_WRITE)
+  run_invalid_ntlm_sam_case("ntlm-comments-only-sam" "${ntlm_comments_sam}")
+
+  set(ntlm_malformed_sam "${test_dir}/malformed.sam")
+  file(WRITE "${ntlm_malformed_sam}" "user:::gggggggggggggggggggggggggggggggg:::\n")
+  file(CHMOD "${ntlm_malformed_sam}" PERMISSIONS OWNER_READ OWNER_WRITE)
+  run_invalid_ntlm_sam_case("ntlm-malformed-sam" "${ntlm_malformed_sam}")
 endif()
 
 if(FRDPD_NTLM_ENABLED)

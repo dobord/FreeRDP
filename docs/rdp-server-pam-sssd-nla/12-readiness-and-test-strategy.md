@@ -147,8 +147,9 @@ They should cover:
 - channel policy exact matching and malformed `CHANNEL_DEF` input;
 - IPC encode/decode, versioning, length arithmetic, partial reads/writes,
   endianness and zeroization;
-- WinPR SAM entry reset, strict LM/NT hash syntax, and repeated lookup recovery
-  after a malformed partially parsed entry;
+- WinPR SAM entry reset, strict LM/NT hash syntax, repeatable full-store
+  validation, startup rejection of empty/comments-only/malformed stores, and
+  repeated lookup recovery after a malformed partially parsed entry;
 - RC4 compatibility under both the normal OpenSSL provider and the compiled-in
   WinPR backend, with sanitizer coverage for the release paths;
 - agent input event type, flag and parameter bounds before XTest injection;

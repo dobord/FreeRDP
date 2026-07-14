@@ -51,6 +51,7 @@ extern "C"
 	                                          LPCWSTR Domain, UINT32 DomainLength);
 
 	WINPR_API void SamResetEntry(WINPR_SAM_ENTRY* entry);
+	WINPR_API BOOL SamValidate(WINPR_SAM* sam);
 
 	WINPR_API void SamClose(WINPR_SAM* sam);
 

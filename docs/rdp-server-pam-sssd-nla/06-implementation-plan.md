@@ -132,7 +132,7 @@ Deliverables:
 - [x] remove in-process PAM auth/session ownership from the peer-worker runtime; normal startup requires `frdp-authd`/`frdp-sesmand`, and the old direct PAM fallback build option/CLI path has been removed;
 - [x] PAM service `frdpd` installable example;
 - [x] password-backed CredSSP -> PAM flow in `server/frdp/frdpd`;
-- [x] build-time optional NTLM proof support (`WITH_FRDPD_NTLM`, default `ON`) through an owner-only WinPR SAM, followed by mandatory password/account verification through `frdp-authd -> PAM/SSSD`; CMake generates a feature-compatible installed sample with NTLM/SAM enabled for the default build and disabled/omitted for an explicit `OFF` build;
+- [x] build-time optional NTLM proof support (`WITH_FRDPD_NTLM`, default `ON`) through an owner-only WinPR SAM that is pinned and fully validated before listening, followed by mandatory password/account verification through `frdp-authd -> PAM/SSSD`; CMake generates a feature-compatible installed sample with NTLM/SAM enabled for the default build and disabled/omitted for an explicit `OFF` build;
 - [x] PAM auth/account smoke-test CLI in `server/frdp/frdpd` (`--pam-auth-test`);
 - [x] PAM credential establish/delete lifecycle in the integrated `server/frdp/frdpd` path;
 - [x] NSS/SSSD uid/gid/groups lookup integrated with the authenticated session path (`frdp-authd` looks up bounded supplementary groups, `frdp-sesmand` rechecks them, and the child applies the verified group payload with `setgroups()` before uid/gid drop);

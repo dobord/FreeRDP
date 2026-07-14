@@ -119,13 +119,13 @@ WINPR_SAM* SamOpen(const char* filename, BOOL readOnly)
 	}
 
 	if (readOnly)
-		fp = winpr_fopen(filename, "r");
+		fp = winpr_fopen(filename, "rb");
 	else
 	{
-		fp = winpr_fopen(filename, "r+");
+		fp = winpr_fopen(filename, "r+b");
 
 		if (!fp)
-			fp = winpr_fopen(filename, "w+");
+			fp = winpr_fopen(filename, "w+b");
 	}
 	free(allocatedFileName);
 	/* Keep password-equivalent SAM data out of stdio-owned buffers. */
@@ -183,15 +183,9 @@ static BOOL SamLookupStart(WINPR_SAM* sam)
 	if (!sam->buffer)
 		return FALSE;
 
-	readSize = fread(sam->buffer, (size_t)fileSize, 1, sam->fp);
+	readSize = fread(sam->buffer, 1, (size_t)fileSize, sam->fp);
 
-	if (!readSize)
-	{
-		if (!ferror(sam->fp))
-			readSize = (size_t)fileSize;
-	}
-
-	if (readSize < 1)
+	if ((readSize != (size_t)fileSize) || memchr(sam->buffer, '\0', readSize))
 	{
 		SecureZeroMemory(sam->buffer, sam->bufferSize);
 		free(sam->buffer);
@@ -307,6 +301,47 @@ static BOOL SamReadEntry(WINPR_SAM* sam, WINPR_SAM_ENTRY* entry)
 	return TRUE;
 }
 
+static size_t SamNormalizeLine(char* line)
+{
+	size_t length = 0;
+
+	if (!line)
+		return 0;
+	length = strlen(line);
+	if ((length > 0) && (line[length - 1] == '\r'))
+		line[--length] = '\0';
+	return length;
+}
+
+BOOL SamValidate(WINPR_SAM* sam)
+{
+	WINPR_SAM_ENTRY entry = WINPR_C_ARRAY_INIT;
+	BOOL found = FALSE;
+	BOOL valid = FALSE;
+
+	if (!SamLookupStart(sam))
+		return FALSE;
+
+	while (sam->line != nullptr)
+	{
+		const size_t length = SamNormalizeLine(sam->line);
+		if ((length > 0) && (sam->line[0] != '#'))
+		{
+			if (!SamReadEntry(sam, &entry))
+				goto out;
+			found = TRUE;
+			SamResetEntry(&entry);
+		}
+		sam->line = strtok_s(nullptr, "\n", &sam->context);
+	}
+	valid = found;
+
+out:
+	SamResetEntry(&entry);
+	SamLookupFinish(sam);
+	return valid;
+}
+
 void SamFreeEntry(WINPR_ATTR_UNUSED WINPR_SAM* sam, WINPR_SAM_ENTRY* entry)
 {
 	SamResetEntry(entry);
@@ -346,9 +381,9 @@ WINPR_SAM_ENTRY* SamLookupUserA(WINPR_SAM* sam, LPCSTR User, UINT32 UserLength, 
 
 	while (sam->line != nullptr)
 	{
-		length = strlen(sam->line);
+		length = SamNormalizeLine(sam->line);
 
-		if (length > 1)
+		if (length > 0)
 		{
 			if (sam->line[0] != '#')
 			{
