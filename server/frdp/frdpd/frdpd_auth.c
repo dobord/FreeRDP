@@ -54,28 +54,272 @@ static BOOL frdpd_auth_identity_has_empty_password(const SEC_WINNT_AUTH_IDENTITY
 	       (password_length == 0);
 }
 
+typedef struct
+{
+	const char* user;
+	size_t user_length;
+	const char* domain;
+	size_t domain_length;
+} frdpdAuthIdentityView;
+
+static BOOL frdpd_auth_identity_fields_are_valid(const SEC_WINNT_AUTH_IDENTITY* identity)
+{
+	UINT32 user_length = 0;
+	UINT32 domain_length = 0;
+	UINT32 password_length = 0;
+
+	if (sspi_GetAuthIdentityFlags(identity) & SEC_WINNT_AUTH_IDENTITY_ANSI)
+	{
+		const char* user = NULL;
+		const char* domain = NULL;
+		const char* password = NULL;
+
+		if (!sspi_GetAuthIdentityUserDomainA(identity, &user, &user_length, &domain,
+		                                     &domain_length) ||
+		    !sspi_GetAuthIdentityPasswordA(identity, &password, &password_length) ||
+		    !user || (user_length == 0) || memchr(user, '\0', user_length) ||
+		    ((domain_length > 0) && (!domain || memchr(domain, '\0', domain_length))) ||
+		    ((password_length > 0) && (!password || memchr(password, '\0', password_length))))
+			return FALSE;
+		return TRUE;
+	}
+	else
+	{
+		const WCHAR* user = NULL;
+		const WCHAR* domain = NULL;
+		const WCHAR* password = NULL;
+
+		if (!sspi_GetAuthIdentityUserDomainW(identity, &user, &user_length, &domain,
+		                                     &domain_length) ||
+		    !sspi_GetAuthIdentityPasswordW(identity, &password, &password_length) || !user ||
+		    (user_length == 0) || ((domain_length > 0) && !domain) ||
+		    ((password_length > 0) && !password))
+			return FALSE;
+		for (UINT32 x = 0; x < user_length; x++)
+		{
+			if (user[x] == 0)
+				return FALSE;
+		}
+		for (UINT32 x = 0; x < domain_length; x++)
+		{
+			if (domain[x] == 0)
+				return FALSE;
+		}
+		for (UINT32 x = 0; x < password_length; x++)
+		{
+			if (password[x] == 0)
+				return FALSE;
+		}
+		return TRUE;
+	}
+}
+
+static char* frdpd_auth_copy_ansi_field(const char* field, UINT32 length)
+{
+	char* copy = NULL;
+
+	if (!field || (length == 0))
+		return NULL;
+	copy = malloc((size_t)length + 1U);
+	if (!copy)
+		return NULL;
+	memcpy(copy, field, length);
+	copy[length] = '\0';
+	return copy;
+}
+
+static BOOL frdpd_auth_copy_identity_fields(const SEC_WINNT_AUTH_IDENTITY* identity, char** user,
+	                                         char** domain, char** password)
+{
+	BOOL success = FALSE;
+
+	if (!identity || !user || !domain || !password)
+		return FALSE;
+	*user = NULL;
+	*domain = NULL;
+	*password = NULL;
+	if (sspi_GetAuthIdentityFlags(identity) & SEC_WINNT_AUTH_IDENTITY_ANSI)
+	{
+		const char* source_user = NULL;
+		const char* source_domain = NULL;
+		const char* source_password = NULL;
+		UINT32 user_length = 0;
+		UINT32 domain_length = 0;
+		UINT32 password_length = 0;
+
+		if (!sspi_GetAuthIdentityUserDomainA(identity, &source_user, &user_length, &source_domain,
+		                                     &domain_length) ||
+		    !sspi_GetAuthIdentityPasswordA(identity, &source_password, &password_length))
+			goto out;
+		if (user_length > 0)
+		{
+			*user = frdpd_auth_copy_ansi_field(source_user, user_length);
+			if (!*user)
+				goto out;
+		}
+		if (domain_length > 0)
+		{
+			*domain = frdpd_auth_copy_ansi_field(source_domain, domain_length);
+			if (!*domain)
+				goto out;
+		}
+		if (password_length > 0)
+		{
+			*password = frdpd_auth_copy_ansi_field(source_password, password_length);
+			if (!*password)
+				goto out;
+		}
+		success = TRUE;
+	}
+	else
+	{
+		success = sspi_CopyAuthIdentityFieldsA(
+		    (const SEC_WINNT_AUTH_IDENTITY_INFO*)identity, user, domain, password);
+	}
+
+out:
+	if (!success)
+	{
+		free(*password);
+		free(*domain);
+		free(*user);
+		*user = NULL;
+		*domain = NULL;
+		*password = NULL;
+	}
+	return success;
+}
+
+static BOOL frdpd_auth_fixed_field_length(const char* field, size_t field_size, BOOL allow_empty,
+	                                      size_t* length)
+{
+	const char* end = NULL;
+
+	if (!field || (field_size == 0) || !length)
+		return FALSE;
+	end = memchr(field, '\0', field_size);
+	if (!end || (!allow_empty && (end == field)))
+		return FALSE;
+	for (const char* current = end + 1; current < &field[field_size]; current++)
+	{
+		if (*current != '\0')
+			return FALSE;
+	}
+	*length = (size_t)(end - field);
+	return TRUE;
+}
+
+static BOOL frdpd_auth_identity_view(const char* user, size_t user_length, const char* domain,
+	                                 size_t domain_length, frdpdAuthIdentityView* view)
+{
+	const char* separator = NULL;
+	const char* alternate = NULL;
+
+	if (!user || (user_length == 0) || !view)
+		return FALSE;
+	view->user = user;
+	view->user_length = user_length;
+	view->domain = domain;
+	view->domain_length = domain_length;
+	if (domain_length > 0)
+		return domain && !memchr(user, '\\', user_length) && !memchr(user, '@', user_length) &&
+		       !memchr(domain, '\\', domain_length) && !memchr(domain, '@', domain_length);
+
+	separator = memchr(user, '\\', user_length);
+	alternate = memchr(user, '@', user_length);
+	if (separator && alternate)
+		return FALSE;
+	if (!separator)
+		separator = alternate;
+	if (!separator)
+		return TRUE;
+	if ((separator == user) || (separator == &user[user_length - 1U]) ||
+	    memchr(separator + 1, *separator, (size_t)(&user[user_length] - separator - 1)) != NULL)
+		return FALSE;
+
+	if (*separator == '\\')
+	{
+		view->domain = user;
+		view->domain_length = (size_t)(separator - user);
+		view->user = separator + 1;
+		view->user_length = (size_t)(&user[user_length] - view->user);
+	}
+	else
+	{
+		view->user_length = (size_t)(separator - user);
+		view->domain = separator + 1;
+		view->domain_length = (size_t)(&user[user_length] - view->domain);
+	}
+	return TRUE;
+}
+
+static BOOL frdpd_auth_identity_component_equal(const char* left, size_t left_length,
+	                                            const char* right, size_t right_length)
+{
+	if (!left || !right || (left_length != right_length))
+		return FALSE;
+	for (size_t x = 0; x < left_length; x++)
+	{
+		unsigned char l = (unsigned char)left[x];
+		unsigned char r = (unsigned char)right[x];
+
+		if ((l >= 'A') && (l <= 'Z'))
+			l = (unsigned char)(l + ('a' - 'A'));
+		if ((r >= 'A') && (r <= 'Z'))
+			r = (unsigned char)(r + ('a' - 'A'));
+		if (l != r)
+			return FALSE;
+	}
+	return TRUE;
+}
+
 BOOL frdpd_auth_identity_matches_proof(const SEC_WINNT_AUTH_IDENTITY* identity,
-                                       const SecPkgContext_AuthIdentity* proof)
+                                       const SecPkgContext_AuthIdentity* proof,
+                                       frdpdDomainMode domain_mode)
 {
 	char* user = NULL;
 	char* domain = NULL;
 	char* password = NULL;
+	char* pam_user = NULL;
+	frdpdAuthIdentityView raw_delegated = { 0 };
+	frdpdAuthIdentityView delegated = { 0 };
+	frdpdAuthIdentityView authenticated = { 0 };
+	size_t proof_user_length = 0;
+	size_t proof_domain_length = 0;
 	BOOL match = FALSE;
 
-	if (!identity || !proof || (proof->User[0] == '\0'))
+	if (!identity || !proof)
 		return FALSE;
-	if (!sspi_CopyAuthIdentityFieldsA((const SEC_WINNT_AUTH_IDENTITY_INFO*)identity, &user,
-	                                  &domain, &password))
+	if (!frdpd_auth_fixed_field_length(proof->User, sizeof(proof->User), FALSE,
+	                                    &proof_user_length) ||
+	    !frdpd_auth_fixed_field_length(proof->Domain, sizeof(proof->Domain), TRUE,
+	                                    &proof_domain_length) ||
+	    !frdpd_auth_identity_fields_are_valid(identity))
+		return FALSE;
+	if (!frdpd_auth_copy_identity_fields(identity, &user, &domain, &password))
 		goto out;
 
-	match = user && (_stricmp(user, proof->User) == 0) &&
-	        ((!domain || (domain[0] == '\0')) ? (proof->Domain[0] == '\0')
-	                                          : (_stricmp(domain, proof->Domain) == 0));
+	if (!frdpd_auth_identity_view(user, user ? strlen(user) : 0, domain,
+	                              domain ? strlen(domain) : 0, &raw_delegated) ||
+	    !frdpd_pam_build_user(user, domain, domain_mode, &pam_user) ||
+	    !frdpd_auth_identity_view(pam_user, pam_user ? strlen(pam_user) : 0, NULL, 0,
+	                              &delegated) ||
+	    !frdpd_auth_identity_view(proof->User, proof_user_length, proof->Domain,
+	                              proof_domain_length, &authenticated))
+		goto out;
+	match = frdpd_auth_identity_component_equal(delegated.user, delegated.user_length,
+	                                            authenticated.user,
+	                                            authenticated.user_length);
+	if (match && ((delegated.domain_length != 0) || (authenticated.domain_length != 0)))
+		match = frdpd_auth_identity_component_equal(
+		    delegated.domain, delegated.domain_length, authenticated.domain,
+		    authenticated.domain_length);
 
 out:
 	if (password)
 		SecureZeroMemory(password, strlen(password));
 	free(password);
+	free(pam_user);
 	free(domain);
 	free(user);
 	return match;
@@ -164,8 +408,8 @@ static BOOL frdpd_authenticate_identity_ipc(const frdpdAuthConfig* config,
 		return FALSE;
 
 	local_error = "unable to extract CredSSP identity";
-	if (!sspi_CopyAuthIdentityFieldsA((const SEC_WINNT_AUTH_IDENTITY_INFO*)identity, &user, &domain,
-	                                  &password))
+	if (!frdpd_auth_identity_fields_are_valid(identity) ||
+	    !frdpd_auth_copy_identity_fields(identity, &user, &domain, &password))
 		goto fail;
 	if (!password && frdpd_auth_identity_has_empty_password(identity))
 	{

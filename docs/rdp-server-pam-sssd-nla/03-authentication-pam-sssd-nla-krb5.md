@@ -11,7 +11,8 @@
 ## Password-backed NLA flow
 
 ```text
-Client -> TLS -> CredSSP -> SPNEGO -> password credentials
+Client -> TLS -> CredSSP -> SPNEGO/NTLM -> protected SAM proof
+  -> bind proof identity to delegated CredSSP password identity
   -> frdp-authd
       -> pam_start(service=frdpd)
       -> pam_set_item(PAM_USER)
@@ -24,6 +25,18 @@ Client -> TLS -> CredSSP -> SPNEGO -> password credentials
       -> pam_open_session
       -> user session
 ```
+
+The proof/delegated-credential binding compares the proof with the identity
+that the configured `domain_mode` will actually send to PAM. It accepts
+ASCII-case-insensitive equivalent split, down-level (`DOMAIN\\user`), and UPN
+(`user@domain`) syntax when the same user and domain components are retained;
+non-ASCII bytes must match exactly. Empty components, embedded NUL data,
+separators in an explicit domain, repeated or mixed separators, unterminated
+proof fields, and any mapping between different domain strings fail closed.
+`domain_mode = plain` discards a separately supplied delegated domain, so a
+domain-bearing proof cannot bind to that local PAM identity. The server also
+does not infer that a NetBIOS name and a DNS/UPN suffix identify the same
+domain.
 
 This mode is the most compatible path for regular Windows RDP clients. An important limitation is that RDP NLA is not an arbitrary interactive PAM conversation. MFA through additional PAM prompts therefore works only with a deliberately designed UX or through non-interactive OTP/password concatenation, which should be treated as a temporary workaround.
 

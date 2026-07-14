@@ -42,6 +42,7 @@ BOOL frdpd_authenticate_identity(const frdpdAuthConfig* config,
                                  const SEC_WINNT_AUTH_IDENTITY* identity, frdpdAuthResult* result);
 
 BOOL frdpd_auth_identity_matches_proof(const SEC_WINNT_AUTH_IDENTITY* identity,
-                                       const SecPkgContext_AuthIdentity* proof);
+                                       const SecPkgContext_AuthIdentity* proof,
+                                       frdpdDomainMode domain_mode);
 
 #endif /* FREERDP_SERVER_FRDPD_AUTH_H */

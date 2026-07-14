@@ -1646,7 +1646,8 @@ static BOOL frdpd_peer_logon(freerdp_peer* client, const SEC_WINNT_AUTH_IDENTITY
 		{
 			const SECURITY_STATUS status = freerdp_nla_QueryContextAttributes(
 			    client->context, SECPKG_ATTR_AUTH_IDENTITY, &proof);
-			if ((status != SEC_E_OK) || !frdpd_auth_identity_matches_proof(identity, &proof))
+			if ((status != SEC_E_OK) ||
+			    !frdpd_auth_identity_matches_proof(identity, &proof, config->domain_mode))
 			{
 				WLog_WARN(TAG,
 				          "correlation_id=%s rejecting NLA login from %s because the proof "
