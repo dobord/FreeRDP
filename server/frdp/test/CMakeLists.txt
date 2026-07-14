@@ -333,6 +333,36 @@ if(BUILD_FUZZERS)
                  FOLDER "FreeRDP/Test/Fuzzers")
   add_dependencies(fuzzers ${FRDPD_PAM_FUZZER})
 
+  set(FRDP_NTLM_IDENTITY_FUZZER TestFuzzFreeRDPFrdpNtlmIdentity)
+  add_executable(${FRDP_NTLM_IDENTITY_FUZZER}
+      TestFuzzFreeRDPFrdpNtlmIdentity.c
+      ../frdpd/frdpd_auth.c
+      ../frdpd/frdpd_auth.h
+      ../frdpd/frdpd_pam.c
+      ../frdpd/frdpd_pam.h
+      ../ipc/frdp-ipc.c
+      ../ipc/frdp-ipc.h)
+  target_include_directories(${FRDP_NTLM_IDENTITY_FUZZER}
+      PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+  target_include_directories(${FRDP_NTLM_IDENTITY_FUZZER} SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
+  target_link_libraries(${FRDP_NTLM_IDENTITY_FUZZER}
+      PUBLIC fuzzer_config winpr ${PAM_LIBRARIES})
+  if(HAVE_PAM_PAM_APPL_H)
+    target_compile_definitions(${FRDP_NTLM_IDENTITY_FUZZER} PRIVATE HAVE_PAM_PAM_APPL_H)
+  endif()
+  get_target_property(FRDP_NTLM_IDENTITY_COMPILE_OPTIONS
+      ${FRDP_NTLM_IDENTITY_FUZZER} COMPILE_OPTIONS)
+  if(FRDP_NTLM_IDENTITY_COMPILE_OPTIONS)
+    list(REMOVE_ITEM FRDP_NTLM_IDENTITY_COMPILE_OPTIONS ${COMPILE_WARN_OPTS})
+    set_property(TARGET ${FRDP_NTLM_IDENTITY_FUZZER}
+        PROPERTY COMPILE_OPTIONS ${FRDP_NTLM_IDENTITY_COMPILE_OPTIONS})
+  endif()
+  frdp_apply_strict_warnings(${FRDP_NTLM_IDENTITY_FUZZER})
+  set_target_properties(${FRDP_NTLM_IDENTITY_FUZZER}
+      PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${TESTING_OUTPUT_DIRECTORY}"
+                 FOLDER "FreeRDP/Test/Fuzzers")
+  add_dependencies(fuzzers ${FRDP_NTLM_IDENTITY_FUZZER})
+
   set(FRDP_IPC_CODEC_FUZZER TestFuzzFreeRDPFrdpIpcCodec)
   add_executable(${FRDP_IPC_CODEC_FUZZER}
       TestFuzzFreeRDPFrdpIpcCodec.c

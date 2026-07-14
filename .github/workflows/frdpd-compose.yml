@@ -111,7 +111,7 @@ jobs:
             -DCHANNEL_URBDRC=OFF
 
       - name: Build focused FRDP fuzzers
-        run: cmake --build build-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig TestFuzzFreeRDPFrdpAuthToken TestFuzzFreeRDPFrdpAuthdPam TestFuzzFreeRDPFrdpPam TestFuzzFreeRDPFrdpIpcCodec TestFuzzFreeRDPFrdpClipboard TestFuzzFreeRDPFrdpFramePolicy TestFuzzFreeRDPFrdpInputPolicy TestFuzzFreeRDPFrdpDisplayPolicy TestFuzzFreeRDPFrdpSessionLifecycle
+        run: cmake --build build-frdp-fuzz --target TestFuzzFreeRDPFrdpConfig TestFuzzFreeRDPFrdpAuthToken TestFuzzFreeRDPFrdpAuthdPam TestFuzzFreeRDPFrdpPam TestFuzzFreeRDPFrdpNtlmIdentity TestFuzzFreeRDPFrdpIpcCodec TestFuzzFreeRDPFrdpClipboard TestFuzzFreeRDPFrdpFramePolicy TestFuzzFreeRDPFrdpInputPolicy TestFuzzFreeRDPFrdpDisplayPolicy TestFuzzFreeRDPFrdpSessionLifecycle
 
       - name: Run focused FRDP fuzzer smoke
         run: |
@@ -119,6 +119,9 @@ jobs:
           printf 'FRDPalice' > frdp-auth-token-fuzz-seed.bin
           printf 'FRDPauthd-pam' > frdp-authd-pam-fuzz-seed.bin
           printf 'FRDPfrdpd-pam' > frdpd-pam-fuzz-seed.bin
+          mkdir -p frdp-ntlm-identity-corpus
+          { printf '\x01\x02\x05\x07\x04\x00\x00\x00alice'; head -c 59 /dev/zero; printf 'EXAMPLE'; head -c 57 /dev/zero; printf 'pass'; } > frdp-ntlm-identity-corpus/correlated
+          { printf '\x01\x02\x05\x07\x04\x01\x00\x00alice'; head -c 59 /dev/zero; printf 'EXAMPLE'; head -c 57 /dev/zero; printf 'pass'; head -c 60 /dev/zero; printf 'alice\x00'; head -c 251 /dev/zero; printf 'EXAMPLE\x00'; } > frdp-ntlm-identity-corpus/raw
           printf 'FRDPipc-codec' > frdp-ipc-codec-fuzz-seed.bin
           printf '\x00\x00\x10\x00FreeRDP clipboard \xF0\x9F\x8C\x8D' > frdp-clipboard-fuzz-seed.bin
           printf 'FRDPframe-policy' > frdp-frame-policy-fuzz-seed.bin
@@ -133,6 +136,7 @@ jobs:
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpAuthdPam -runs=32 -max_len=512 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpPam frdpd-pam-fuzz-seed.bin -runs=1 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpPam -runs=32 -max_len=512 -artifact_prefix=build-frdp-fuzz/
+          build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpNtlmIdentity frdp-ntlm-identity-corpus -runs=128 -max_len=1024 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpIpcCodec frdp-ipc-codec-fuzz-seed.bin -runs=1 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpIpcCodec -runs=32 -max_len=512 -artifact_prefix=build-frdp-fuzz/
           build-frdp-fuzz/Testing/TestFuzzFreeRDPFrdpClipboard frdp-clipboard-fuzz-seed.bin -runs=1 -artifact_prefix=build-frdp-fuzz/
