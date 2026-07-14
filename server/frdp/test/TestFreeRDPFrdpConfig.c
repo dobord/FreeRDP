@@ -277,8 +277,13 @@ static int test_sample_config(void)
 		return -1;
 	if (strcmp(config.session_socket, "/run/frdp-sesmand/sesmand.sock") != 0)
 		return -1;
-	if (config.ntlm_fallback != 1)
+#if FRDPD_NTLM_ENABLED
+	if ((config.ntlm_fallback != 1) || (strcmp(config.ntlm_sam_file, "/etc/frdpd/ntlm.sam") != 0))
 		return -1;
+#else
+	if ((config.ntlm_fallback != 0) || (config.ntlm_sam_file[0] != '\0'))
+		return -1;
+#endif
 	if (config.kerberos != 0)
 		return -1;
 	if (config.max_connections != 0)

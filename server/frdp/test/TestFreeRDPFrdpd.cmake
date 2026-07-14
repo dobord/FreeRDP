@@ -159,7 +159,7 @@ else()
   run_frdpd_case_with_result(
     "sample-config"
     255
-    "NTLM authentication was disabled at build time"
+    "Certificate or key file not found: cert=/etc/frdpd/tls.crt key=/etc/frdpd/tls.key"
     --config "${FRDP_SAMPLE_CONFIG_PATH}")
 endif()
 

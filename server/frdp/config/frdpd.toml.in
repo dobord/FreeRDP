@@ -13,10 +13,10 @@ pam_service = "frdpd"
 auth_socket = "/run/frdp-authd/authd.sock"
 # NTLM is available when FreeRDP is built with WITH_FRDPD_NTLM=ON (the default).
 # Set false to ask CredSSP/Negotiate to reject NTLM and use Kerberos mechanisms only.
-ntlm_fallback = true
-# The file contains password-equivalent NT hashes and must be a regular, single-link,
-# owner-only 0600 file owned by the frdpd service account.
-ntlm_sam_file = "/etc/frdpd/ntlm.sam"
+ntlm_fallback = @FRDP_CONFIG_NTLM_FALLBACK@
+# When active, the SAM file contains password-equivalent NT hashes and must be a
+# regular, single-link, owner-only 0600 file owned by the frdpd service account.
+@FRDP_CONFIG_NTLM_SAM_FILE@
 # Kerberos identity fields are validated, but kerberos=true fails closed until the
 # integrated CredSSP/SPNEGO acceptor path is implemented.
 # kerberos = false

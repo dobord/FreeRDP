@@ -132,7 +132,7 @@ Deliverables:
 - [x] remove in-process PAM auth/session ownership from the peer-worker runtime; normal startup requires `frdp-authd`/`frdp-sesmand`, and the old direct PAM fallback build option/CLI path has been removed;
 - [x] PAM service `frdpd` installable example;
 - [x] password-backed CredSSP -> PAM flow in `server/frdp/frdpd`;
-- [x] build-time optional NTLM proof support (`WITH_FRDPD_NTLM`, default `ON`) through an owner-only WinPR SAM, followed by mandatory password/account verification through `frdp-authd -> PAM/SSSD`;
+- [x] build-time optional NTLM proof support (`WITH_FRDPD_NTLM`, default `ON`) through an owner-only WinPR SAM, followed by mandatory password/account verification through `frdp-authd -> PAM/SSSD`; CMake generates a feature-compatible installed sample with NTLM/SAM enabled for the default build and disabled/omitted for an explicit `OFF` build;
 - [x] PAM auth/account smoke-test CLI in `server/frdp/frdpd` (`--pam-auth-test`);
 - [x] PAM credential establish/delete lifecycle in the integrated `server/frdp/frdpd` path;
 - [x] NSS/SSSD uid/gid/groups lookup integrated with the authenticated session path (`frdp-authd` looks up bounded supplementary groups, `frdp-sesmand` rechecks them, and the child applies the verified group payload with `setgroups()` before uid/gid drop);
@@ -222,7 +222,7 @@ Deliverables:
 - [x] admin CLI `frdpctl reload` session IPC operation, with local request/response CTest coverage including the applied PAM-service success message;
 - [x] real `frdp-authd --config` startup and `frdp-sesmand --config` startup/reread/apply path behind installed helper units and `frdpctl reload` for PAM service and session resource guard selection, with the reload response reporting the applied PAM service plus session resource guard values and failing closed on active Kerberos policy while that handler is unsupported; active clipboard policy is accepted for startup and consumed by `frdpd`, but live clipboard-policy reload into existing peers remains open;
 - [ ] full runtime config reload coverage for listener sockets, TLS material, channel policy, clipboard policy, and helper topology;
-- [x] configuration reference, example, and partial parser integration for implemented daemon fields, including `max_connections` and static/dynamic channel filter policy (`10-configuration-reference.md`, `server/frdp/config/frdpd.toml`);
+- [x] configuration reference, generated example, and partial parser integration for implemented daemon fields, including `max_connections` and static/dynamic channel filter policy (`10-configuration-reference.md`, `server/frdp/config/frdpd.toml.in`);
 - [x] runbooks for AD join, keytab rotation, and troubleshooting (`09-runbooks.md`);
 - [ ] dashboards and alert rules (partial: starter node_exporter textfile collector with session reachability/count/capacity/utilization/freshness/per-session info and grouped lifecycle-state metrics, Prometheus alert examples including stale collector detection and stuck cleanup-state detection, and a Grafana dashboard install under `/usr/share/frdpd/monitoring` with focused CTest validation; native authentication/frame metrics and broader pilot threshold tuning remain open);
 - [x] migration/fallback plan to xrdp (basic documented fallback in `09-runbooks.md`; rollback testing remains part of exit criteria);

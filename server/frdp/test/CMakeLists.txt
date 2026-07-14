@@ -98,7 +98,8 @@ if(HAVE_PAM_PAM_APPL_H)
 endif()
 frdp_apply_strict_warnings(${MODULE_NAME})
 target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
-                                                   FRDP_SAMPLE_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../config/frdpd.toml"
+                                                   FRDP_SAMPLE_CONFIG_PATH="${FRDP_CONFIG_FILE}"
+                                                   FRDPD_NTLM_ENABLED=$<BOOL:${WITH_FRDPD_NTLM}>
                                                    FRDPD_PAM_TESTING
                                                    FRDPD_BINARY="$<TARGET_FILE:frdpd>"
                                                    FRDPCTL_BINARY="$<TARGET_FILE:frdpctl>"
@@ -134,7 +135,7 @@ add_test(NAME TestFreeRDPFrdpSesmand
 add_test(NAME TestFreeRDPFrdpd
          COMMAND ${CMAKE_COMMAND} -DFRDPD_BINARY=$<TARGET_FILE:frdpd>
                  -DFRDPD_NTLM_ENABLED=$<BOOL:${WITH_FRDPD_NTLM}>
-                 -DFRDP_SAMPLE_CONFIG_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../config/frdpd.toml
+                 "-DFRDP_SAMPLE_CONFIG_PATH=${FRDP_CONFIG_FILE}"
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpd.cmake)
 
 add_test(NAME TestFreeRDPFrdpIpcDemo
