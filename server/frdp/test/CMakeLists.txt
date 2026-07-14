@@ -110,20 +110,31 @@ target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CM
                                                    FRDP_SESSION_AGENT_BINARY="$<TARGET_FILE:frdp-session-agent>")
 if(PAM_WRAPPER_LIBRARY AND PAM_WRAPPER_MODULE_DIR AND NOT WITH_SANITIZE_ADDRESS)
   add_library(frdp-pam-session-test MODULE EXCLUDE_FROM_ALL TestFreeRDPFrdpPamModule.c)
+  add_library(frdp-pam-session-block-test MODULE EXCLUDE_FROM_ALL TestFreeRDPFrdpPamModule.c)
   target_include_directories(frdp-pam-session-test SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
+  target_include_directories(frdp-pam-session-block-test SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
   if(HAVE_PAM_PAM_APPL_H)
     target_compile_definitions(frdp-pam-session-test PRIVATE HAVE_PAM_PAM_APPL_H)
+    target_compile_definitions(frdp-pam-session-block-test PRIVATE HAVE_PAM_PAM_APPL_H)
   endif()
+  target_compile_definitions(frdp-pam-session-block-test
+      PRIVATE FRDP_PAM_TEST_ALWAYS_BLOCK_SESSION)
   set_target_properties(frdp-pam-session-test PROPERTIES
       C_VISIBILITY_PRESET default
       PREFIX "")
+  set_target_properties(frdp-pam-session-block-test PROPERTIES
+      C_VISIBILITY_PRESET default
+      PREFIX "")
   frdp_apply_strict_warnings(frdp-pam-session-test)
+  frdp_apply_strict_warnings(frdp-pam-session-block-test)
   set_property(TARGET frdp-pam-session-test PROPERTY FOLDER "Server/frdp/Test")
-  add_dependencies(${MODULE_NAME} frdp-pam-session-test)
+  set_property(TARGET frdp-pam-session-block-test PROPERTY FOLDER "Server/frdp/Test")
+  add_dependencies(${MODULE_NAME} frdp-pam-session-test frdp-pam-session-block-test)
   target_compile_definitions(${MODULE_NAME} PRIVATE
       FRDP_PAM_WRAPPER_LIBRARY="${PAM_WRAPPER_LIBRARY}"
       FRDP_PAM_WRAPPER_MODULE_DIR="${PAM_WRAPPER_MODULE_DIR}"
-      FRDP_PAM_SESSION_TEST_MODULE="$<TARGET_FILE:frdp-pam-session-test>")
+      FRDP_PAM_SESSION_TEST_MODULE="$<TARGET_FILE:frdp-pam-session-test>"
+      FRDP_PAM_SESSION_BLOCK_TEST_MODULE="$<TARGET_FILE:frdp-pam-session-block-test>")
 endif()
 if(XVFB_EXECUTABLE)
   target_compile_definitions(${MODULE_NAME} PRIVATE FRDP_XVFB_EXECUTABLE="${XVFB_EXECUTABLE}")

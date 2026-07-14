@@ -83,6 +83,14 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	(void)flags;
 	(void)argc;
 	(void)argv;
+	if (append_audit_record("open-session-start\n") != 0)
+		return PAM_SYSTEM_ERR;
+#if defined(FRDP_PAM_TEST_ALWAYS_BLOCK_SESSION)
+	{
+		for (;;)
+			pause();
+	}
+#endif
 	if (append_audit_record("open-session-denied\n") != 0)
 		return PAM_SYSTEM_ERR;
 	return PAM_SESSION_ERR;

@@ -2056,7 +2056,7 @@ static int test_sesmand_pam_session_open_failure(void)
 {
 	static const char service[] = "frdp-session-deny";
 	static const char expected_audit[] =
-	    "account\nsetcred-establish\nopen-session-denied\nsetcred-delete\n";
+	    "account\nsetcred-establish\nopen-session-start\nopen-session-denied\nsetcred-delete\n";
 	frdpTestHelper helper = { .pid = -1 };
 	frdpSessionResponse response = { 0 };
 	frdpSessionListResponse list = { 0 };
@@ -2126,6 +2126,114 @@ cleanup:
 	SecureZeroMemory(&list, sizeof(list));
 	return rc;
 }
+
+static int test_sesmand_crash_during_pam_open(void)
+{
+	static const char service[] = "frdp-session-crash";
+	static const char expected_audit[] =
+	    "account\nsetcred-establish\nopen-session-start\n";
+	frdpTestHelper helper = { .pid = -1 };
+	pid_t requester = -1;
+	char dir[1024] = { 0 };
+	char service_path[1024] = { 0 };
+	char audit_path[1024] = { 0 };
+	char key_path[1024] = { 0 };
+	char contents[4096] = { 0 };
+	char user[64] = { 0 };
+	uint64_t uid = 0;
+	uint64_t gid = 0;
+	uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+	uint32_t group_count = 0;
+	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
+	int helper_started = 0;
+	int status = 0;
+	int rc = -1;
+
+	if (previous_key_path && !saved_key_path)
+		return -1;
+	if ((make_runtime_dir(dir, sizeof(dir), "pam-session-crash") != 0) ||
+	    (snprintf(service_path, sizeof(service_path), "%s/%s", dir, service) >=
+	     (int)sizeof(service_path)) ||
+	    (snprintf(audit_path, sizeof(audit_path), "%s/pam-audit.log", dir) >=
+	     (int)sizeof(audit_path)) ||
+	    (snprintf(key_path, sizeof(key_path), "%s/auth-token.key", dir) >=
+	     (int)sizeof(key_path)) ||
+	    (snprintf(contents, sizeof(contents),
+	              "auth required %s\naccount required %s\nsession required %s\n",
+	              FRDP_PAM_SESSION_TEST_MODULE, FRDP_PAM_SESSION_TEST_MODULE,
+	              FRDP_PAM_SESSION_BLOCK_TEST_MODULE) >=
+	     (int)sizeof(contents)) ||
+	    (write_pam_fixture_file(service_path, contents) != 0) ||
+	    (write_pam_fixture_file(audit_path, "") != 0) ||
+	    (setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0) ||
+	    (lookup_current_user(user, sizeof(user), &uid, &gid, groups, &group_count) != 0))
+		goto cleanup;
+	if (start_helper_with_pam_wrapper(FRDP_SESMAND_BINARY, "pam-session-crash", dir, service,
+	                                  key_path, NULL, audit_path, 0, &helper) != 0)
+		goto cleanup;
+	helper_started = 1;
+	requester = fork();
+	if (requester < 0)
+		goto cleanup;
+	if (requester == 0)
+	{
+		frdpSessionResponse response = { 0 };
+		const int request_rc = request_live_session(
+		    helper.socket_path, user, "198.51.100.77", "pam-session-crash", NULL, uid, gid, groups,
+		    group_count, &response, "unused after manager crash");
+
+		SecureZeroMemory(&response, sizeof(response));
+		_exit(request_rc != 0 ? 0 : 1);
+	}
+	if ((wait_for_file_contents(audit_path, expected_audit) != 0) ||
+	    (helper_dir_contains_only_listener(&helper) != 0))
+		goto cleanup;
+	if ((kill(helper.pid, SIGKILL) != 0) || (wait_for_exit(helper.pid, &status) != 0))
+		goto cleanup;
+	helper.pid = -1;
+	if (!WIFSIGNALED(status) || (WTERMSIG(status) != SIGKILL))
+		goto cleanup;
+	if (wait_for_exit(requester, &status) != 0)
+		goto cleanup;
+	requester = -1;
+	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0) ||
+	    (helper_dir_contains_only_listener(&helper) != 0) ||
+	    (test_helper_health(helper.socket_path, "frdp-sesmand") == 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (requester > 0)
+	{
+		kill(requester, SIGKILL);
+		(void)waitpid(requester, NULL, 0);
+	}
+	if (helper_started)
+	{
+		if (helper.pid > 0)
+		{
+			kill(helper.pid, SIGKILL);
+			(void)waitpid(helper.pid, NULL, 0);
+		}
+		unlink(helper.socket_path);
+		rmdir(helper.dir);
+	}
+	if (saved_key_path)
+	{
+		(void)setenv(FRDP_AUTH_TOKEN_KEY_ENV, saved_key_path, 1);
+		free(saved_key_path);
+	}
+	else
+		unsetenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	unlink(key_path);
+	unlink(audit_path);
+	unlink(service_path);
+	if (dir[0])
+		rmdir(dir);
+	SecureZeroMemory(groups, sizeof(groups));
+	return rc;
+}
 #else
 static int test_authd_crash_during_pam(void)
 {
@@ -2133,6 +2241,11 @@ static int test_authd_crash_during_pam(void)
 }
 
 static int test_sesmand_pam_session_open_failure(void)
+{
+	return 0;
+}
+
+static int test_sesmand_crash_during_pam_open(void)
 {
 	return 0;
 }
@@ -3119,6 +3232,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_sesmand_pam_session_open_failure() != 0)
 	{
 		printf("frdp-sesmand PAM session-open failure test failed\n");
+		return -1;
+	}
+	if (test_sesmand_crash_during_pam_open() != 0)
+	{
+		printf("frdp-sesmand in-flight PAM open crash test failed\n");
 		return -1;
 	}
 	if (test_sesmand_rate_limit() != 0)

@@ -187,7 +187,9 @@ infrastructure. A test-only PAM module additionally records the real
 agent socket, display reservation, or durable metadata. The same module can
 block inside `pam_authenticate()` after recording entry; killing the real
 `frdp-authd` then proves the waiting auth client receives a bounded IPC
-failure. Extend it with:
+failure. A separately compiled blocking session module does the same for a
+real `frdp-sesmand` killed inside `pam_open_session()` and proves no desktop or
+durable session resources were allocated before that point. Extend it with:
 
 The provider-backed case is omitted from AddressSanitizer builds because
 `pam_wrapper` loads libpam with `RTLD_DEEPBIND`, which ASan rejects; the rest of
@@ -196,7 +198,7 @@ the focused FRDP suite remains covered by ASan/UBSan.
 - additional concurrent clients and slowloris timeout variants; broader truncated-message boundary variants are now covered for implemented auth/session/list/reload IPC control families;
 - peer UID rejection now has a root-gated live component test for both auth and session helpers; non-root CTest runs skip that branch, so privileged CI execution remains required to retain this evidence;
 - live-socket/stale-socket startup behavior;
-- broker crash during an in-flight PAM authentication now has deterministic component coverage; manager crash during open/close remains open;
+- broker crash during in-flight PAM authentication and manager crash during in-flight PAM session open now have deterministic component coverage; manager crash during established-session close remains open;
 - agent protocol input runtime behavior against Xvfb beyond focused input-policy coverage, plus broader frame behavior beyond the root-run forced tile capture smoke;
 - SELinux module/package validation, AppArmor parser validation and tmpfiles rule parsing are now covered when the host tools are available; sanitizer and Valgrind/LSan variants remain open.
 
