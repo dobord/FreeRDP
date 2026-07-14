@@ -402,6 +402,7 @@ void ntlm_free_message_fields_buffer(NTLM_MESSAGE_FIELDS* fields)
 	{
 		if (fields->Buffer)
 		{
+			SecureZeroMemory(fields->Buffer, fields->Len);
 			free(fields->Buffer);
 			fields->Len = 0;
 			fields->MaxLen = 0;

@@ -46,8 +46,25 @@ struct winpr_sam
 	char* line;
 	char* buffer;
 	char* context;
+	size_t bufferSize;
 	BOOL readOnly;
 };
+
+static BOOL SamIsHexString(const char* value, size_t length)
+{
+	if (!value)
+		return FALSE;
+
+	for (size_t x = 0; x < length; x++)
+	{
+		const char ch = value[x];
+		if (!(((ch >= '0') && (ch <= '9')) || ((ch >= 'a') && (ch <= 'f')) ||
+		      ((ch >= 'A') && (ch <= 'F'))))
+			return FALSE;
+	}
+
+	return TRUE;
+}
 
 static WINPR_SAM_ENTRY* SamEntryFromDataA(LPCSTR User, DWORD UserLength, LPCSTR Domain,
                                           DWORD DomainLength)
@@ -111,6 +128,12 @@ WINPR_SAM* SamOpen(const char* filename, BOOL readOnly)
 			fp = winpr_fopen(filename, "w+");
 	}
 	free(allocatedFileName);
+	/* Keep password-equivalent SAM data out of stdio-owned buffers. */
+	if (fp && (setvbuf(fp, nullptr, _IONBF, 0) != 0))
+	{
+		(void)fclose(fp);
+		fp = nullptr;
+	}
 
 	if (fp)
 	{
@@ -152,7 +175,10 @@ static BOOL SamLookupStart(WINPR_SAM* sam)
 		return FALSE;
 
 	sam->context = nullptr;
-	sam->buffer = (char*)calloc((size_t)fileSize + 2, 1);
+	if ((UINT64)fileSize > (SIZE_MAX - 2))
+		return FALSE;
+	sam->bufferSize = (size_t)fileSize + 2;
+	sam->buffer = (char*)calloc(sam->bufferSize, 1);
 
 	if (!sam->buffer)
 		return FALSE;
@@ -167,8 +193,10 @@ static BOOL SamLookupStart(WINPR_SAM* sam)
 
 	if (readSize < 1)
 	{
+		SecureZeroMemory(sam->buffer, sam->bufferSize);
 		free(sam->buffer);
 		sam->buffer = nullptr;
+		sam->bufferSize = 0;
 		return FALSE;
 	}
 
@@ -180,9 +208,15 @@ static BOOL SamLookupStart(WINPR_SAM* sam)
 
 static void SamLookupFinish(WINPR_SAM* sam)
 {
+	if (!sam)
+		return;
+	if (sam->buffer)
+		SecureZeroMemory(sam->buffer, sam->bufferSize);
 	free(sam->buffer);
 	sam->buffer = nullptr;
 	sam->line = nullptr;
+	sam->context = nullptr;
+	sam->bufferSize = 0;
 }
 
 static BOOL SamReadEntry(WINPR_SAM* sam, WINPR_SAM_ENTRY* entry)
@@ -209,8 +243,13 @@ static BOOL SamReadEntry(WINPR_SAM* sam, WINPR_SAM_ENTRY* entry)
 	p[2] = strchr(p[1], ':') + 1;
 	p[3] = strchr(p[2], ':') + 1;
 	p[4] = strchr(p[3], ':') + 1;
+	const size_t UserLength = WINPR_ASSERTING_INT_CAST(size_t, (p[1] - p[0] - 1));
+	const size_t DomainLength = WINPR_ASSERTING_INT_CAST(size_t, (p[2] - p[1] - 1));
 	const size_t LmHashLength = WINPR_ASSERTING_INT_CAST(size_t, (p[3] - p[2] - 1));
 	const size_t NtHashLength = WINPR_ASSERTING_INT_CAST(size_t, (p[4] - p[3] - 1));
+	if ((UserLength > UINT32_MAX) || (UserLength > (SIZE_MAX - 1)) || (DomainLength > UINT32_MAX) ||
+	    (DomainLength > (SIZE_MAX - 1)))
+		return FALSE;
 
 	if ((LmHashLength != 0) && (LmHashLength != 32))
 		return FALSE;
@@ -218,19 +257,19 @@ static BOOL SamReadEntry(WINPR_SAM* sam, WINPR_SAM_ENTRY* entry)
 	if ((NtHashLength != 0) && (NtHashLength != 32))
 		return FALSE;
 
-	entry->UserLength = (UINT32)(p[1] - p[0] - 1);
-	entry->User = (LPSTR)malloc(entry->UserLength + 1);
+	entry->UserLength = (UINT32)UserLength;
+	entry->User = (LPSTR)malloc(UserLength + 1);
 
 	if (!entry->User)
 		return FALSE;
 
 	entry->User[entry->UserLength] = '\0';
-	entry->DomainLength = (UINT32)(p[2] - p[1] - 1);
+	entry->DomainLength = (UINT32)DomainLength;
 	memcpy(entry->User, p[0], entry->UserLength);
 
 	if (entry->DomainLength > 0)
 	{
-		entry->Domain = (LPSTR)malloc(entry->DomainLength + 1);
+		entry->Domain = (LPSTR)malloc(DomainLength + 1);
 
 		if (!entry->Domain)
 		{
@@ -247,6 +286,8 @@ static BOOL SamReadEntry(WINPR_SAM* sam, WINPR_SAM_ENTRY* entry)
 
 	if (LmHashLength == 32)
 	{
+		if (!SamIsHexString(p[2], LmHashLength))
+			return FALSE;
 		const size_t rc =
 		    winpr_HexStringToBinBuffer(p[2], LmHashLength, entry->LmHash, sizeof(entry->LmHash));
 		if (rc != 16)
@@ -255,6 +296,8 @@ static BOOL SamReadEntry(WINPR_SAM* sam, WINPR_SAM_ENTRY* entry)
 
 	if (NtHashLength == 32)
 	{
+		if (!SamIsHexString(p[3], NtHashLength))
+			return FALSE;
 		const size_t rc = winpr_HexStringToBinBuffer(p[3], NtHashLength, (BYTE*)entry->NtHash,
 		                                             sizeof(entry->NtHash));
 		if (rc != 16)
@@ -267,6 +310,8 @@ static BOOL SamReadEntry(WINPR_SAM* sam, WINPR_SAM_ENTRY* entry)
 void SamFreeEntry(WINPR_ATTR_UNUSED WINPR_SAM* sam, WINPR_SAM_ENTRY* entry)
 {
 	SamResetEntry(entry);
+	if (entry)
+		SecureZeroMemory(entry, sizeof(*entry));
 	free(entry);
 }
 
@@ -275,20 +320,14 @@ void SamResetEntry(WINPR_SAM_ENTRY* entry)
 	if (!entry)
 		return;
 
-	if (entry->UserLength)
-	{
-		free(entry->User);
-		entry->User = nullptr;
-	}
-
-	if (entry->DomainLength)
-	{
-		free(entry->Domain);
-		entry->Domain = nullptr;
-	}
-
-	ZeroMemory(entry->LmHash, sizeof(entry->LmHash));
-	ZeroMemory(entry->NtHash, sizeof(entry->NtHash));
+	free(entry->User);
+	free(entry->Domain);
+	entry->User = nullptr;
+	entry->UserLength = 0;
+	entry->Domain = nullptr;
+	entry->DomainLength = 0;
+	SecureZeroMemory(entry->LmHash, sizeof(entry->LmHash));
+	SecureZeroMemory(entry->NtHash, sizeof(entry->NtHash));
 }
 
 WINPR_SAM_ENTRY* SamLookupUserA(WINPR_SAM* sam, LPCSTR User, UINT32 UserLength, LPCSTR Domain,
@@ -386,8 +425,10 @@ void SamClose(WINPR_SAM* sam)
 {
 	if (sam != nullptr)
 	{
+		SamLookupFinish(sam);
 		if (sam->fp)
 			(void)fclose(sam->fp);
+		SecureZeroMemory(sam, sizeof(*sam));
 		free(sam);
 	}
 }

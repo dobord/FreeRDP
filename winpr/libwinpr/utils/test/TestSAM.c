@@ -174,6 +174,78 @@ fail:
 	return rc;
 }
 
+static BOOL testResetEntry(void)
+{
+	const BYTE zeroHash[16] = WINPR_C_ARRAY_INIT;
+	WINPR_SAM_ENTRY entry = WINPR_C_ARRAY_INIT;
+	WINPR_SAM_ENTRY emptyEntry = WINPR_C_ARRAY_INIT;
+	BOOL rc = FALSE;
+
+	entry.User = _strdup("u");
+	entry.UserLength = 1;
+	entry.Domain = _strdup("d");
+	entry.DomainLength = 1;
+	if (!entry.User || !entry.Domain)
+		goto fail;
+	memset(entry.LmHash, 0xA5, sizeof(entry.LmHash));
+	memset(entry.NtHash, 0x5A, sizeof(entry.NtHash));
+
+	SamResetEntry(&entry);
+	if (entry.User || entry.Domain || (entry.UserLength != 0) || (entry.DomainLength != 0) ||
+	    (memcmp(entry.LmHash, zeroHash, sizeof(entry.LmHash)) != 0) ||
+	    (memcmp(entry.NtHash, zeroHash, sizeof(entry.NtHash)) != 0))
+		goto fail;
+
+	emptyEntry.User = _strdup("");
+	emptyEntry.Domain = _strdup("");
+	if (!emptyEntry.User || !emptyEntry.Domain)
+		goto fail;
+	SamResetEntry(&emptyEntry);
+	rc = !emptyEntry.User && !emptyEntry.Domain;
+
+fail:
+	SamResetEntry(&emptyEntry);
+	SamResetEntry(&entry);
+	return rc;
+}
+
+static BOOL writeSamFile(const char* path, const char* content)
+{
+	FILE* fp = fopen(path, "w");
+	if (!fp)
+		return FALSE;
+	const BOOL rc = fputs(content, fp) >= 0;
+	if (fclose(fp) != 0)
+		return FALSE;
+	return rc;
+}
+
+static BOOL testMalformedHashRecovery(const char* path)
+{
+	static const char malformed[] = "broken:::gggggggggggggggggggggggggggggggg:::\n";
+	WINPR_SAM_ENTRY* entry = nullptr;
+	WINPR_SAM* sam = nullptr;
+	BOOL rc = FALSE;
+
+	if (!writeSamFile(path, malformed))
+		goto fail;
+	sam = SamOpen(path, TRUE);
+	if (!sam)
+		goto fail;
+	entry = SamLookupUserA(sam, "broken", 6, nullptr, 0);
+	if (entry)
+		goto fail;
+	entry = SamLookupUserA(sam, "broken", 6, nullptr, 0);
+	if (entry)
+		goto fail;
+	rc = TRUE;
+
+fail:
+	SamFreeEntry(sam, entry);
+	SamClose(sam);
+	return rc;
+}
+
 WINPR_ATTR_MALLOC(free, 1)
 static char* prepare(void)
 {
@@ -215,6 +287,8 @@ int TestSAM(WINPR_ATTR_UNUSED int argc, WINPR_ATTR_UNUSED char* argv[])
 	WINPR_SAM* sam = SamOpen(tmp, TRUE);
 	if (!sam)
 		goto fail;
+	if (!testResetEntry())
+		goto fail;
 
 	if (!test(sam, "test1", nullptr, "xxxxxx", TRUE))
 		goto fail;
@@ -227,6 +301,10 @@ int TestSAM(WINPR_ATTR_UNUSED int argc, WINPR_ATTR_UNUSED char* argv[])
 	if (!test(sam, "test3", nullptr, "xxxxxx", FALSE))
 		goto fail;
 	if (!test(sam, "test1", nullptr, "xxxxxxe", FALSE))
+		goto fail;
+	SamClose(sam);
+	sam = nullptr;
+	if (!testMalformedHashRecovery(tmp))
 		goto fail;
 
 	res = 0;
