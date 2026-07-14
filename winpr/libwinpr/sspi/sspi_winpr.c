@@ -242,7 +242,7 @@ void sspi_SecBufferFree(PSecBuffer SecBuffer)
 		return;
 
 	if (SecBuffer->pvBuffer)
-		memset(SecBuffer->pvBuffer, 0, SecBuffer->cbBuffer);
+		SecureZeroMemory(SecBuffer->pvBuffer, SecBuffer->cbBuffer);
 
 	free(SecBuffer->pvBuffer);
 	SecBuffer->pvBuffer = nullptr;

@@ -71,6 +71,8 @@ set(${MODULE_PREFIX}_SRCS
     mcs.h
     nla.c
     nla.h
+    nla_credentials.c
+    nla_credentials.h
     smartcardlogon.c
     nego.c
     nego.h
@@ -141,6 +143,8 @@ set(${MODULE_PREFIX}_SRCS
     listener.h
     peer.c
     peer.h
+    peer_credentials.c
+    peer_credentials.h
     display.c
     display.h
     credssp_auth.c

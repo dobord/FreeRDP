@@ -39,31 +39,12 @@
 
 #include "rdp.h"
 #include "peer.h"
+#include "peer_credentials.h"
 #include "multitransport.h"
 
 #define TAG FREERDP_TAG("core.peer")
 
 static state_run_t peer_recv_pdu(freerdp_peer* client, wStream* s);
-
-static BOOL peer_copy_nla_logon_identity(freerdp_peer* client,
-                                         const SEC_WINNT_AUTH_IDENTITY_INFO* nlaIdentity,
-                                         const rdpSettings* settings)
-{
-	const char* user = NULL;
-	const char* domain = NULL;
-	const char* password = NULL;
-
-	WINPR_ASSERT(client);
-	WINPR_ASSERT(settings);
-
-	user = freerdp_settings_get_string(settings, FreeRDP_Username);
-	domain = freerdp_settings_get_string(settings, FreeRDP_Domain);
-	password = freerdp_settings_get_string(settings, FreeRDP_Password);
-	if (user && password)
-		return sspi_SetAuthIdentity(&client->identity, user, domain, password) > 0;
-
-	return sspi_CopyAuthIdentity(&client->identity, nlaIdentity) >= 0;
-}
 
 static HANDLE freerdp_peer_virtual_channel_open(freerdp_peer* client, const char* name,
                                                 UINT32 flags)
@@ -853,7 +834,7 @@ static state_run_t peer_recv_callback_internal(WINPR_ATTR_UNUSED rdpTransport* t
 				{
 					SEC_WINNT_AUTH_IDENTITY_INFO* identity =
 					    (SEC_WINNT_AUTH_IDENTITY_INFO*)nego_get_identity(rdp->nego);
-					if (peer_copy_nla_logon_identity(client, identity, settings))
+					if (peer_copy_nla_logon_identity(&client->identity, identity, settings))
 					{
 						client->authenticated =
 						    IFCALLRESULT(TRUE, client->Logon, client, &client->identity, TRUE);

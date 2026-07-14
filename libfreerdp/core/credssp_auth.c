@@ -519,6 +519,7 @@ BOOL credssp_auth_encrypt(rdpCredsspAuth* auth, const SecBuffer* plaintext, SecB
 	SecBuffer buffers[2] = WINPR_C_ARRAY_INIT;
 	SecBufferDesc buffer_desc = { SECBUFFER_VERSION, 2, buffers };
 	BYTE* buf = nullptr;
+	size_t bufferSize = 0;
 
 	WINPR_ASSERT(auth && auth->table);
 	WINPR_ASSERT(plaintext);
@@ -534,7 +535,10 @@ BOOL credssp_auth_encrypt(rdpCredsspAuth* auth, const SecBuffer* plaintext, SecB
 	}
 
 	/* Allocate consecutive memory for ciphertext and signature */
-	buf = calloc(1, plaintext->cbBuffer + auth->sizes.cbSecurityTrailer);
+	if (plaintext->cbBuffer > (UINT32_MAX - auth->sizes.cbSecurityTrailer))
+		return FALSE;
+	bufferSize = plaintext->cbBuffer + auth->sizes.cbSecurityTrailer;
+	buf = calloc(1, bufferSize);
 	if (!buf)
 		return FALSE;
 
@@ -553,6 +557,7 @@ BOOL credssp_auth_encrypt(rdpCredsspAuth* auth, const SecBuffer* plaintext, SecB
 	status = auth->table->EncryptMessage(&auth->context, 0, &buffer_desc, sequence);
 	if (status != SEC_E_OK)
 	{
+		SecureZeroMemory(buf, bufferSize);
 		free(buf);
 		return log_status(status, WLOG_ERROR, "EncryptMessage");
 	}

@@ -48,6 +48,7 @@
 #include "nego.h"
 #include "rdp.h"
 #include "nla.h"
+#include "nla_credentials.h"
 #include "utils.h"
 #include "credssp_auth.h"
 #include <freerdp/utils/smartcardlogon.h>
@@ -1926,16 +1927,47 @@ out:
 	return ret;
 }
 
+static BOOL nla_encode_ts_credentials_step(void* context, SecBuffer* output)
+{
+	rdpNla* nla = context;
+
+	WINPR_ASSERT(nla);
+	WINPR_ASSERT(output == &nla->tsCredentials);
+	return nla_encode_ts_credentials(nla);
+}
+
+static BOOL nla_encrypt_ts_credentials_step(void* context, const SecBuffer* input,
+                                            SecBuffer* output)
+{
+	rdpNla* nla = context;
+
+	WINPR_ASSERT(nla);
+	return credssp_auth_encrypt(nla->auth, input, output, nullptr, nla->sendSeqNum++);
+}
+
 static BOOL nla_encrypt_ts_credentials(rdpNla* nla)
 {
 	WINPR_ASSERT(nla);
+	return nla_credentials_encode_encrypt(nla, &nla->tsCredentials, &nla->authInfo,
+	                                      nla_encode_ts_credentials_step,
+	                                      nla_encrypt_ts_credentials_step);
+}
 
-	if (!nla_encode_ts_credentials(nla))
-		return FALSE;
+static BOOL nla_decrypt_ts_credentials_step(void* context, const SecBuffer* input,
+                                            SecBuffer* output)
+{
+	rdpNla* nla = context;
 
-	sspi_SecBufferFree(&nla->authInfo);
-	return (credssp_auth_encrypt(nla->auth, &nla->tsCredentials, &nla->authInfo, nullptr,
-	                             nla->sendSeqNum++));
+	WINPR_ASSERT(nla);
+	return credssp_auth_decrypt(nla->auth, input, output, nla->recvSeqNum++);
+}
+
+static BOOL nla_decode_ts_credentials_step(void* context, SecBuffer* input)
+{
+	rdpNla* nla = context;
+
+	WINPR_ASSERT(nla);
+	return nla_read_ts_credentials(nla, input);
 }
 
 static BOOL nla_decrypt_ts_credentials(rdpNla* nla)
@@ -1943,19 +1975,10 @@ static BOOL nla_decrypt_ts_credentials(rdpNla* nla)
 	WINPR_ASSERT(nla);
 
 	if (nla->authInfo.cbBuffer < 1)
-	{
 		WLog_ERR(TAG, "nla_decrypt_ts_credentials missing authInfo buffer");
-		return FALSE;
-	}
-
-	sspi_SecBufferFree(&nla->tsCredentials);
-	if (!credssp_auth_decrypt(nla->auth, &nla->authInfo, &nla->tsCredentials, nla->recvSeqNum++))
-		return FALSE;
-
-	if (!nla_read_ts_credentials(nla, &nla->tsCredentials))
-		return FALSE;
-
-	return TRUE;
+	return nla_credentials_decrypt_decode(nla, &nla->authInfo, &nla->tsCredentials,
+	                                      nla_decrypt_ts_credentials_step,
+	                                      nla_decode_ts_credentials_step);
 }
 
 static BOOL nla_write_octet_string(WinPrAsn1Encoder* enc, const SecBuffer* buffer,

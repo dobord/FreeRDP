@@ -7,7 +7,8 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 set(DRIVER ${MODULE_NAME}.c)
 
-set(TESTS TestVersion.c TestSettings.c TestUtils.c TestWtsDvcAuthorization.c)
+set(TESTS TestVersion.c TestSettings.c TestUtils.c TestWtsDvcAuthorization.c TestPeerCredentials.c
+          TestNlaCredentials.c)
 
 if(BUILD_TESTING_INTERNAL)
   list(APPEND TESTS TestStreamDump.c)
@@ -25,7 +26,7 @@ endif()
 
 create_test_sourcelist(SRCS ${DRIVER} ${TESTS})
 
-add_executable(${MODULE_NAME} ${SRCS})
+add_executable(${MODULE_NAME} ${SRCS} ../peer_credentials.c ../nla_credentials.c)
 
 if(WITH_RESOURCE_VERSIONING)
   target_compile_definitions(${MODULE_NAME} PRIVATE WITH_RESOURCE_VERSIONING)
