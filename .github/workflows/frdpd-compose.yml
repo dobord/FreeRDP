@@ -173,6 +173,18 @@ jobs:
       inputs.profile == 'quick' || inputs.profile == 'component' || inputs.profile == 'all'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        ntlm:
+          - name: default-on
+            cmake_arg: ''
+            expected: ON
+          - name: explicit-off
+            cmake_arg: -DWITH_FRDPD_NTLM=OFF
+            expected: OFF
+    env:
+      FRDP_NTLM_CMAKE_ARG: ${{ matrix.ntlm.cmake_arg }}
     steps:
       - uses: actions/checkout@v4
 
@@ -205,6 +217,10 @@ jobs:
 
       - name: Configure strict-warning FRDP build
         run: |
+          ntlm_args=()
+          if [[ -n ${FRDP_NTLM_CMAKE_ARG} ]]; then
+            ntlm_args+=("${FRDP_NTLM_CMAKE_ARG}")
+          fi
           cmake -S . -B build-frdp-warnings -GNinja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_COMPILER=clang \
@@ -226,10 +242,16 @@ jobs:
             -DWITH_FUSE=OFF \
             -DWITH_OPENCL=OFF \
             -DCHANNEL_URBDRC=OFF \
-            -DWITH_FRDPD_STRICT_WARNINGS=ON
+            -DWITH_FRDPD_STRICT_WARNINGS=ON \
+            "${ntlm_args[@]}"
+
+      - name: Verify NTLM build contract
+        run: grep -qx 'WITH_FRDPD_NTLM:BOOL=${{ matrix.ntlm.expected }}' build-frdp-warnings/CMakeCache.txt
 
       - name: Build focused FRDP warning tests
-        run: cmake --build build-frdp-warnings --target TestFreeRDPFrdp
+        run: >-
+          cmake --build build-frdp-warnings --target
+          TestFreeRDPFrdp frdpd-ipc-demo frdp-krb-authd
 
       - name: Run focused FRDP warning tests
         run: ctest --test-dir build-frdp-warnings -R '^TestFreeRDPFrdp' --output-on-failure
@@ -238,7 +260,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: frdpd-warnings-${{ github.run_id }}
+          name: frdpd-warnings-${{ matrix.ntlm.name }}-${{ github.run_id }}
           path: |
             build-frdp-warnings/CMakeFiles/CMakeOutput.log
             build-frdp-warnings/CMakeFiles/CMakeError.log

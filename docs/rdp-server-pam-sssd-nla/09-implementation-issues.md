@@ -93,6 +93,7 @@ distro CI and full distro policy validation remain open.
 - Integrated `frdpd` now zero-frees the peer-owned FreeRDP auth identity immediately after `frdpd_authenticate_identity()` returns and the brokered result has been copied into `frdpd` session context.
 - WinPR SAM parsing now strictly rejects non-hex LM/NT hash fields; focused coverage repeats the malformed lookup through one open SAM handle to verify partial-entry cleanup and parser recovery.
 - `frdp-authd` now releases its locked password copy immediately after `pam_end()` and before NSS/SSSD account lookup, while WinPR securely clears both the RC4 provider wrapper and the internal key-derived permutation state before freeing them. PAM-module-owned response storage remains outside application ownership.
+- Strict-warning CI now exercises both the implicit default-on `WITH_FRDPD_NTLM` configuration and an explicit build-time-disabled configuration, asserts the resolved CMake cache value, and runs the focused FRDP suite in both variants. `TestFreeRDPFrdpd` verifies that the disabled build rejects runtime NTLM fallback while the default build reaches the normal certificate/SAM policy path.
 
 ## Remaining issues
 
