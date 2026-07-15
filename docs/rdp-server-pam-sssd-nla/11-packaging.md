@@ -22,7 +22,9 @@ The root `debian/` directory contains minimal preview packaging for the server-o
   health, sesmand control IPC, and the TCP listener after every transition, and checks conffile,
   enablement, and administrator-secret retention. An independently packaged Ubuntu `xfreerdp3`
   client also completes local-PAM managed-session detach/reconnect/cleanup against the base,
-  synthetic-upgrade, and rolled-back package versions.
+  synthetic-upgrade, and rolled-back package versions. Separate held-session probes verify bounded
+  client disconnect plus stale registry/agent cleanup during both package transitions before the
+  post-transition login.
 - Remaining Debian work includes a complete source-package copyright audit, resolving or formally reviewing non-error lintian findings, package signing, SSSD-provider real-login and active-session validation against the installed package during upgrade/rollback, and validation of installed SELinux/AppArmor draft examples.
 
 ## RPM packaging

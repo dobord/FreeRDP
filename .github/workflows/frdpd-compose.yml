@@ -179,6 +179,8 @@ jobs:
             tee "$artifacts/systemd-lifecycle.txt"
           grep -Fxq "auth_smoke=base,upgrade,rollback" \
             "$artifacts/systemd-lifecycle.txt"
+          grep -Fxq "active_transition=upgrade,rollback" \
+            "$artifacts/systemd-lifecycle.txt"
 
       - name: Upload Debian artifacts
         if: always()

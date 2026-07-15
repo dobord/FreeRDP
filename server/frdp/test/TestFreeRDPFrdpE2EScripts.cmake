@@ -64,12 +64,25 @@ foreach(expected
         "run_session_smoke upgrade"
         "run_session_smoke rollback"
         "auth_smoke=base,upgrade,rollback"
+        "start_transition_session upgrade"
+        "start_transition_session rollback"
+        "assert_transition_session_active"
+        "assert_transition_session_closed"
+        "active_transition=upgrade,rollback"
         "FragmentPath"
         "frdpctl status --socket /run/frdp-sesmand/sesmand.sock"
         "timeout 5 bash -c")
   expect_contains("${debian_lifecycle}" "${expected}"
                   "Debian real-daemon lifecycle test")
 endforeach()
+string(FIND "${debian_lifecycle}" "dpkg-deb --build" lifecycle_package_build)
+string(FIND "${debian_lifecycle}" "start_transition_session upgrade"
+       lifecycle_upgrade_session)
+if(lifecycle_package_build EQUAL -1 OR lifecycle_upgrade_session EQUAL -1 OR
+   lifecycle_upgrade_session LESS_EQUAL lifecycle_package_build)
+  message(FATAL_ERROR
+          "Debian lifecycle test must build the upgrade package before holding an active session")
+endif()
 string(REGEX MATCHALL "assert_real_services" lifecycle_assertions
              "${debian_lifecycle}")
 list(LENGTH lifecycle_assertions lifecycle_assertion_count)
@@ -418,6 +431,7 @@ foreach(expected
         "TestFreeRDPFrdpDebianLifecycle.sh \"$deb_path\""
         "tee \"$artifacts/systemd-lifecycle.txt\""
         "auth_smoke=base,upgrade,rollback"
+        "active_transition=upgrade,rollback"
         "grep -q \"/lib/$FRDP_MULTIARCH/frdpd/libwinpr3.so.3\""
         "grep -q \"/lib/$FRDP_MULTIARCH/frdpd/libfreerdp3.so.3\""
         "winpr-hash -u alice --password-stdin"

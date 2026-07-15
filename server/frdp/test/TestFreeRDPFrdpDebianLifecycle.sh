@@ -118,6 +118,98 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
       /tmp/rdp-session-smoke.sh
   }
 
+  start_transition_session() {
+    local stage=$1 i
+
+    transition_display=:91
+    transition_artifacts="/tmp/lifecycle-transition-$stage"
+    mkdir -p "$transition_artifacts"
+    Xvfb "$transition_display" -screen 0 800x600x24 -nolisten tcp \
+      > "$transition_artifacts/client-xvfb.log" 2>&1 &
+    transition_xvfb_pid=$!
+    for i in $(seq 1 100); do
+      if DISPLAY="$transition_display" xdpyinfo >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.1
+    done
+    DISPLAY="$transition_display" xdpyinfo >/dev/null
+
+    DISPLAY="$transition_display" xfreerdp3 \
+      /v:127.0.0.1:3389 /u:lifecycle /p:RdpPassw0rd! /cert:ignore /sec:nla \
+      /size:800x600 /bpp:24 /audio-mode:2 /network:modem \
+      -gfx -disp -dynamic-resolution -clipboard -heartbeat -multitransport \
+      -auto-reconnect /log-level:INFO \
+      > "$transition_artifacts/client.log" 2>&1 &
+    transition_client_pid=$!
+    transition_session_id=
+    transition_agent_pid=
+    for i in $(seq 1 30); do
+      kill -0 "$transition_client_pid"
+      frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
+        > "$transition_artifacts/session-list.txt" 2>&1 || true
+      read -r transition_session_id transition_agent_pid < <(
+        awk '\''NR > 1 && $2 == "lifecycle" && $4 == "active" { print $1, $5; exit }'\'' \
+          "$transition_artifacts/session-list.txt") || true
+      if [[ -n "$transition_session_id" && -n "$transition_agent_pid" ]]; then
+        if assert_transition_session_active; then
+          return 0
+        fi
+      fi
+      sleep 1
+    done
+    return 1
+  }
+
+  assert_transition_session_active() {
+    local state
+
+    kill -0 "$transition_xvfb_pid"
+    kill -0 "$transition_client_pid"
+    state=$(ps -o stat= -p "$transition_agent_pid" | tr -d "[:space:]")
+    [[ -n "$state" && "$state" != Z* ]]
+    frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
+      > "$transition_artifacts/session-list-before-transition.txt"
+    awk -v id="$transition_session_id" -v pid="$transition_agent_pid" '\''
+      NR > 1 && $2 == "lifecycle" { count++ }
+      NR > 1 && $1 == id && $2 == "lifecycle" && $4 == "active" && $5 == pid {
+        matched++
+      }
+      END { exit (count == 1 && matched == 1) ? 0 : 1 }
+    '\'' "$transition_artifacts/session-list-before-transition.txt"
+  }
+
+  assert_transition_session_closed() {
+    local i
+
+    for i in $(seq 1 30); do
+      if ! kill -0 "$transition_client_pid" 2>/dev/null; then
+        wait "$transition_client_pid" || true
+        break
+      fi
+      sleep 1
+    done
+    ! kill -0 "$transition_client_pid" 2>/dev/null
+    for i in $(seq 1 30); do
+      frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
+        > "$transition_artifacts/session-list-after.txt" 2>&1 || true
+      if grep -Fxq "No active sessions" "$transition_artifacts/session-list-after.txt"; then
+        break
+      fi
+      sleep 1
+    done
+    grep -Fxq "No active sessions" "$transition_artifacts/session-list-after.txt"
+    for i in $(seq 1 300); do
+      if ! kill -0 "$transition_agent_pid" 2>/dev/null; then
+        break
+      fi
+      sleep 0.1
+    done
+    ! kill -0 "$transition_agent_pid" 2>/dev/null
+    kill -TERM "$transition_xvfb_pid" 2>/dev/null || true
+    wait "$transition_xvfb_pid" || true
+  }
+
   echo "stage=install"
   apt-get update -qq
   apt-get install -qq -y /tmp/frdpd-base.deb
@@ -174,8 +266,10 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     > /tmp/frdpd-upgrade-root/usr/share/frdpd/lifecycle-version
   rm -f /tmp/frdpd-upgrade-root/DEBIAN/md5sums
   dpkg-deb --build /tmp/frdpd-upgrade-root /tmp/frdpd-upgrade.deb >/dev/null
+  start_transition_session upgrade
 
   echo "stage=upgrade"
+  assert_transition_session_active
   apt-get install -qq -y /tmp/frdpd-upgrade.deb
   test "$(dpkg-query -W -f="\${Version}" frdpd)" = "$upgrade_version"
   test "$(cat /usr/share/frdpd/lifecycle-version)" = "$upgrade_version"
@@ -184,6 +278,7 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
   test "$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)" = \
     "$secret_hashes"
   assert_real_services
+  assert_transition_session_closed
   run_session_smoke upgrade
   for unit in frdp-authd.service frdp-sesmand.service frdpd.service; do
     systemctl show --property=InvocationID --value "$unit"
@@ -193,8 +288,10 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     test -n "$after"
     test "$before" != "$after"
   done < <(paste /tmp/invocations-base /tmp/invocations-upgrade)
+  start_transition_session rollback
 
   echo "stage=rollback"
+  assert_transition_session_active
   apt-get install -qq -y --allow-downgrades /tmp/frdpd-base.deb
   test "$(dpkg-query -W -f="\${Version}" frdpd)" = "$base_version"
   test ! -e /usr/share/frdpd/lifecycle-version
@@ -203,6 +300,7 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
   test "$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)" = \
     "$secret_hashes"
   assert_real_services
+  assert_transition_session_closed
   run_session_smoke rollback
   for unit in frdp-authd.service frdp-sesmand.service frdpd.service; do
     systemctl show --property=InvocationID --value "$unit"
@@ -238,6 +336,6 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     "$secret_hashes"
   rm -rf /etc/frdpd
 
-  printf "base=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,upgrade,rollback\nresult=pass\n" \
+  printf "base=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,upgrade,rollback\nactive_transition=upgrade,rollback\nresult=pass\n" \
     "$base_version" "$upgrade_version" "$base_version"
 '
