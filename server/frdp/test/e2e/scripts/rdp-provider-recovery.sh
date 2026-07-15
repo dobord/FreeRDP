@@ -3,6 +3,20 @@ set -Eeuo pipefail
 
 FRDP_E2E_CONTROL_DIR=${FRDP_E2E_CONTROL_DIR:-/run/frdp-e2e-control}
 FRDP_ARTIFACT_DIR=${FRDP_ARTIFACT_DIR:-/artifacts}
+FRDP_IDENTITY_PROVIDER=${FRDP_IDENTITY_PROVIDER:-}
+
+case "$FRDP_IDENTITY_PROVIDER" in
+	samba)
+		provider_result=samba-ad-sssd
+		;;
+	freeipa)
+		provider_result=freeipa-sssd
+		;;
+	*)
+		printf 'unsupported recovery provider: %s\n' "$FRDP_IDENTITY_PROVIDER" >&2
+		exit 1
+		;;
+esac
 
 mkdir -p "$FRDP_ARTIFACT_DIR" "$FRDP_E2E_CONTROL_DIR"
 mkdir -p "$FRDP_ARTIFACT_DIR/provider-sesmand-crash" \
@@ -20,5 +34,5 @@ FRDP_ARTIFACT_DIR="$FRDP_ARTIFACT_DIR/provider-sesmand-crash" \
 FRDP_ARTIFACT_DIR="$FRDP_ARTIFACT_DIR/provider-post-recovery" \
 	bash /opt/frdp-e2e/scripts/rdp-session-smoke.sh
 
-printf 'provider=samba-ad-sssd\nhelper=frdp-sesmand\nactive_session_crash=pass\npost_recovery_session=pass\n' \
-	>"$FRDP_ARTIFACT_DIR/provider-recovery.txt"
+printf 'provider=%s\nhelper=frdp-sesmand\nactive_session_crash=pass\npost_recovery_session=pass\n' \
+	"$provider_result" >"$FRDP_ARTIFACT_DIR/provider-recovery.txt"

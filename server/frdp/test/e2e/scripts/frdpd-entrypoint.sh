@@ -16,7 +16,6 @@ FRDP_E2E_SESMAND_CRASH_RECOVERY=${FRDP_E2E_SESMAND_CRASH_RECOVERY:-0}
 FRDP_E2E_CONTROL_DIR=${FRDP_E2E_CONTROL_DIR:-/run/frdp-e2e-control}
 
 children=()
-auxiliary=()
 stopping=0
 
 log()
@@ -428,17 +427,14 @@ inject_sesmand_crash()
 	local state
 	local temporary="$FRDP_E2E_CONTROL_DIR/.sesmand-recovery.$$"
 	socket_pin="$(dirname "$FRDP_SESSION_SOCKET")/.e2e-old-sesmand-socket"
+	trap 'exit 0' TERM INT
 
-	for ((i = 0; i < 600; i++)); do
-		[[ ! -f $FRDP_E2E_CONTROL_DIR/arm-sesmand-crash ]] || break
+	while [[ ! -f $FRDP_E2E_CONTROL_DIR/arm-sesmand-crash ]]; do
 		sleep 0.1
 	done
-	[[ -f $FRDP_E2E_CONTROL_DIR/arm-sesmand-crash ]] || return 1
-	for ((i = 0; i < 600; i++)); do
-		[[ ! -f $FRDP_E2E_CONTROL_DIR/client-session-observed ]] || break
+	while [[ ! -f $FRDP_E2E_CONTROL_DIR/client-session-observed ]]; do
 		sleep 0.1
 	done
-	[[ -f $FRDP_E2E_CONTROL_DIR/client-session-observed ]] || return 1
 	observed_session_id=$(sed -n 's/^session_id=//p' "$FRDP_E2E_CONTROL_DIR/client-session-observed")
 	observed_agent_pid=$(sed -n 's/^agent_pid=//p' "$FRDP_E2E_CONTROL_DIR/client-session-observed")
 	[[ -n $observed_session_id && $observed_agent_pid =~ ^[0-9]+$ ]]
@@ -504,6 +500,9 @@ inject_sesmand_crash()
 		"$session_id" "$agent_pid" "$old_pid" "$new_pid" "$old_inode" "$new_inode" >"$temporary"
 	mv -f "$temporary" "$FRDP_E2E_CONTROL_DIR/sesmand-recovery"
 	log "provider-backed frdp-sesmand recovery passed for provider=$FRDP_IDENTITY_PROVIDER session=$session_id"
+	while :; do
+		sleep 1
+	done
 }
 
 shutdown_children()
@@ -515,14 +514,8 @@ shutdown_children()
 	fi
 	stopping=1
 	trap - TERM INT EXIT
-	for pid in "${auxiliary[@]}"; do
-		kill -TERM "$pid" 2>/dev/null || true
-	done
 	for pid in "${children[@]}"; do
 		kill -TERM "$pid" 2>/dev/null || true
-	done
-	for pid in "${auxiliary[@]}"; do
-		wait "$pid" 2>/dev/null || true
 	done
 	for pid in "${children[@]}"; do
 		wait "$pid" 2>/dev/null || true
@@ -545,8 +538,9 @@ generate_ntlm_test_sam
 if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY != 0 && $FRDP_E2E_SESMAND_CRASH_RECOVERY != 1 ]]; then
 	fail "FRDP_E2E_SESMAND_CRASH_RECOVERY must be 0 or 1"
 fi
-if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 && $FRDP_IDENTITY_PROVIDER != samba ]]; then
-	fail "frdp-sesmand crash recovery injection is restricted to the Samba provider profile"
+if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 && $FRDP_IDENTITY_PROVIDER != samba &&
+	$FRDP_IDENTITY_PROVIDER != freeipa ]]; then
+	fail "frdp-sesmand crash recovery injection requires a Samba or FreeIPA provider profile"
 fi
 
 frdp-authd --config "$FRDP_CONFIG" --socket "$FRDP_AUTH_SOCKET" &
@@ -569,7 +563,7 @@ children+=("$!")
 
 if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 ]]; then
 	inject_sesmand_crash &
-	auxiliary+=("$!")
+	children+=("$!")
 fi
 
 log "FRDP stack started for provider=$FRDP_IDENTITY_PROVIDER user=$FRDP_TEST_USER"

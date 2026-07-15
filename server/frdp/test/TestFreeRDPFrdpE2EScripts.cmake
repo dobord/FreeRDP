@@ -18,6 +18,13 @@ function(expect_contains haystack needle label)
   endif()
 endfunction()
 
+function(expect_not_contains haystack needle label)
+  string(FIND "${haystack}" "${needle}" found)
+  if(NOT found EQUAL -1)
+    message(FATAL_ERROR "${label} unexpectedly contains '${needle}':\n${haystack}")
+  endif()
+endfunction()
+
 foreach(script
         run.sh
         TestRunner.sh
@@ -190,6 +197,7 @@ foreach(expected
         "FRDP_E2E_SESMAND_CRASH_RECOVERY: 1"
         "rdp-provider-recovery.sh"
         "samba-control:/run/frdp-e2e-control"
+        "freeipa-control:/run/frdp-e2e-control"
         "FRDP_FREEIPA_ENROLL_PASSWORD: \${FRDP_FREEIPA_ENROLL_PASSWORD:-IpaEnrollPassw0rd!}"
         "FRDP_DENY_LABEL: policy-denied"
         "WITH_FREEIPA_CLIENT: ON"
@@ -229,6 +237,9 @@ foreach(expected
         "FRDP_E2E_SESMAND_CRASH_RECOVERY"
         "run_sesmand_supervisor"
         "inject_sesmand_crash"
+        "while [[ ! -f \$FRDP_E2E_CONTROL_DIR/arm-sesmand-crash ]]"
+        "inject_sesmand_crash &\n\tchildren+=(\"\$!\")"
+        "wait -n \"\${children[@]}\""
         "sesmand-crash-triggered"
         "kill -KILL \"\$old_pid\""
         "new_inode != \"\$old_inode\""
@@ -237,6 +248,8 @@ foreach(expected
   expect_contains("${frdpd_entrypoint}" "${expected}"
                   "frdpd provider recovery entrypoint")
 endforeach()
+expect_not_contains("${frdpd_entrypoint}" "auxiliary"
+                    "frdpd provider recovery entrypoint")
 
 foreach(expected
         "ipa-client-install"
@@ -421,7 +434,9 @@ foreach(expected
         "arm-sesmand-crash"
         "FRDP_SESSION_EXPECT_MANAGER_CRASH=1"
         "provider-post-recovery"
-        "provider=samba-ad-sssd"
+        "FRDP_IDENTITY_PROVIDER"
+        "provider_result=samba-ad-sssd"
+        "provider_result=freeipa-sssd"
         "post_recovery_session=pass")
   expect_contains("${provider_recovery}" "${expected}"
                   "provider recovery probe")

@@ -139,6 +139,7 @@ services:
       FRDP_FREEIPA_REALM: IPA.TEST
       FRDP_FREEIPA_HOST: frdpd.ipa.test
       FRDP_FREEIPA_ENROLL_PASSWORD: ${FRDP_FREEIPA_ENROLL_PASSWORD:-IpaEnrollPassw0rd!}
+      FRDP_E2E_SESMAND_CRASH_RECOVERY: 1
       FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
       FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
       FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
@@ -151,6 +152,7 @@ services:
     volumes:
       - freeipa-sesmand:/run/frdp-sesmand
       - freeipa-x11:/tmp/.X11-unix
+      - freeipa-control:/run/frdp-e2e-control
     networks:
       frdp-e2e:
         ipv4_address: ${FRDP_FREEIPA_SERVER_IP:-172.31.56.31}
@@ -159,12 +161,13 @@ services:
   rdp-client-freeipa:
     <<: *frdp-image
     profiles: ["freeipa"]
-    entrypoint: ["bash", "/opt/frdp-e2e/scripts/rdp-probe.sh"]
+    entrypoint: ["bash", "/opt/frdp-e2e/scripts/rdp-provider-recovery.sh"]
     dns: ["${FRDP_IPA_IP:-172.31.56.10}"]
     extra_hosts:
       - "frdpd.ipa.test:${FRDP_FREEIPA_SERVER_IP:-172.31.56.31}"
     environment:
       FRDP_RDP_TARGET: frdpd.ipa.test:3389
+      FRDP_IDENTITY_PROVIDER: freeipa
       FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
       FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
       FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
@@ -177,6 +180,7 @@ services:
     volumes:
       - freeipa-sesmand:/run/frdp-sesmand:ro
       - freeipa-x11:/tmp/.X11-unix
+      - freeipa-control:/run/frdp-e2e-control
       - ${FRDP_E2E_ARTIFACTS:-./artifacts}/freeipa:/artifacts
     networks:
       frdp-e2e:
@@ -263,6 +267,7 @@ services:
     environment:
       FRDP_RDP_TARGET: frdpd.ad.test:3389
       FRDP_RDP_DOMAIN: AD
+      FRDP_IDENTITY_PROVIDER: samba
       FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
       FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
       FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
@@ -286,6 +291,7 @@ volumes:
   freeipa-data:
   freeipa-sesmand:
   freeipa-x11:
+  freeipa-control:
   samba-sesmand:
   samba-x11:
   samba-control:

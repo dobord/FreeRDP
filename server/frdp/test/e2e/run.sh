@@ -178,6 +178,7 @@ validate_rdp_auth_artifacts()
 	local total_accepted total_rejected
 	local ntlm_proof_rejected wrong_password_rejected denied_user_rejected
 	local expected_accepted=3
+	local provider_result=
 
 	server_id=$("${compose[@]}" --profile "$profile" ps -a -q "$server_service" 2>/dev/null || true)
 	if [[ -z $server_id || $server_id == *$'\n'* ]]; then
@@ -209,7 +210,7 @@ validate_rdp_auth_artifacts()
 		"$server_log" || true)
 	rejected=$((wrong_password_rejected + denied_user_rejected))
 	total_rejected=$(grep -c 'PAM rejected RDP login.*: denied ' "$server_log" || true)
-	if [[ $profile == samba ]]; then
+	if [[ $profile == samba || $profile == freeipa ]]; then
 		expected_accepted=6
 	fi
 	if [[ $accepted -ne $expected_accepted || $total_accepted -ne $expected_accepted ||
@@ -230,21 +231,27 @@ validate_rdp_auth_artifacts()
 			"$profile" >&2
 		return 1
 	fi
-	if [[ $profile == samba ]]; then
+	if [[ $profile == samba || $profile == freeipa ]]; then
+		if [[ $profile == samba ]]; then
+			provider_result=samba-ad-sssd
+		else
+			provider_result=freeipa-sssd
+		fi
 		for evidence in \
-			'provider=samba-ad-sssd' \
+			"provider=$provider_result" \
 			'helper=frdp-sesmand' \
 			'active_session_crash=pass' \
 			'post_recovery_session=pass'; do
-			if ! grep -Fxq "$evidence" "$artifacts/samba/provider-recovery.txt"; then
-				printf 'profile samba is missing provider recovery evidence: %s\n' \
-					"$evidence" >&2
+			if ! grep -Fxq "$evidence" "$artifacts/$profile/provider-recovery.txt"; then
+				printf 'profile %s is missing provider recovery evidence: %s\n' \
+					"$profile" "$evidence" >&2
 				return 1
 			fi
 		done
-		if ! grep -Fq 'provider-backed frdp-sesmand recovery passed for provider=samba' \
+		if ! grep -Fq "provider-backed frdp-sesmand recovery passed for provider=$profile" \
 			"$server_log"; then
-			printf 'profile samba is missing server-side helper recovery evidence\n' >&2
+			printf 'profile %s is missing server-side helper recovery evidence\n' \
+				"$profile" >&2
 			return 1
 		fi
 	fi
