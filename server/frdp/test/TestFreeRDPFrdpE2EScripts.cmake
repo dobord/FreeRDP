@@ -41,6 +41,18 @@ foreach(script
   endif()
 endforeach()
 
+set(debian_lifecycle_test
+    "${FRDP_E2E_DIR}/../TestFreeRDPFrdpDebianLifecycle.sh")
+expect_file("${debian_lifecycle_test}")
+execute_process(
+  COMMAND "${BASH_EXECUTABLE}" -n "${debian_lifecycle_test}"
+  RESULT_VARIABLE lifecycle_syntax_result
+  ERROR_VARIABLE lifecycle_syntax_stderr)
+if(NOT lifecycle_syntax_result EQUAL 0)
+  message(FATAL_ERROR
+          "Debian lifecycle syntax test failed: ${lifecycle_syntax_stderr}")
+endif()
+
 execute_process(
   COMMAND "${BASH_EXECUTABLE}" "${FRDP_E2E_DIR}/TestRunner.sh"
   RESULT_VARIABLE runner_test_result
@@ -352,6 +364,7 @@ foreach(expected
         "test -s \"$build_artifacts/frdpd_lintian.txt\""
         "test ! -e \"$artifacts/control/shlibs\""
         "test ! -e \"$artifacts/control/triggers\""
+        "test ! -e \"$artifacts/control/preinst\""
         "TestFreeRDPFrdpDebianMaintscripts.sh"
         "\"$artifacts/control/postrm\""
         "forbidden='(^|, )(libavcodec|libavformat|libavutil|libswscale|liburiparser|libxkbfile|libfreerdp|libwinpr)'"
@@ -360,6 +373,8 @@ foreach(expected
         "test ! -e \"/etc/systemd/system/multi-user.target.wants/$unit\""
         "for process in /proc/[0-9]*/comm"
         "frdpd|frdp-authd|frdp-sesmand) exit 1"
+        "TestFreeRDPFrdpDebianLifecycle.sh \"$deb_path\""
+        "tee \"$artifacts/systemd-lifecycle.txt\""
         "grep -q \"/lib/$FRDP_MULTIARCH/frdpd/libwinpr3.so.3\""
         "grep -q \"/lib/$FRDP_MULTIARCH/frdpd/libfreerdp3.so.3\""
         "winpr-hash -u alice --password-stdin"
@@ -461,7 +476,7 @@ foreach(expected
         "override_dh_makeshlibs:"
         "dh_makeshlibs -Xusr/lib/$(DEB_HOST_MULTIARCH)/frdpd/"
         "override_dh_installsystemd:"
-        "dh_installsystemd --no-enable --no-start")
+        "dh_installsystemd --no-enable --no-start --no-stop-on-upgrade")
   expect_contains("${frdp_debian_rules}" "${expected}" "FRDP Debian rules")
 endforeach()
 foreach(script frdpd.postinst frdpd.prerm frdpd.postrm)

@@ -116,6 +116,7 @@ jobs:
           dpkg-deb --control "$deb_path" "$artifacts/control"
           test ! -e "$artifacts/control/shlibs"
           test ! -e "$artifacts/control/triggers"
+          test ! -e "$artifacts/control/preinst"
           server/frdp/test/TestFreeRDPFrdpDebianMaintscripts.sh \
             "$artifacts/control/postinst" "$artifacts/control/prerm" \
             "$artifacts/control/postrm"
@@ -174,6 +175,8 @@ jobs:
               apt-get purge -y frdpd
               test ! -e /usr/bin/frdpd
             '
+          server/frdp/test/TestFreeRDPFrdpDebianLifecycle.sh "$deb_path" |
+            tee "$artifacts/systemd-lifecycle.txt"
 
       - name: Upload Debian artifacts
         if: always()

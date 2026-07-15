@@ -16,7 +16,11 @@ The root `debian/` directory contains minimal preview packaging for the server-o
 - The Debian package has an explicit fail-closed service policy: installation does not enable or start
   `frdpd`, `frdp-authd`, or `frdp-sesmand`. After TLS, PAM/SSSD, and NTLM SAM provisioning, the
   administrator enables only `frdpd.service`; its dependencies start the helpers.
-- Remaining Debian work includes a complete source-package copyright audit, resolving or formally reviewing non-error lintian findings, package signing, upgrade/rollback tests, PAM/SSSD real-login validation against the installed package, and validation of installed SELinux/AppArmor draft examples.
+- A privileged Ubuntu 24.04 systemd-container gate exercises package install, explicit enable/start,
+  upgrade, downgrade rollback, remove, and purge. Temporary service overrides isolate package and
+  unit lifecycle behavior from TLS/domain provisioning; the gate verifies service restarts,
+  conffile preservation, enablement state, and final cleanup.
+- Remaining Debian work includes a complete source-package copyright audit, resolving or formally reviewing non-error lintian findings, package signing, upgrade/rollback validation with the real configured daemons, PAM/SSSD real-login validation against the installed package, and validation of installed SELinux/AppArmor draft examples.
 
 ## RPM packaging
 
@@ -90,9 +94,10 @@ Open reproducibility gaps:
 - The Fedora dependency-checked RPM job still needs successful CI history and
   coverage on any additional target RPM distributions.
 - A complete source-package copyright audit, non-error lintian findings,
-  upgrade/rollback validation remain open.
+  upgrade/rollback with the real configured daemons remains open.
 - Installed package validation does not yet prove PAM login, AD/SSSD policy,
-  real-client sessions, upgrade/rollback, or enforcing SELinux/AppArmor mode.
+  real-client sessions, upgrade/rollback with the real configured daemons, or
+  enforcing SELinux/AppArmor mode.
 - Successful Debian and Fedora package-job history still needs to accumulate,
   and the current private-library approach still needs multi-architecture and
   upgrade compatibility evidence.
