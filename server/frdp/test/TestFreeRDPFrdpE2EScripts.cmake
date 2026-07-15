@@ -303,6 +303,24 @@ endfunction()
 set(provider_repeat_expression
     "FRDP_E2E_REPETITIONS: \${{ github.event_name == 'schedule' && '2' || '1' }}")
 foreach(expected
+        "Build in clean Ubuntu from declared dependencies"
+        "git archive --format=tar"
+        "-v \"$source_tar:/tmp/frdpd-source.tar:ro\""
+        "mk-build-deps --install --remove"
+        "dpkg-buildpackage -uc -us -b -j2"
+        "test ! -e \"$artifacts/control/shlibs\""
+        "test ! -e \"$artifacts/control/triggers\""
+        "forbidden='(^|, )(libavcodec|libavformat|libavutil|libswscale|liburiparser|libxkbfile|libfreerdp|libwinpr)'"
+        "ubuntu:24.04 bash -lc"
+        "dpkg -V frdpd"
+        "grep -q \"/lib/$FRDP_MULTIARCH/frdpd/libwinpr3.so.3\""
+        "grep -q \"/lib/$FRDP_MULTIARCH/frdpd/libfreerdp3.so.3\""
+        "winpr-hash -u alice --password-stdin"
+        "apt-get purge -y frdpd"
+        "test ! -e /usr/bin/frdpd")
+  expect_workflow_job_contains("deb" "rpm" "${expected}")
+endforeach()
+foreach(expected
         "container: fedora:42"
         "dnf -y builddep packaging/rpm/frdpd.spec"
         "rpmbuild -ba packaging/rpm/frdpd.spec"
@@ -313,6 +331,38 @@ foreach(expected
         "grep -q '/lib64/frdpd/libwinpr3.so.3'"
         "grep -q '/lib64/frdpd/libfreerdp3.so.3'")
   expect_workflow_job_contains("rpm" "fuzz" "${expected}")
+endforeach()
+
+file(READ "${frdp_repo_root}/debian/control" frdp_debian_control)
+foreach(expected "libicu-dev")
+  expect_contains("${frdp_debian_control}" "${expected}" "FRDP Debian control")
+endforeach()
+foreach(unexpected
+        "libavcodec-dev"
+        "libavformat-dev"
+        "libavutil-dev"
+        "libswscale-dev"
+        "libjpeg-dev"
+        "libpng-dev")
+  string(FIND "${frdp_debian_control}" "${unexpected}" deb_dependency_found)
+  if(NOT deb_dependency_found EQUAL -1)
+    message(FATAL_ERROR "FRDP Debian control retains disabled dependency ${unexpected}")
+  endif()
+endforeach()
+
+file(READ "${frdp_repo_root}/debian/rules" frdp_debian_rules)
+foreach(expected
+        "-DWITH_FRDPD=ON"
+        "-DWITH_FFMPEG=OFF"
+        "-DWITH_SWSCALE=OFF"
+        "-DWITH_URIPARSER=OFF"
+        "-DWITH_JPEG=OFF"
+        "-DWINPR_UTILS_IMAGE_PNG=OFF"
+        "-DWINPR_UTILS_IMAGE_JPEG=OFF"
+        "-DCMAKE_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH)/frdpd"
+        "override_dh_makeshlibs:"
+        "dh_makeshlibs -Xusr/lib/$(DEB_HOST_MULTIARCH)/frdpd/")
+  expect_contains("${frdp_debian_rules}" "${expected}" "FRDP Debian rules")
 endforeach()
 expect_workflow_job_contains("samba" "freeipa" "${provider_repeat_expression}")
 expect_workflow_job_contains("freeipa" "" "${provider_repeat_expression}")

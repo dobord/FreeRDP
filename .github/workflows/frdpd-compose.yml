@@ -10,6 +10,7 @@ on:
       - 'libfreerdp/core/server.c'
       - 'libfreerdp/core/server.h'
       - 'cmake/CompilerSanitizerOptions.cmake'
+      - 'debian/**'
       - 'packaging/rpm/frdpd.spec'
       - '.github/workflows/frdpd-compose.yml'
   push:
@@ -21,6 +22,7 @@ on:
       - 'libfreerdp/core/server.c'
       - 'libfreerdp/core/server.h'
       - 'cmake/CompilerSanitizerOptions.cmake'
+      - 'debian/**'
       - 'packaging/rpm/frdpd.spec'
       - '.github/workflows/frdpd-compose.yml'
   schedule:
@@ -51,6 +53,101 @@ env:
   FRDP_E2E_ARTIFACTS: ${{ github.workspace }}/server/frdp/test/e2e/artifacts
 
 jobs:
+  deb:
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.profile == 'quick' || inputs.profile == 'component' || inputs.profile == 'all'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build in clean Ubuntu from declared dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          source_tar="$RUNNER_TEMP/frdpd-source.tar"
+          output_dir="$RUNNER_TEMP/frdpd-deb-output"
+          rm -rf "$output_dir"
+          mkdir -p "$output_dir"
+          git archive --format=tar --output="$source_tar" HEAD
+          docker run --rm \
+            -e SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+            -v "$source_tar:/tmp/frdpd-source.tar:ro" \
+            -v "$output_dir:/out" \
+            ubuntu:24.04 bash -lc '
+              set -Eeuo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends devscripts equivs
+              mkdir -p /build/FreeRDP
+              tar -xf /tmp/frdpd-source.tar -C /build/FreeRDP
+              cd /build/FreeRDP
+              mk-build-deps --install --remove \
+                --tool "apt-get -q -y --no-install-recommends" debian/control
+              export DEB_BUILD_OPTIONS="nocheck parallel=2"
+              dpkg-buildpackage -uc -us -b -j2
+              cp /build/frdpd_*.deb /build/frdpd_*.buildinfo \
+                /build/frdpd_*.changes /out/
+            '
+
+      - name: Validate clean install and private runtime linkage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          artifacts="$GITHUB_WORKSPACE/server/frdp/test/e2e/artifacts/deb"
+          mkdir -p "$artifacts/control"
+          deb_path=$(find "$RUNNER_TEMP/frdpd-deb-output" -maxdepth 1 -type f \
+            -name 'frdpd_*_amd64.deb' -print -quit)
+          test -n "$deb_path"
+          deb_path=$(realpath "$deb_path")
+          multiarch=$(dpkg-architecture -qDEB_HOST_MULTIARCH)
+          cp "$RUNNER_TEMP/frdpd-deb-output"/frdpd_* "$artifacts/"
+          dpkg-deb --contents "$deb_path" | tee "$artifacts/package-files.txt"
+          dpkg-deb --info "$deb_path" | tee "$artifacts/package-info.txt"
+          dpkg-deb --control "$deb_path" "$artifacts/control"
+          test ! -e "$artifacts/control/shlibs"
+          test ! -e "$artifacts/control/triggers"
+          depends=$(dpkg-deb --field "$deb_path" Depends)
+          forbidden='(^|, )(libavcodec|libavformat|libavutil|libswscale|liburiparser|libxkbfile|libfreerdp|libwinpr)'
+          if grep -Eq "$forbidden" <<< "$depends"; then
+            exit 1
+          fi
+          grep -q "./usr/lib/$multiarch/frdpd/libwinpr3.so.3" \
+            "$artifacts/package-files.txt"
+          docker run --rm \
+            -e FRDP_MULTIARCH="$multiarch" \
+            -v "$deb_path:/tmp/frdpd.deb:ro" \
+            ubuntu:24.04 bash -lc '
+              set -Eeuo pipefail
+              apt-get update
+              apt-get install -y /tmp/frdpd.deb
+              dpkg -V frdpd
+              for binary in frdpd frdp-authd frdp-sesmand frdp-session-agent frdpctl winpr-hash; do
+                linkage=$(ldd "/usr/bin/$binary")
+                if grep -q "not found" <<< "$linkage"; then
+                  exit 1
+                fi
+                grep -q "/lib/$FRDP_MULTIARCH/frdpd/libwinpr3.so.3" <<< "$linkage"
+              done
+              ldd /usr/bin/frdpd |
+                grep -q "/lib/$FRDP_MULTIARCH/frdpd/libfreerdp3.so.3"
+              hash_output=$(printf "Password123!\n" |
+                winpr-hash -u alice --password-stdin)
+              test "$hash_output" = "2b576acbe6bcfda7294d6bd18041b8fe"
+              apt-get purge -y frdpd
+              test ! -e /usr/bin/frdpd
+            '
+
+      - name: Upload Debian artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frdpd-deb-${{ github.run_id }}
+          path: server/frdp/test/e2e/artifacts/deb
+          if-no-files-found: ignore
+
   rpm:
     if: >-
       github.event_name != 'workflow_dispatch' ||

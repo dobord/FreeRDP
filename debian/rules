@@ -27,6 +27,10 @@ override_dh_auto_configure:
 		-DWITH_CLIENT_COMMON=OFF \
 		-DWITH_CLIENT_CHANNELS=OFF \
 		-DWITH_CLIENT_SDL=OFF \
+		-DWITH_MANPAGES=OFF \
+		-DWITH_SDL=OFF \
+		-DWITH_PULSE=OFF \
+		-DWITH_ALSA=OFF \
 		-DWITH_CUPS=OFF \
 		-DWITH_SAMPLE=OFF \
 		-DWITH_SHADOW=OFF \
@@ -37,6 +41,15 @@ override_dh_auto_configure:
 		-DWITH_SMARTCARD_EMULATE=OFF \
 		-DWITH_SMARTCARD_PCSC=OFF \
 		-DWITH_VAAPI_H264_ENCODING=OFF \
+		-DWITH_FFMPEG=OFF \
+		-DWITH_SWSCALE=OFF \
+		-DWITH_FUSE=OFF \
+		-DWITH_OPENCL=OFF \
+		-DCHANNEL_URBDRC=OFF \
+		-DWITH_URIPARSER=OFF \
+		-DWITH_JPEG=OFF \
+		-DWINPR_UTILS_IMAGE_PNG=OFF \
+		-DWINPR_UTILS_IMAGE_JPEG=OFF \
 		-DWITH_REPRODUCIBLE_BUILD_FLAGS=ON \
 		-DFRDP_SYSTEMD_SYSTEM_UNIT_DIR=/lib/systemd/system \
 		-DCMAKE_C_FLAGS="$(CPPFLAGS) $(CFLAGS)" \
@@ -45,6 +58,7 @@ override_dh_auto_configure:
 		-DCMAKE_SHARED_LINKER_FLAGS="$(LDFLAGS)" \
 		-DCMAKE_MODULE_LINKER_FLAGS="$(LDFLAGS)" \
 		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH)/frdpd \
 		-DCMAKE_INSTALL_SYSCONFDIR=/etc \
 		-DCMAKE_INSTALL_LOCALSTATEDIR=/var \
 		-DCMAKE_INSTALL_RUNSTATEDIR=/run \
@@ -59,7 +73,10 @@ override_dh_auto_install:
 	DESTDIR=$(CURDIR)/debian/frdpd cmake --install $(BUILD_DIR) --component server
 
 override_dh_shlibdeps:
-	dh_shlibdeps -- -l$(CURDIR)/debian/frdpd/usr/lib/$(DEB_HOST_MULTIARCH)
+	dh_shlibdeps -- -l$(CURDIR)/debian/frdpd/usr/lib/$(DEB_HOST_MULTIARCH)/frdpd
+
+override_dh_makeshlibs:
+	dh_makeshlibs -Xusr/lib/$(DEB_HOST_MULTIARCH)/frdpd/
 
 override_dh_auto_clean:
 	rm -rf $(BUILD_DIR)

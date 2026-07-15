@@ -6,13 +6,13 @@ This document provides guidance on building and distributing the FreeRDP-based R
 
 The root `debian/` directory contains minimal preview packaging for the server-only `frdpd` runtime path. It builds the daemon, local helper tools, and the runtime libraries they need, installs the CMake `libraries` and `server` components, and intentionally disables unrelated client, sample, shadow, proxy, smart-card, Wayland, CUPS, and VAAPI targets during package configuration.
 
-- Build depends list the toolchain and libraries required at build time, including debhelper compat 13, CMake/Ninja, PAM, Kerberos/GSSAPI, OpenSSL, systemd, JSON, FFmpeg codec libraries, Cairo, and the X11/XTest/XDamage/XRandR headers used by the server prototype.
+- Build depends list the toolchain and libraries required at build time, including debhelper compat 13, CMake/Ninja, PAM, Kerberos/GSSAPI, OpenSSL, systemd, JSON, ICU, and the X11/XTest/XDamage/XRandR headers used by the server prototype. Unrelated FFmpeg, Cairo, URI-parser, JPEG/PNG image conversion, client, multimedia, smart-card, and device-redirection features are disabled by the package build policy.
 - The resulting binary package declares runtime dependencies through `${shlibs:Depends}` / `${misc:Depends}` plus `libpam0g`, `sssd`, and `xvfb` for the PAM/SSSD session-agent prototype.
 - Run `SOURCE_DATE_EPOCH=<commit-time> DEB_BUILD_OPTIONS='nocheck parallel=1' dpkg-buildpackage -uc -us -b -j1` from the project root for a local binary package smoke build. The serial build option avoids noisy local resource races while this preview package is still being hardened. `packaging/scripts/create_deb.sh -uc -us -b -j1` is a wrapper around the same root `debian/control` metadata.
-- The local smoke build has been verified to produce `frdpd_0.1.0-1_amd64.deb` with the `frdpd`, `frdp-authd`, `frdp-sesmand`, `frdp-session-agent`, and `frdpctl` binaries, FreeRDP/WinPR shared libraries, `/etc/frdpd` configuration, `/etc/pam.d/frdpd`, service unit examples under `/lib/systemd/system`, monitoring examples under `/usr/share/frdpd/monitoring`, and inactive SELinux/AppArmor examples under `/usr/share/frdpd/security`. The default-on NTLM package build also includes `winpr-hash` for bounded password-stdin SAM provisioning. The current CMake `server` component install emits baseline-hardened versions of those service unit examples, and the focused CTest suite verifies the generated units with `systemd-analyze`, the tmpfiles rule with `systemd-tmpfiles`, monitoring textfile/alert/dashboard examples with `bash`, SELinux draft packaging with `checkmodule`/`semodule_package`, and AppArmor parsing with `apparmor_parser` when those tools are available.
-- This preview package currently installs its bundled FreeRDP/WinPR shared libraries into the public multiarch library directory. Production packaging must either split those libraries into policy-compliant packages or add appropriate conflict/replacement/private-libdir handling before coexisting with distro FreeRDP packages.
+- A clean Ubuntu 24.04 build using only the declared build dependencies produces `frdpd_0.1.0-1_amd64.deb` with the `frdpd`, `frdp-authd`, `frdp-sesmand`, `frdp-session-agent`, `frdpctl`, and default-on NTLM `winpr-hash` binaries, configuration, PAM service, systemd units, monitoring examples, and inactive MAC policy examples. Its exact FreeRDP/WinPR libraries are ABI-private under `/usr/lib/x86_64-linux-gnu/frdpd`; `dh_makeshlibs` excludes that directory, so the package emits no public `shlibs` file or `ldconfig` trigger. A second clean Ubuntu 24.04 container passed APT installation, `dpkg -V`, private-library linkage checks over all six binaries, installed `winpr-hash` provisioning, and package purge through the generated maintainer scripts.
+- The FRDP workflow repeats the dependency-resolved build, checks package metadata and the private multiarch layout, installs the package in a clean target container, and uploads the `.deb`, control archive, and manifests. Successful CI history still needs to accumulate.
 - Sign the resulting packages with the project’s GPG key and publish them to an APT repository.
-- Remaining Debian work includes copyright metadata, maintainer script policy checks, systemd enablement policy, lintian/distro CI, package signing, upgrade/rollback tests, and validation of installed SELinux/AppArmor draft examples.
+- Remaining Debian work includes copyright metadata, lintian policy checks, systemd enablement policy, package signing, upgrade/rollback tests, PAM/SSSD real-login validation against the installed package, and validation of installed SELinux/AppArmor draft examples.
 
 ## RPM packaging
 
@@ -85,13 +85,13 @@ Open reproducibility gaps:
 
 - The Fedora dependency-checked RPM job still needs successful CI history and
   coverage on any additional target RPM distributions.
-- Debian maintainer scripts, copyright metadata, and lintian policy checks are
-  still incomplete.
+- Debian copyright metadata, lintian policy checks, service enablement policy,
+  and upgrade/rollback validation are still incomplete.
 - Installed package validation does not yet prove PAM login, AD/SSSD policy,
   real-client sessions, upgrade/rollback, or enforcing SELinux/AppArmor mode.
-- The preview package bundles FreeRDP/WinPR shared libraries in the public
-  library directory; production packaging needs a policy-compliant library split
-  or private-libdir/conflict handling.
+- Successful Debian and Fedora package-job history still needs to accumulate,
+  and the current private-library approach still needs multi-architecture and
+  upgrade compatibility evidence.
 
 ## Repository structure
 
