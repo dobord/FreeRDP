@@ -63,13 +63,21 @@ foreach(expected
         "run_session_smoke base"
         "run_session_smoke upgrade"
         "run_session_smoke rollback"
-        "auth_smoke=base,upgrade,rollback"
+        "auth_smoke=base,post-sesmand-crash,upgrade,rollback"
+        "active_helper_crash=frdp-sesmand"
+        "assert_sesmand_active_session_recovery"
+        "systemctl kill --signal=SIGKILL --kill-who=main frdp-sesmand.service"
+        "new_socket_inode"
+        "run_session_smoke post-sesmand-crash"
         "start_transition_session upgrade"
         "start_transition_session rollback"
         "assert_transition_session_active"
         "assert_transition_session_closed"
         "active_transition=upgrade,rollback"
         "FragmentPath"
+        "path-exclude=/usr/share/man/"
+        "package_verification=\$(dpkg -V frdpd)"
+        "test -z \"\$package_verification\""
         "frdpctl status --socket /run/frdp-sesmand/sesmand.sock"
         "timeout 5 bash -c")
   expect_contains("${debian_lifecycle}" "${expected}"
@@ -86,9 +94,9 @@ endif()
 string(REGEX MATCHALL "assert_real_services" lifecycle_assertions
              "${debian_lifecycle}")
 list(LENGTH lifecycle_assertions lifecycle_assertion_count)
-if(NOT lifecycle_assertion_count EQUAL 4)
+if(NOT lifecycle_assertion_count EQUAL 5)
   message(FATAL_ERROR
-          "Debian lifecycle test must define and invoke real-service checks at start, upgrade, and rollback")
+          "Debian lifecycle test must define and invoke real-service checks at start, post-crash, upgrade, and rollback")
 endif()
 foreach(forbidden
         "ExecStart="
@@ -425,13 +433,16 @@ foreach(expected
         "forbidden='(^|, )(libavcodec|libavformat|libavutil|libswscale|liburiparser|libxkbfile|libfreerdp|libwinpr)'"
         "grep -Eq \"[.]/\${manual}([.]gz)?$\" \"$artifacts/package-files.txt\""
         "ubuntu:24.04 bash -lc"
-        "dpkg -V frdpd"
+        "path-exclude=/usr/share/man/"
+        "package_verification=\$(dpkg -V frdpd)"
+        "test -z \"\$package_verification\""
         "test ! -e \"/etc/systemd/system/multi-user.target.wants/$unit\""
         "for process in /proc/[0-9]*/comm"
         "frdpd|frdp-authd|frdp-sesmand) exit 1"
         "TestFreeRDPFrdpDebianLifecycle.sh \"$deb_path\""
         "tee \"$artifacts/systemd-lifecycle.txt\""
-        "auth_smoke=base,upgrade,rollback"
+        "auth_smoke=base,post-sesmand-crash,upgrade,rollback"
+        "active_helper_crash=frdp-sesmand"
         "active_transition=upgrade,rollback"
         "grep -q \"/lib/$FRDP_MULTIARCH/frdpd/libwinpr3.so.3\""
         "grep -q \"/lib/$FRDP_MULTIARCH/frdpd/libfreerdp3.so.3\""

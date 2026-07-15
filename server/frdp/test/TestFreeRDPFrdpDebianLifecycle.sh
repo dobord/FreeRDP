@@ -46,6 +46,7 @@ docker build -q -t "$image" - <<'EOF'
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq \
+    && sed -i '\|^path-exclude=/usr/share/man/|d' /etc/dpkg/dpkg.cfg.d/excludes \
     && apt-get install -qq -y --no-install-recommends \
       freerdp3-x11 netcat-openbsd openssl procps systemd systemd-sysv \
       x11-apps x11-utils \
@@ -76,7 +77,7 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
   chmod 0755 /tmp/rdp-session-smoke.sh
 
   assert_real_services() {
-    local entry unit binary pid argv0
+    local attempt argv0 binary comm entry pid unit
 
     for entry in \
       "frdp-authd.service:/usr/bin/frdp-authd" \
@@ -87,12 +88,26 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
       test "$(systemctl show --property=FragmentPath --value "$unit")" = \
         "/usr/lib/systemd/system/$unit"
       test -z "$(systemctl show --property=DropInPaths --value "$unit")"
+      pid=
+      argv0=
+      comm=
+      for attempt in $(seq 1 50); do
+        systemctl --quiet is-active "$unit" || true
+        pid=$(systemctl show --property=MainPID --value "$unit")
+        if [[ "$pid" =~ ^[0-9]+$ ]] && (( pid > 1 )) &&
+           [[ -r "/proc/$pid/cmdline" && -r "/proc/$pid/comm" ]]; then
+          argv0=$(tr "\0" "\n" < "/proc/$pid/cmdline" | head -n 1) || argv0=
+          comm=$(cat "/proc/$pid/comm") || comm=
+          if [[ "${argv0##*/}" == "${binary##*/}" && "$comm" == "${binary##*/}" ]]; then
+            break
+          fi
+        fi
+        sleep 0.1
+      done
       systemctl --quiet is-active "$unit"
-      pid=$(systemctl show --property=MainPID --value "$unit")
       test "$pid" -gt 1
-      argv0=$(tr "\0" "\n" < "/proc/$pid/cmdline" | head -n 1)
       test "${argv0##*/}" = "${binary##*/}"
-      test "$(cat "/proc/$pid/comm")" = "${binary##*/}"
+      test "$comm" = "${binary##*/}"
     done
     test -S /run/frdp-authd/authd.sock
     test -S /run/frdp-sesmand/sesmand.sock
@@ -210,10 +225,53 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     wait "$transition_xvfb_pid" || true
   }
 
+  assert_sesmand_active_session_recovery() {
+    local i old_invocation old_pid old_socket_inode
+    local new_invocation new_pid new_socket_inode
+
+    start_transition_session sesmand-crash
+    old_pid=$(systemctl show --property=MainPID --value frdp-sesmand.service)
+    old_invocation=$(systemctl show --property=InvocationID --value frdp-sesmand.service)
+    old_socket_inode=$(stat -c %i /run/frdp-sesmand/sesmand.sock)
+    test "$old_pid" -gt 1
+    test -n "$old_invocation"
+    test "$old_pid" != "$transition_agent_pid"
+
+    systemctl kill --signal=SIGKILL --kill-who=main frdp-sesmand.service
+    new_pid=
+    new_socket_inode=
+    for i in $(seq 1 60); do
+      new_pid=$(systemctl show --property=MainPID --value frdp-sesmand.service)
+      if systemctl --quiet is-active frdp-sesmand.service &&
+         [[ "$new_pid" =~ ^[0-9]+$ ]] && (( new_pid > 1 )) &&
+         [[ "$new_pid" != "$old_pid" ]] && [[ -S /run/frdp-sesmand/sesmand.sock ]]; then
+        new_socket_inode=$(stat -c %i /run/frdp-sesmand/sesmand.sock)
+        if [[ "$new_socket_inode" != "$old_socket_inode" ]] &&
+           frdpctl status --socket /run/frdp-sesmand/sesmand.sock |
+             grep -Fxq "Session manager: reachable"; then
+          break
+        fi
+      fi
+      sleep 1
+    done
+    test -n "$new_socket_inode"
+    test "$new_socket_inode" != "$old_socket_inode"
+    test "$new_pid" != "$old_pid"
+    new_invocation=$(systemctl show --property=InvocationID --value frdp-sesmand.service)
+    test -n "$new_invocation"
+    test "$new_invocation" != "$old_invocation"
+
+    assert_transition_session_closed
+    test -z "$(find /run/frdp-sesmand -mindepth 1 ! -name sesmand.sock -print -quit)"
+    assert_real_services
+    run_session_smoke post-sesmand-crash
+  }
+
   echo "stage=install"
   apt-get update -qq
   apt-get install -qq -y /tmp/frdpd-base.deb
-  dpkg -V frdpd
+  package_verification=$(dpkg -V frdpd)
+  test -z "$package_verification"
   for unit in frdpd.service frdp-authd.service frdp-sesmand.service; do
     test "$(systemctl is-enabled "$unit" 2>/dev/null || true)" = disabled
     ! systemctl --quiet is-active "$unit"
@@ -244,6 +302,8 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
   systemctl enable --now frdpd.service
   assert_real_services
   run_session_smoke base
+  echo "stage=active-sesmand-crash"
+  assert_sesmand_active_session_recovery
 
   env_hash=$(sha256sum /etc/frdpd/frdpd.env | cut -d" " -f1)
   printf "%s\n" "# lifecycle-preserved" "FRDPD_ARGS=" > /etc/frdpd/frdpd.env
@@ -336,6 +396,6 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     "$secret_hashes"
   rm -rf /etc/frdpd
 
-  printf "base=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,upgrade,rollback\nactive_transition=upgrade,rollback\nresult=pass\n" \
+  printf "base=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,upgrade,rollback\nactive_helper_crash=frdp-sesmand\nactive_transition=upgrade,rollback\nresult=pass\n" \
     "$base_version" "$upgrade_version" "$base_version"
 '

@@ -158,9 +158,11 @@ jobs:
             -v "$deb_path:/tmp/frdpd.deb:ro" \
             ubuntu:24.04 bash -lc '
               set -Eeuo pipefail
+              sed -i "\|^path-exclude=/usr/share/man/|d" /etc/dpkg/dpkg.cfg.d/excludes
               apt-get update
               apt-get install -y /tmp/frdpd.deb
-              dpkg -V frdpd
+              package_verification=$(dpkg -V frdpd)
+              test -z "$package_verification"
               for unit in frdpd.service frdp-authd.service frdp-sesmand.service; do
                 test ! -e "/etc/systemd/system/multi-user.target.wants/$unit"
               done
@@ -186,7 +188,9 @@ jobs:
             '
           server/frdp/test/TestFreeRDPFrdpDebianLifecycle.sh "$deb_path" |
             tee "$artifacts/systemd-lifecycle.txt"
-          grep -Fxq "auth_smoke=base,upgrade,rollback" \
+          grep -Fxq "auth_smoke=base,post-sesmand-crash,upgrade,rollback" \
+            "$artifacts/systemd-lifecycle.txt"
+          grep -Fxq "active_helper_crash=frdp-sesmand" \
             "$artifacts/systemd-lifecycle.txt"
           grep -Fxq "active_transition=upgrade,rollback" \
             "$artifacts/systemd-lifecycle.txt"
