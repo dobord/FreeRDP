@@ -124,16 +124,19 @@ build_args()
 		"/sec:nla"
 		"/size:1024x768"
 		"/bpp:24"
-		"/audio-mode:none"
+		"/audio-mode:2"
+		"/network:modem"
 		"-gfx"
-		"+disp"
-		"+dynamic-resolution"
-		"+clipboard"
 		"-heartbeat"
 		"-multitransport"
 		"/tune:FreeRDP_NetworkAutoDetect:false"
 		"/log-level:INFO"
 	)
+	if [[ ${FRDP_SESSION_MINIMAL_CHANNELS:-0} == 1 ]]; then
+		RDP_ARGS+=("-disp" "-dynamic-resolution" "-clipboard")
+	else
+		RDP_ARGS+=("+disp" "+dynamic-resolution" "+clipboard")
+	fi
 	if [[ -n $FRDP_RDP_DOMAIN ]]; then
 		RDP_ARGS+=("/d:${FRDP_RDP_DOMAIN}")
 	fi

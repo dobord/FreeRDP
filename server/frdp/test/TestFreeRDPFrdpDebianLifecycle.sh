@@ -11,6 +11,12 @@ if [[ ! -s "$deb_path" ]]; then
   echo "Debian package is missing: $deb_path" >&2
   exit 2
 fi
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+session_smoke="$script_dir/e2e/scripts/rdp-session-smoke.sh"
+if [[ ! -s "$session_smoke" ]]; then
+  echo "RDP session smoke fixture is missing: $session_smoke" >&2
+  exit 2
+fi
 command -v docker >/dev/null
 
 suffix="$$-$RANDOM"
@@ -40,7 +46,9 @@ docker build -q -t "$image" - <<'EOF'
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq \
-    && apt-get install -qq -y --no-install-recommends openssl systemd systemd-sysv \
+    && apt-get install -qq -y --no-install-recommends \
+      freerdp3-x11 netcat-openbsd openssl procps systemd systemd-sysv \
+      x11-apps x11-utils \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 STOPSIGNAL SIGRTMIN+3
@@ -62,8 +70,10 @@ if [[ "$state" != running && "$state" != degraded ]]; then
 fi
 
 docker cp "$deb_path" "$container:/tmp/frdpd-base.deb"
+docker cp "$session_smoke" "$container:/tmp/rdp-session-smoke.sh"
 docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -c '
   trap '\''echo "lifecycle failure at line $LINENO: $BASH_COMMAND" >&2'\'' ERR
+  chmod 0755 /tmp/rdp-session-smoke.sh
 
   assert_real_services() {
     local entry unit binary pid argv0
@@ -95,6 +105,19 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     timeout 5 bash -c "</dev/tcp/127.0.0.1/3389"
   }
 
+  run_session_smoke() {
+    local stage=$1
+
+    FRDP_RDP_TARGET=127.0.0.1:3389 \
+    FRDP_TEST_USER=lifecycle \
+    FRDP_TEST_PASSWORD="RdpPassw0rd!" \
+    FRDP_SESSION_MINIMAL_CHANNELS=1 \
+    FRDP_SESSION_HOLD_SECONDS=1 \
+    FRDP_SESSION_TIMEOUT=30 \
+    FRDP_ARTIFACT_DIR="/tmp/lifecycle-smoke-$stage" \
+      /tmp/rdp-session-smoke.sh
+  }
+
   echo "stage=install"
   apt-get update -qq
   apt-get install -qq -y /tmp/frdpd-base.deb
@@ -104,6 +127,16 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     ! systemctl --quiet is-active "$unit"
   done
   rm -f /usr/sbin/policy-rc.d
+  useradd --create-home --shell /bin/bash lifecycle
+  printf "%s\n" "lifecycle:RdpPassw0rd!" | chpasswd
+  printf "%s\n" \
+    "auth required pam_env.so" \
+    "auth required pam_unix.so try_first_pass" \
+    "account required pam_unix.so" \
+    "session required pam_limits.so" \
+    "session required pam_mkhomedir.so skel=/etc/skel umask=0077" \
+    "session optional pam_unix.so" > /etc/pam.d/frdpd
+  pam_hash=$(sha256sum /etc/pam.d/frdpd | cut -d" " -f1)
 
   echo "stage=start"
   openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
@@ -112,12 +145,13 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     -keyout /etc/frdpd/tls.key -out /etc/frdpd/tls.crt >/dev/null 2>&1
   chmod 0600 /etc/frdpd/tls.key
   chmod 0644 /etc/frdpd/tls.crt
-  printf "%s" "LifecyclePassw0rd!" | \
+  printf "%s" "RdpPassw0rd!" | \
     winpr-hash -u lifecycle --password-stdin -f sam > /etc/frdpd/ntlm.sam
   chmod 0600 /etc/frdpd/ntlm.sam
   secret_hashes=$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)
   systemctl enable --now frdpd.service
   assert_real_services
+  run_session_smoke base
 
   env_hash=$(sha256sum /etc/frdpd/frdpd.env | cut -d" " -f1)
   printf "%s\n" "# lifecycle-preserved" "FRDPD_ARGS=" > /etc/frdpd/frdpd.env
@@ -146,9 +180,11 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
   test "$(dpkg-query -W -f="\${Version}" frdpd)" = "$upgrade_version"
   test "$(cat /usr/share/frdpd/lifecycle-version)" = "$upgrade_version"
   test "$(sha256sum /etc/frdpd/frdpd.env | cut -d" " -f1)" = "$modified_env_hash"
+  test "$(sha256sum /etc/pam.d/frdpd | cut -d" " -f1)" = "$pam_hash"
   test "$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)" = \
     "$secret_hashes"
   assert_real_services
+  run_session_smoke upgrade
   for unit in frdp-authd.service frdp-sesmand.service frdpd.service; do
     systemctl show --property=InvocationID --value "$unit"
   done > /tmp/invocations-upgrade
@@ -163,9 +199,11 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
   test "$(dpkg-query -W -f="\${Version}" frdpd)" = "$base_version"
   test ! -e /usr/share/frdpd/lifecycle-version
   test "$(sha256sum /etc/frdpd/frdpd.env | cut -d" " -f1)" = "$modified_env_hash"
+  test "$(sha256sum /etc/pam.d/frdpd | cut -d" " -f1)" = "$pam_hash"
   test "$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)" = \
     "$secret_hashes"
   assert_real_services
+  run_session_smoke rollback
   for unit in frdp-authd.service frdp-sesmand.service frdpd.service; do
     systemctl show --property=InvocationID --value "$unit"
   done > /tmp/invocations-rollback
@@ -200,6 +238,6 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     "$secret_hashes"
   rm -rf /etc/frdpd
 
-  printf "base=%s\nupgrade=%s\nrollback=%s\nresult=pass\n" \
+  printf "base=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,upgrade,rollback\nresult=pass\n" \
     "$base_version" "$upgrade_version" "$base_version"
 '

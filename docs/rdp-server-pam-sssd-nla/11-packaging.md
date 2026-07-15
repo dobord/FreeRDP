@@ -20,8 +20,10 @@ The root `debian/` directory contains minimal preview packaging for the server-o
   upgrade, downgrade rollback, remove, and purge. It provisions temporary TLS and NTLM SAM material,
   starts the packaged daemon binaries through the unmodified units, verifies role-bound authd startup
   health, sesmand control IPC, and the TCP listener after every transition, and checks conffile,
-  enablement, and administrator-secret retention.
-- Remaining Debian work includes a complete source-package copyright audit, resolving or formally reviewing non-error lintian findings, package signing, PAM/SSSD real-login validation against the installed package during upgrade/rollback, and validation of installed SELinux/AppArmor draft examples.
+  enablement, and administrator-secret retention. An independently packaged Ubuntu `xfreerdp3`
+  client also completes local-PAM managed-session detach/reconnect/cleanup against the base,
+  synthetic-upgrade, and rolled-back package versions.
+- Remaining Debian work includes a complete source-package copyright audit, resolving or formally reviewing non-error lintian findings, package signing, SSSD-provider real-login and active-session validation against the installed package during upgrade/rollback, and validation of installed SELinux/AppArmor draft examples.
 
 ## RPM packaging
 
@@ -96,9 +98,10 @@ Open reproducibility gaps:
   coverage on any additional target RPM distributions.
 - A complete source-package copyright audit and non-error lintian findings remain
   open.
-- Installed package validation does not yet prove PAM login, AD/SSSD policy,
-  real-client sessions during package upgrade/rollback, or enforcing
-  SELinux/AppArmor mode.
+- Installed package validation does not yet prove AD/SSSD policy or real-client
+  sessions with an SSSD provider during package upgrade/rollback, nor enforcing
+  SELinux/AppArmor mode. Local PAM with an independent distro client is covered
+  at each package version.
 - Successful Debian and Fedora package-job history still needs to accumulate,
   and the current private-library approach still needs multi-architecture and
   upgrade compatibility evidence.
