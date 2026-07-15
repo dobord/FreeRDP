@@ -40,7 +40,7 @@ docker build -q -t "$image" - <<'EOF'
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq \
-    && apt-get install -qq -y --no-install-recommends systemd systemd-sysv \
+    && apt-get install -qq -y --no-install-recommends openssl systemd systemd-sysv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 STOPSIGNAL SIGRTMIN+3
@@ -64,6 +64,37 @@ fi
 docker cp "$deb_path" "$container:/tmp/frdpd-base.deb"
 docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -c '
   trap '\''echo "lifecycle failure at line $LINENO: $BASH_COMMAND" >&2'\'' ERR
+
+  assert_real_services() {
+    local entry unit binary pid argv0
+
+    for entry in \
+      "frdp-authd.service:/usr/bin/frdp-authd" \
+      "frdp-sesmand.service:/usr/bin/frdp-sesmand" \
+      "frdpd.service:/usr/bin/frdpd"; do
+      unit=${entry%%:*}
+      binary=${entry#*:}
+      test "$(systemctl show --property=FragmentPath --value "$unit")" = \
+        "/usr/lib/systemd/system/$unit"
+      test -z "$(systemctl show --property=DropInPaths --value "$unit")"
+      systemctl --quiet is-active "$unit"
+      pid=$(systemctl show --property=MainPID --value "$unit")
+      test "$pid" -gt 1
+      argv0=$(tr "\0" "\n" < "/proc/$pid/cmdline" | head -n 1)
+      test "${argv0##*/}" = "${binary##*/}"
+      test "$(cat "/proc/$pid/comm")" = "${binary##*/}"
+    done
+    test -S /run/frdp-authd/authd.sock
+    test -S /run/frdp-sesmand/sesmand.sock
+    test "$(stat -c %a /run/frdp-auth-token)" = 700
+    test "$(systemctl is-enabled frdpd.service)" = enabled
+    test "$(systemctl is-enabled frdp-authd.service 2>/dev/null || true)" = disabled
+    test "$(systemctl is-enabled frdp-sesmand.service 2>/dev/null || true)" = disabled
+    frdpctl status --socket /run/frdp-sesmand/sesmand.sock | \
+      grep -Fxq "Session manager: reachable"
+    timeout 5 bash -c "</dev/tcp/127.0.0.1/3389"
+  }
+
   echo "stage=install"
   apt-get update -qq
   apt-get install -qq -y /tmp/frdpd-base.deb
@@ -75,20 +106,21 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
   rm -f /usr/sbin/policy-rc.d
 
   echo "stage=start"
-  for unit in frdpd.service frdp-authd.service frdp-sesmand.service; do
-    mkdir -p "/etc/systemd/system/$unit.d"
-    printf "%s\n" "[Service]" "ExecStart=" "ExecStart=/bin/sleep infinity" \
-      > "/etc/systemd/system/$unit.d/lifecycle.conf"
-  done
-  systemctl daemon-reload
+  openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
+    -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+    -keyout /etc/frdpd/tls.key -out /etc/frdpd/tls.crt >/dev/null 2>&1
+  chmod 0600 /etc/frdpd/tls.key
+  chmod 0644 /etc/frdpd/tls.crt
+  printf "%s" "LifecyclePassw0rd!" | \
+    winpr-hash -u lifecycle --password-stdin -f sam > /etc/frdpd/ntlm.sam
+  chmod 0600 /etc/frdpd/ntlm.sam
+  secret_hashes=$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)
   systemctl enable --now frdpd.service
-  systemctl --quiet is-active frdp-authd.service frdp-sesmand.service frdpd.service
-  test "$(systemctl is-enabled frdpd.service)" = enabled
-  test "$(systemctl is-enabled frdp-authd.service 2>/dev/null || true)" = disabled
-  test "$(systemctl is-enabled frdp-sesmand.service 2>/dev/null || true)" = disabled
+  assert_real_services
 
   env_hash=$(sha256sum /etc/frdpd/frdpd.env | cut -d" " -f1)
-  printf "%s\n" "FRDPD_ARGS=--lifecycle-preserved" > /etc/frdpd/frdpd.env
+  printf "%s\n" "# lifecycle-preserved" "FRDPD_ARGS=" > /etc/frdpd/frdpd.env
   modified_env_hash=$(sha256sum /etc/frdpd/frdpd.env | cut -d" " -f1)
   test "$env_hash" != "$modified_env_hash"
 
@@ -114,7 +146,9 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
   test "$(dpkg-query -W -f="\${Version}" frdpd)" = "$upgrade_version"
   test "$(cat /usr/share/frdpd/lifecycle-version)" = "$upgrade_version"
   test "$(sha256sum /etc/frdpd/frdpd.env | cut -d" " -f1)" = "$modified_env_hash"
-  systemctl --quiet is-active frdp-authd.service frdp-sesmand.service frdpd.service
+  test "$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)" = \
+    "$secret_hashes"
+  assert_real_services
   for unit in frdp-authd.service frdp-sesmand.service frdpd.service; do
     systemctl show --property=InvocationID --value "$unit"
   done > /tmp/invocations-upgrade
@@ -129,7 +163,9 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
   test "$(dpkg-query -W -f="\${Version}" frdpd)" = "$base_version"
   test ! -e /usr/share/frdpd/lifecycle-version
   test "$(sha256sum /etc/frdpd/frdpd.env | cut -d" " -f1)" = "$modified_env_hash"
-  systemctl --quiet is-active frdp-authd.service frdp-sesmand.service frdpd.service
+  test "$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)" = \
+    "$secret_hashes"
+  assert_real_services
   for unit in frdp-authd.service frdp-sesmand.service frdpd.service; do
     systemctl show --property=InvocationID --value "$unit"
   done > /tmp/invocations-rollback
@@ -145,15 +181,24 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     ! systemctl --quiet is-active "$unit"
   done
   test -e /etc/frdpd/frdpd.env
+  test -e /etc/frdpd/frdpd.toml
+  test -e /etc/pam.d/frdpd
+  test "$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)" = \
+    "$secret_hashes"
   test -L /etc/systemd/system/multi-user.target.wants/frdpd.service
+  test ! -L /etc/systemd/system/multi-user.target.wants/frdp-authd.service
+  test ! -L /etc/systemd/system/multi-user.target.wants/frdp-sesmand.service
   echo "stage=purge"
   apt-get purge -qq -y frdpd
   test ! -e /etc/frdpd/frdpd.env
+  test ! -e /etc/frdpd/frdpd.toml
+  test ! -e /etc/pam.d/frdpd
   test ! -L /etc/systemd/system/multi-user.target.wants/frdpd.service
-  rm -rf /etc/systemd/system/frdpd.service.d \
-    /etc/systemd/system/frdp-authd.service.d \
-    /etc/systemd/system/frdp-sesmand.service.d
-  systemctl daemon-reload
+  test ! -L /etc/systemd/system/multi-user.target.wants/frdp-authd.service
+  test ! -L /etc/systemd/system/multi-user.target.wants/frdp-sesmand.service
+  test "$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)" = \
+    "$secret_hashes"
+  rm -rf /etc/frdpd
 
   printf "base=%s\nupgrade=%s\nrollback=%s\nresult=pass\n" \
     "$base_version" "$upgrade_version" "$base_version"

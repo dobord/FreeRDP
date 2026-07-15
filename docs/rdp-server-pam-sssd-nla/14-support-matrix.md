@@ -58,7 +58,7 @@ the release record.
 
 | Capability | Status | Required evidence before GA |
 |---|---|---|
-| Debian package | Prototype | Accumulated dependency-checked CI, complete source copyright review, real configured-daemon upgrade/rollback beyond the isolated systemd package lifecycle gate, and review of remaining non-error lintian findings. |
+| Debian package | Prototype | Accumulated dependency-checked CI, complete source copyright review, authenticated PAM/SSSD session evidence across package upgrade/rollback, and review of remaining non-error lintian findings. |
 | RPM package | Prototype | Target distro CI with real BuildRequires, systemd scriptlets, SELinux review, install/upgrade/uninstall. |
 | systemd units and tmpfiles | Candidate | Distro verification, restart behavior, hardening review, runtime directory ownership checks. |
 | AppArmor and SELinux examples | Prototype | Enforcing policy review and target-distro validation. |

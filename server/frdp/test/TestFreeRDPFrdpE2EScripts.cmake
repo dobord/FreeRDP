@@ -52,6 +52,37 @@ if(NOT lifecycle_syntax_result EQUAL 0)
   message(FATAL_ERROR
           "Debian lifecycle syntax test failed: ${lifecycle_syntax_stderr}")
 endif()
+file(READ "${debian_lifecycle_test}" debian_lifecycle)
+foreach(expected
+        "assert_real_services"
+        "openssl req -x509"
+        "winpr-hash -u lifecycle --password-stdin -f sam"
+        "FragmentPath"
+        "frdpctl status --socket /run/frdp-sesmand/sesmand.sock"
+        "timeout 5 bash -c")
+  expect_contains("${debian_lifecycle}" "${expected}"
+                  "Debian real-daemon lifecycle test")
+endforeach()
+string(REGEX MATCHALL "assert_real_services" lifecycle_assertions
+             "${debian_lifecycle}")
+list(LENGTH lifecycle_assertions lifecycle_assertion_count)
+if(NOT lifecycle_assertion_count EQUAL 4)
+  message(FATAL_ERROR
+          "Debian lifecycle test must define and invoke real-service checks at start, upgrade, and rollback")
+endif()
+foreach(forbidden
+        "ExecStart="
+        ".service.d"
+        "systemctl edit"
+        "systemctl link"
+        "/bin/sleep"
+        "/usr/bin/sleep")
+  string(FIND "${debian_lifecycle}" "${forbidden}" lifecycle_override)
+  if(NOT lifecycle_override EQUAL -1)
+    message(FATAL_ERROR
+            "Debian lifecycle test contains forbidden service override marker '${forbidden}'")
+  endif()
+endforeach()
 
 execute_process(
   COMMAND "${BASH_EXECUTABLE}" "${FRDP_E2E_DIR}/TestRunner.sh"
