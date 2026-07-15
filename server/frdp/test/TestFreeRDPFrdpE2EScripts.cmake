@@ -300,6 +300,29 @@ function(expect_workflow_job_contains job next_job needle)
   expect_contains("${job_block}" "${needle}" "FRDP ${job} workflow job")
 endfunction()
 
+function(expect_workflow_job_ordered job next_job)
+  set(job_marker "\n  ${job}:\n")
+  string(FIND "${frdp_workflow}" "${job_marker}" job_start)
+  string(FIND "${frdp_workflow}" "\n  ${next_job}:\n" job_end)
+  if(job_start EQUAL -1 OR job_end EQUAL -1 OR job_end LESS_EQUAL job_start)
+    message(FATAL_ERROR "FRDP workflow has an invalid ${job}/${next_job} job boundary")
+  endif()
+  math(EXPR job_length "${job_end} - ${job_start}")
+  string(SUBSTRING "${frdp_workflow}" ${job_start} ${job_length} job_block)
+  set(previous_position -1)
+  foreach(needle IN LISTS ARGN)
+    string(FIND "${job_block}" "${needle}" position)
+    if(position EQUAL -1)
+      message(FATAL_ERROR "FRDP ${job} workflow job is missing '${needle}'")
+    endif()
+    if(position LESS_EQUAL previous_position)
+      message(FATAL_ERROR
+        "FRDP ${job} workflow job has '${needle}' outside the required evidence order")
+    endif()
+    set(previous_position ${position})
+  endforeach()
+endfunction()
+
 set(provider_repeat_expression
     "FRDP_E2E_REPETITIONS: \${{ github.event_name == 'schedule' && '2' || '1' }}")
 foreach(expected
@@ -308,6 +331,12 @@ foreach(expected
         "-v \"$source_tar:/tmp/frdpd-source.tar:ro\""
         "mk-build-deps --install --remove"
         "dpkg-buildpackage -uc -us -b -j2"
+        "lintian --fail-on error --display-info --pedantic"
+        "lintian_status=\${PIPESTATUS[0]}"
+        "tee /out/frdpd_lintian.txt"
+        "exit \"$lintian_status\""
+        "build_artifacts=\"$artifacts/build\""
+        "test -s \"$build_artifacts/frdpd_lintian.txt\""
         "test ! -e \"$artifacts/control/shlibs\""
         "test ! -e \"$artifacts/control/triggers\""
         "forbidden='(^|, )(libavcodec|libavformat|libavutil|libswscale|liburiparser|libxkbfile|libfreerdp|libwinpr)'"
@@ -320,6 +349,16 @@ foreach(expected
         "test ! -e /usr/bin/frdpd")
   expect_workflow_job_contains("deb" "rpm" "${expected}")
 endforeach()
+expect_workflow_job_ordered("deb" "rpm"
+  "output_dir=\"$FRDP_E2E_ARTIFACTS/deb/build\""
+  "set +e"
+  "lintian --fail-on error --display-info --pedantic"
+  "lintian_status=\${PIPESTATUS[0]}"
+  "set -e"
+  "cp /build/frdpd_*.deb"
+  "exit \"$lintian_status\""
+  "if: always()"
+  "uses: actions/upload-artifact@v4")
 foreach(expected
         "container: fedora:42"
         "dnf -y builddep packaging/rpm/frdpd.spec"
@@ -336,6 +375,24 @@ endforeach()
 file(READ "${frdp_repo_root}/debian/control" frdp_debian_control)
 foreach(expected "libicu-dev")
   expect_contains("${frdp_debian_control}" "${expected}" "FRDP Debian control")
+endforeach()
+
+set(frdp_debian_copyright "${frdp_repo_root}/debian/copyright")
+expect_file("${frdp_debian_copyright}")
+file(READ "${frdp_debian_copyright}" frdp_debian_copyright_text)
+foreach(expected
+        "copyright-format/1.0/"
+        "complete source-package copyright audit remains required"
+        "Files: CMakeLists.txt"
+        "License: Apache-2.0"
+        "License: BSD-3-clause"
+        "License: BSL-1.0"
+        "License: Expat"
+        "License: HPND-sell-variant"
+        "License: Zlib"
+        "License: public-domain"
+        "/usr/share/common-licenses/Apache-2.0")
+  expect_contains("${frdp_debian_copyright_text}" "${expected}" "FRDP Debian copyright")
 endforeach()
 foreach(unexpected
         "libavcodec-dev"

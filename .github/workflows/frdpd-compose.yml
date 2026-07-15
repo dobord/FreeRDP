@@ -68,7 +68,7 @@ jobs:
           set -Eeuo pipefail
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
           source_tar="$RUNNER_TEMP/frdpd-source.tar"
-          output_dir="$RUNNER_TEMP/frdpd-deb-output"
+          output_dir="$FRDP_E2E_ARTIFACTS/deb/build"
           rm -rf "$output_dir"
           mkdir -p "$output_dir"
           git archive --format=tar --output="$source_tar" HEAD
@@ -80,7 +80,7 @@ jobs:
               set -Eeuo pipefail
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
-              apt-get install -y --no-install-recommends devscripts equivs
+              apt-get install -y --no-install-recommends devscripts equivs lintian
               mkdir -p /build/FreeRDP
               tar -xf /tmp/frdpd-source.tar -C /build/FreeRDP
               cd /build/FreeRDP
@@ -88,8 +88,14 @@ jobs:
                 --tool "apt-get -q -y --no-install-recommends" debian/control
               export DEB_BUILD_OPTIONS="nocheck parallel=2"
               dpkg-buildpackage -uc -us -b -j2
+              set +e
+              lintian --fail-on error --display-info --pedantic \
+                /build/frdpd_*.deb 2>&1 | tee /out/frdpd_lintian.txt
+              lintian_status=${PIPESTATUS[0]}
+              set -e
               cp /build/frdpd_*.deb /build/frdpd_*.buildinfo \
                 /build/frdpd_*.changes /out/
+              exit "$lintian_status"
             '
 
       - name: Validate clean install and private runtime linkage
@@ -98,12 +104,13 @@ jobs:
           set -Eeuo pipefail
           artifacts="$GITHUB_WORKSPACE/server/frdp/test/e2e/artifacts/deb"
           mkdir -p "$artifacts/control"
-          deb_path=$(find "$RUNNER_TEMP/frdpd-deb-output" -maxdepth 1 -type f \
+          build_artifacts="$artifacts/build"
+          deb_path=$(find "$build_artifacts" -maxdepth 1 -type f \
             -name 'frdpd_*_amd64.deb' -print -quit)
           test -n "$deb_path"
           deb_path=$(realpath "$deb_path")
           multiarch=$(dpkg-architecture -qDEB_HOST_MULTIARCH)
-          cp "$RUNNER_TEMP/frdpd-deb-output"/frdpd_* "$artifacts/"
+          test -s "$build_artifacts/frdpd_lintian.txt"
           dpkg-deb --contents "$deb_path" | tee "$artifacts/package-files.txt"
           dpkg-deb --info "$deb_path" | tee "$artifacts/package-info.txt"
           dpkg-deb --control "$deb_path" "$artifacts/control"

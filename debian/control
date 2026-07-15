@@ -28,6 +28,8 @@ Package: frdpd
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, libpam0g, sssd, xvfb
 Description: FreeRDP-based RDP server with PAM/SSSD/NLA
- This package provides the frdpd daemon, authentication helpers and session manager.
- It supports password-backed NLA (CredSSP) through PAM/SSSD and prototype session management.
- Kerberos-first authentication is not installed as a production runtime path yet.
+ This package provides the frdpd daemon, authentication helpers and session
+ manager. It supports password-backed NLA (CredSSP) through PAM/SSSD and
+ prototype session management.
+ .
+ Kerberos-first authentication is not installed as a production runtime path.

@@ -10,9 +10,10 @@ The root `debian/` directory contains minimal preview packaging for the server-o
 - The resulting binary package declares runtime dependencies through `${shlibs:Depends}` / `${misc:Depends}` plus `libpam0g`, `sssd`, and `xvfb` for the PAM/SSSD session-agent prototype.
 - Run `SOURCE_DATE_EPOCH=<commit-time> DEB_BUILD_OPTIONS='nocheck parallel=1' dpkg-buildpackage -uc -us -b -j1` from the project root for a local binary package smoke build. The serial build option avoids noisy local resource races while this preview package is still being hardened. `packaging/scripts/create_deb.sh -uc -us -b -j1` is a wrapper around the same root `debian/control` metadata.
 - A clean Ubuntu 24.04 build using only the declared build dependencies produces `frdpd_0.1.0-1_amd64.deb` with the `frdpd`, `frdp-authd`, `frdp-sesmand`, `frdp-session-agent`, `frdpctl`, and default-on NTLM `winpr-hash` binaries, configuration, PAM service, systemd units, monitoring examples, and inactive MAC policy examples. Its exact FreeRDP/WinPR libraries are ABI-private under `/usr/lib/x86_64-linux-gnu/frdpd`; `dh_makeshlibs` excludes that directory, so the package emits no public `shlibs` file or `ldconfig` trigger. A second clean Ubuntu 24.04 container passed APT installation, `dpkg -V`, private-library linkage checks over all six binaries, installed `winpr-hash` provisioning, and package purge through the generated maintainer scripts.
-- The FRDP workflow repeats the dependency-resolved build, checks package metadata and the private multiarch layout, installs the package in a clean target container, and uploads the `.deb`, control archive, and manifests. Successful CI history still needs to accumulate.
+- The binary package carries scoped DEP-5 metadata for the Apache-2.0 runtime sources plus the BSD, Boost, Expat, HPND, Zlib, and public-domain exceptions in its build closure. This does not replace a complete source-package copyright audit. The clean builder runs pedantic `lintian`, writes the complete report directly into the retained artifact directory even when the policy check fails, and rejects error-level violations.
+- The FRDP workflow repeats the dependency-resolved build, checks package metadata and the private multiarch layout, installs the package in a clean target container, and uploads the `.deb`, control archive, lintian report, and manifests. Successful CI history still needs to accumulate.
 - Sign the resulting packages with the project’s GPG key and publish them to an APT repository.
-- Remaining Debian work includes copyright metadata, lintian policy checks, systemd enablement policy, package signing, upgrade/rollback tests, PAM/SSSD real-login validation against the installed package, and validation of installed SELinux/AppArmor draft examples.
+- Remaining Debian work includes a complete source-package copyright audit, resolving or formally reviewing non-error lintian findings, systemd enablement policy, package signing, upgrade/rollback tests, PAM/SSSD real-login validation against the installed package, and validation of installed SELinux/AppArmor draft examples.
 
 ## RPM packaging
 
@@ -85,8 +86,8 @@ Open reproducibility gaps:
 
 - The Fedora dependency-checked RPM job still needs successful CI history and
   coverage on any additional target RPM distributions.
-- Debian copyright metadata, lintian policy checks, service enablement policy,
-  and upgrade/rollback validation are still incomplete.
+- A complete source-package copyright audit, non-error lintian findings,
+  service enablement policy, and upgrade/rollback validation remain open.
 - Installed package validation does not yet prove PAM login, AD/SSSD policy,
   real-client sessions, upgrade/rollback, or enforcing SELinux/AppArmor mode.
 - Successful Debian and Fedora package-job history still needs to accumulate,
