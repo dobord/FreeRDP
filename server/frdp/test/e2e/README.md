@@ -17,9 +17,14 @@ xfreerdp
 | `component` | Built FRDP binaries and focused CTest suite | Config/channel policy, IPC primitives, `frdpctl`, helper stop handling, malformed requests against real `frdp-authd` and `frdp-sesmand` processes |
 | `local` | TLS, NLA/CredSSP, local `pam_unix`, helper IPC, managed Xvfb session | Valid authentication succeeds; wrong password and locked account fail; a full RDP client exchanges Unicode clipboard text in both directions, then creates, detaches, reconnects to, and removes one stable session |
 | `samba` | Provisioned Samba AD DC, DNS/Kerberos/LDAP, `adcli` machine join, `sssd-ad`, PAM, RDP | Domain user success, wrong password failure, disabled AD user failure, NSS user lookup plus supplementary AD-group membership, managed RDP disconnect/reconnect lifecycle |
-| `freeipa` | Official FreeIPA server image, LDAP identity, Kerberos password authentication through SSSD, PAM, RDP | IPA user success, wrong password failure, disabled IPA principal failure, NSS lookup, managed RDP disconnect/reconnect lifecycle |
+| `freeipa` | Official FreeIPA server, host enrollment/keytab, `sssd-ipa`, HBAC, PAM, RDP | Allowed IPA user success, wrong password failure, valid user denied by HBAC, host-keytab validation, NSS lookup, managed RDP disconnect/reconnect lifecycle |
 
-The FreeIPA baseline deliberately uses SSSD's LDAP identity provider and Kerberos authentication provider with `krb5_validate=false`. It therefore validates real FreeIPA LDAP/KDC and PAM/SSSD behavior without requiring a host enrollment/keytab inside the FRDP container. A separate joined-host profile using `id_provider=ipa`, host keytab validation and explicit HBAC rules is still required before claiming production FreeIPA policy coverage.
+The FreeIPA profile enrolls `frdpd.ipa.test` with a one-time host password,
+requires the expected host principal in a root-only keytab, and runs SSSD with
+the IPA identity, authentication and access providers plus Kerberos validation.
+It disables the default `allow_all` rule and permits only the enabled test user
+for the `frdpd` PAM service on that host; a second enabled user proves HBAC
+denial independently of password and disabled-account checks.
 
 The Samba profile does perform a machine join and uses the SSSD AD provider. It creates the configurable `FRDP_TEST_GROUP` (`rdp-users` by default), adds the allowed account, and requires the joined host to resolve that supplementary group through NSS/SSSD before starting `frdpd`. GPO access control is set to `permissive` so the test is deterministic while still exercising AD identity, password authentication and disabled-account handling.
 
@@ -71,7 +76,9 @@ per-auth-only client timeout or managed-session wait loops used by
 
 The official FreeIPA image runs systemd. The Compose profile uses a read-only root filesystem, a `/data` volume, host cgroup namespace and a writable cgroup mount; it does not use `privileged`. A cgroups-v2 Docker host is strongly recommended. The profile is heavier than the local and Samba profiles and should have at least 4 CPUs and roughly 6–8 GiB of available memory.
 
-The first FreeIPA start provisions the realm and can take several minutes. The image health check then creates the enabled and disabled test principals before the FRDP client starts.
+The first FreeIPA start provisions the realm and can take several minutes. The
+image health check then creates two enabled test principals and applies the
+HBAC rule that allows only the primary account before the FRDP client starts.
 
 ## What the RDP probe checks
 
@@ -80,11 +87,11 @@ The first FreeIPA start provisions the realm and can take several minutes. The i
 1. `/auth-only` succeeds for the enabled user.
 2. The managed session created by the successful probe is explicitly cleaned.
 3. `/auth-only` fails for an incorrect password and leaves no managed session or durable session runtime artifact.
-4. `/auth-only` fails for a locked or disabled account and leaves no managed session or durable session runtime artifact.
+4. `/auth-only` fails for a locked, disabled, or provider-policy-denied account and leaves no managed session or durable session runtime artifact.
 5. A normal graphical connection under client-side Xvfb remains connected, appears as `active`, and transfers supplementary-plane Unicode clipboard text in both directions under the configured policy.
 6. The connection becomes `disconnected` after client termination, and a second graphical client reattaches to the only matching session with the same session id, display and agent PID; its disconnect and explicit `kill-session` leave an empty registry.
 
-The client mounts only the session-manager socket volume. This allows it to observe the real manager registry and durable socket, metadata and display-reservation artifacts without inspecting server process memory. Before each run, the harness clears `artifacts/<profile>/` so stale output cannot satisfy a check; `FRDP_E2E_ARTIFACTS` must resolve to a dedicated non-root directory named `artifacts`. Logs, session listings and an XWD capture of the client display are written there. Successful RDP profiles also preserve `server-auth.log` and require exactly three server-side PAM accepts, one NTLM MIC rejection for the wrong password before PAM, two named PAM/SSSD denials produced by the disabled-user probe's connection path, and no NTLM proof/delegated-identity mismatch. Automatic client reconnect is explicitly disabled. The harness additionally preserves the rendered Compose model, timestamped aggregate logs, per-container logs, per-container inspect JSON and the component profile CTest `LastTest.log` when available.
+The client mounts only the session-manager socket volume. This allows it to observe the real manager registry and durable socket, metadata and display-reservation artifacts without inspecting server process memory. Before each run, the harness clears `artifacts/<profile>/` so stale output cannot satisfy a check; `FRDP_E2E_ARTIFACTS` must resolve to a dedicated non-root directory named `artifacts`. Logs, session listings and an XWD capture of the client display are written there. Successful RDP profiles also preserve `server-auth.log` and require exactly three server-side PAM accepts, one NTLM MIC rejection for the wrong password before PAM, two named PAM/SSSD denials produced by the denied-user probe's connection path, and no NTLM proof/delegated-identity mismatch. FreeIPA additionally requires explicit joined-host/keytab and HBAC allow/deny evidence in that authoritative log. Automatic client reconnect is explicitly disabled. The harness additionally preserves the rendered Compose model, timestamped aggregate logs, per-container logs, per-container inspect JSON and the component profile CTest `LastTest.log` when available.
 
 ## Useful direct commands
 
@@ -137,6 +144,6 @@ docker compose -f server/frdp/test/e2e/compose.yaml down --volumes --remove-orph
 
 ## Coverage still required
 
-This harness does not yet prove Kerberos-only CredSSP, reconnect across manager or daemon restart, RDPGFX/RFX policy, clipboard interoperability beyond text with the bundled FreeRDP client, audio channels, logind/cgroups, durable session reconciliation, a joined FreeIPA host with HBAC, graphical session soak behavior, broad protocol regression coverage, or Windows `mstsc` interoperability. Those should be added as separate profiles or an external lab matrix rather than weakening the deterministic baseline tests.
+This harness does not yet prove Kerberos-only CredSSP, reconnect across manager or daemon restart, RDPGFX/RFX policy, clipboard interoperability beyond text with the bundled FreeRDP client, audio channels, logind/cgroups, durable session reconciliation, FreeIPA keytab rollover or broader topology policy, graphical session soak behavior, broad protocol regression coverage, or Windows `mstsc` interoperability. Those should be added as separate profiles or an external lab matrix rather than weakening the deterministic baseline tests.
 
 All committed passwords are test-only defaults for an isolated Compose network. Do not expose provider ports or reuse these credentials outside the testbed.

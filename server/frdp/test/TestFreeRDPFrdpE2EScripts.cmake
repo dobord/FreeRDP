@@ -78,9 +78,20 @@ foreach(expected
         "profiles: [\"samba\"]"
         "profiles: [\"freeipa\"]"
         "FRDP_TEST_GROUP: \${FRDP_TEST_GROUP:-rdp-users}"
+        "FRDP_FREEIPA_ENROLL_PASSWORD: \${FRDP_FREEIPA_ENROLL_PASSWORD:-IpaEnrollPassw0rd!}"
+        "FRDP_DENY_LABEL: policy-denied"
+        "WITH_FREEIPA_CLIENT: ON"
         "samba-tool group listmembers"
         "grep -Fxq")
   expect_contains("${compose}" "${expected}" "E2E compose file")
+endforeach()
+
+file(READ "${FRDP_E2E_DIR}/Dockerfile" frdp_dockerfile)
+foreach(expected
+        "ARG WITH_FREEIPA_CLIENT=OFF"
+        "if [ \"$WITH_FREEIPA_CLIENT\" = ON ]; then"
+        "apt-get install -y --no-install-recommends freeipa-client")
+  expect_contains("${frdp_dockerfile}" "${expected}" "FRDP E2E image")
 endforeach()
 
 file(READ "${FRDP_E2E_DIR}/scripts/samba-entrypoint.sh" samba_entrypoint)
@@ -100,6 +111,28 @@ foreach(expected
         "SSSD resolved supplementary group"
         "SSSD did not resolve supplementary group")
   expect_contains("${frdpd_entrypoint}" "${expected}" "frdpd entrypoint")
+endforeach()
+
+foreach(expected
+        "ipa-client-install"
+        "id_provider = ipa"
+        "access_provider = ipa"
+        "krb5_validate = true"
+        "host/$host@$realm"
+        "FreeIPA HBAC did not allow the test user"
+        "pam_acct_mgmt: Permission denied"
+        "FreeIPA HBAC did not deny the policy-test user")
+  expect_contains("${frdpd_entrypoint}" "${expected}" "frdpd FreeIPA enrollment")
+endforeach()
+
+file(READ "${FRDP_E2E_DIR}/scripts/freeipa-ready.sh" freeipa_ready)
+foreach(expected
+        "ipa host-add"
+        "ipa hbacrule-add-user"
+        "ipa hbacrule-add-host"
+        "ipa hbacrule-add-service"
+        "ipa hbacrule-disable allow_all")
+  expect_contains("${freeipa_ready}" "${expected}" "FreeIPA seed policy")
 endforeach()
 
 file(READ "${FRDP_E2E_DIR}/run.sh" runner)
@@ -146,8 +179,11 @@ foreach(expected
         "validate_rdp_auth_artifacts"
         "server-auth.log"
         "expected 3 PAM accepts and 2 PAM denials"
-        "one NTLM proof rejection and two disabled-user PAM denials"
+        "one NTLM proof rejection and two denied-user PAM denials"
         "proof identity does not match the delegated credentials"
+        "profile freeipa is missing joined-host evidence"
+        "Access granted by HBAC rule [frdpd-allow]"
+        "Access denied by HBAC rules"
         "container-inspect")
   expect_contains("${runner}" "${expected}" "E2E runner")
 endforeach()
@@ -156,6 +192,7 @@ file(READ "${FRDP_E2E_DIR}/scripts/rdp-probe.sh" rdp_probe)
 foreach(expected
         "FRDP_E2E_TIMEOUT"
         "FRDP_AUTH_TIMEOUT"
+        "FRDP_DENY_LABEL"
         "positive_integer \"$FRDP_E2E_TIMEOUT\""
         "positive_integer \"$FRDP_AUTH_TIMEOUT\""
         "command -v timeout"

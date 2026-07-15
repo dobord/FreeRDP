@@ -174,9 +174,9 @@ validate_rdp_auth_artifacts()
 {
 	local profile=$1
 	local server_service=$2
-	local server_id server_log server_env test_user deny_user accepted rejected
+	local server_id server_log server_env test_user deny_user accepted rejected evidence
 	local total_accepted total_rejected
-	local ntlm_proof_rejected wrong_password_rejected disabled_account_rejected
+	local ntlm_proof_rejected wrong_password_rejected denied_user_rejected
 
 	server_id=$("${compose[@]}" --profile "$profile" ps -a -q "$server_service" 2>/dev/null || true)
 	if [[ -z $server_id || $server_id == *$'\n'* ]]; then
@@ -200,13 +200,13 @@ validate_rdp_auth_artifacts()
 		grep -F "PAM rejected RDP login for $test_user from" "$server_log" |
 			grep -c ': denied ' || true
 	)
-	disabled_account_rejected=$(
+	denied_user_rejected=$(
 		grep -F "PAM rejected RDP login for $deny_user from" "$server_log" |
 			grep -c ': denied ' || true
 	)
 	ntlm_proof_rejected=$(grep -Fc 'Message Integrity Check (MIC) verification failed!' \
 		"$server_log" || true)
-	rejected=$((wrong_password_rejected + disabled_account_rejected))
+	rejected=$((wrong_password_rejected + denied_user_rejected))
 	total_rejected=$(grep -c 'PAM rejected RDP login.*: denied ' "$server_log" || true)
 	if [[ $accepted -ne 3 || $total_accepted -ne 3 || $rejected -ne 2 ||
 		$total_rejected -ne 2 ]]; then
@@ -215,8 +215,8 @@ validate_rdp_auth_artifacts()
 		return 1
 	fi
 	if [[ $ntlm_proof_rejected -ne 1 || $wrong_password_rejected -ne 0 ||
-		$disabled_account_rejected -ne 2 ]]; then
-		printf 'profile %s did not produce one NTLM proof rejection and two disabled-user PAM denials\n' \
+		$denied_user_rejected -ne 2 ]]; then
+		printf 'profile %s did not produce one NTLM proof rejection and two denied-user PAM denials\n' \
 			"$profile" >&2
 		return 1
 	fi
@@ -224,6 +224,18 @@ validate_rdp_auth_artifacts()
 		printf 'profile %s encountered an NTLM proof/delegated identity mismatch\n' \
 			"$profile" >&2
 		return 1
+	fi
+	if [[ $profile == freeipa ]]; then
+		for evidence in \
+			'FreeIPA host enrollment, keytab validation, and HBAC allow/deny checks passed' \
+			'Access granted by HBAC rule [frdpd-allow]' \
+			'Access denied by HBAC rules'; do
+			if ! grep -Fq "$evidence" "$server_log"; then
+				printf 'profile freeipa is missing joined-host evidence: %s\n' \
+					"$evidence" >&2
+				return 1
+			fi
+		done
 	fi
 }
 
@@ -358,7 +370,7 @@ Usage: bash $0 component|local|samba|freeipa|all
   component  Build and run focused CTest/component coverage.
   local      Real TLS/NLA/CredSSP, local PAM and managed-session lifecycle.
   samba      Samba AD DC + adcli + SSSD AD + PAM + real RDP lifecycle.
-  freeipa    Official FreeIPA server + SSSD LDAP/Kerberos + PAM + real RDP lifecycle.
+  freeipa    Joined FreeIPA host + sssd-ipa/HBAC + PAM + real RDP lifecycle.
   all        Run all profiles sequentially.
 
 Set FRDP_E2E_KEEP=1 to leave failed containers and volumes running for diagnosis.

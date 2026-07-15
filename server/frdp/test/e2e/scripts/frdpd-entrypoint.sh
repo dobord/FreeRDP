@@ -140,31 +140,28 @@ configure_freeipa_identity()
 	local server=${FRDP_FREEIPA_SERVER:-ipa.ipa.test}
 	local domain=${FRDP_FREEIPA_DOMAIN:-ipa.test}
 	local realm=${FRDP_FREEIPA_REALM:-IPA.TEST}
-	local search_base=${FRDP_FREEIPA_SEARCH_BASE:-dc=ipa,dc=test}
+	local host=${FRDP_FREEIPA_HOST:-$(hostname -f)}
+	local enroll_password=${FRDP_FREEIPA_ENROLL_PASSWORD:?FRDP_FREEIPA_ENROLL_PASSWORD is required}
 
 	wait_tcp "$server" 389 || fail "FreeIPA LDAP did not become reachable"
 	wait_tcp "$server" 88 || fail "FreeIPA Kerberos did not become reachable"
 
-	cat > /etc/krb5.conf <<EOF
-[libdefaults]
- default_realm = ${realm}
- dns_lookup_realm = false
- dns_lookup_kdc = false
- rdns = false
- udp_preference_limit = 0
-
-[realms]
- ${realm} = {
-  kdc = ${server}
-  admin_server = ${server}
-  kpasswd_server = ${server}
- }
-
-[domain_realm]
- .${domain} = ${realm}
- ${domain} = ${realm}
-EOF
-	chmod 0644 /etc/krb5.conf
+	ipa-client-install \
+		--unattended \
+		--domain="$domain" \
+		--realm="$realm" \
+		--server="$server" \
+		--password="$enroll_password" \
+		--no-ntp \
+		--no-sudo \
+		--no-ssh \
+		--no-sshd \
+		--no-dns-sshfp
+	[[ -s /etc/krb5.keytab ]] || fail "FreeIPA enrollment did not create a host keytab"
+	[[ $(stat -c '%U:%G:%a' /etc/krb5.keytab) == root:root:600 ]] ||
+		fail "FreeIPA host keytab permissions are not root:root 0600"
+	klist -k /etc/krb5.keytab | grep -Fq "host/$host@$realm" ||
+		fail "FreeIPA host keytab does not contain the expected host principal"
 
 	mkdir -p /etc/sssd
 	cat > /etc/sssd/sssd.conf <<EOF
@@ -178,28 +175,15 @@ domains = ${domain}
 [pam]
 
 [domain/${domain}]
-id_provider = ldap
-auth_provider = krb5
-access_provider = permit
-ldap_uri = ldap://${server}
-ldap_search_base = ${search_base}
-ldap_schema = rfc2307bis
-ldap_referrals = false
-ldap_id_use_start_tls = false
-ldap_user_object_class = posixAccount
-ldap_user_name = uid
-ldap_user_uid_number = uidNumber
-ldap_user_gid_number = gidNumber
-ldap_user_home_directory = homeDirectory
-ldap_user_shell = loginShell
-ldap_group_object_class = posixGroup
-ldap_group_name = cn
-ldap_group_gid_number = gidNumber
-ldap_group_member = member
+id_provider = ipa
+auth_provider = ipa
+access_provider = ipa
+chpass_provider = ipa
+ipa_domain = ${domain}
+ipa_server = ${server}
+ipa_hostname = ${host}
 krb5_realm = ${realm}
-krb5_server = ${server}
-krb5_kpasswd = ${server}
-krb5_validate = false
+krb5_validate = true
 krb5_store_password_if_offline = false
 krb5_ccname_template = FILE:/tmp/krb5cc_%U
 cache_credentials = false
@@ -212,6 +196,15 @@ EOF
 	ensure_sss_nsswitch
 	install_pam_profile frdpd-sssd
 	start_sssd || fail "SSSD did not resolve the FreeIPA test user"
+	local allowed_checks denied_checks
+	allowed_checks=$(LC_ALL=C sssctl user-checks -a acct -s frdpd "$FRDP_TEST_USER" 2>&1) ||
+		fail "FreeIPA HBAC allowed-user check failed"
+	grep -Fq 'pam_acct_mgmt: Success' <<<"$allowed_checks" ||
+		fail "FreeIPA HBAC did not allow the test user"
+	denied_checks=$(LC_ALL=C sssctl user-checks -a acct -s frdpd "$FRDP_DENY_USER" 2>&1) || true
+	grep -Fq 'pam_acct_mgmt: Permission denied' <<<"$denied_checks" ||
+		fail "FreeIPA HBAC did not deny the policy-test user"
+	log "FreeIPA host enrollment, keytab validation, and HBAC allow/deny checks passed"
 }
 
 configure_samba_identity()

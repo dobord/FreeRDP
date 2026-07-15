@@ -6,6 +6,7 @@ FRDP_TEST_USER=${FRDP_TEST_USER:-rdpuser}
 FRDP_TEST_PASSWORD=${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
 FRDP_DENY_USER=${FRDP_DENY_USER:-rdpdisabled}
 FRDP_DENY_PASSWORD=${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+FRDP_DENY_LABEL=${FRDP_DENY_LABEL:-disabled-account}
 FRDP_RDP_DOMAIN=${FRDP_RDP_DOMAIN:-}
 FRDP_SESSION_SOCKET=${FRDP_SESSION_SOCKET:-/run/frdp-sesmand/sesmand.sock}
 FRDP_E2E_TIMEOUT=${FRDP_E2E_TIMEOUT:-60}
@@ -247,8 +248,8 @@ run_auth_only valid success "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"
 cleanup_auth_only_session
 run_auth_only wrong-password failure "$FRDP_TEST_USER" "${FRDP_TEST_PASSWORD}--wrong"
 assert_no_managed_sessions wrong-password
-run_auth_only disabled-account failure "$FRDP_DENY_USER" "$FRDP_DENY_PASSWORD"
-assert_no_managed_sessions disabled-account
+run_auth_only "$FRDP_DENY_LABEL" failure "$FRDP_DENY_USER" "$FRDP_DENY_PASSWORD"
+assert_no_managed_sessions "$FRDP_DENY_LABEL"
 
 Xvfb :99 -screen 0 1024x768x24 -nolisten tcp >"$FRDP_ARTIFACT_DIR/client-xvfb.log" 2>&1 &
 xvfb_pid=$!

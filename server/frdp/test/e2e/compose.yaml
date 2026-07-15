@@ -88,6 +88,8 @@ services:
       FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
       FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
       FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+      FRDP_FREEIPA_HOST: frdpd.ipa.test
+      FRDP_FREEIPA_ENROLL_PASSWORD: ${FRDP_FREEIPA_ENROLL_PASSWORD:-IpaEnrollPassw0rd!}
     command:
       - ipa-server-install
       - -U
@@ -121,6 +123,12 @@ services:
   frdpd-freeipa:
     <<: *frdp-image
     profiles: ["freeipa"]
+    image: ${FRDP_FREEIPA_CLIENT_IMAGE:-frdpd-e2e-freeipa-client:dev}
+    build:
+      context: ../../../..
+      dockerfile: server/frdp/test/e2e/Dockerfile
+      args:
+        WITH_FREEIPA_CLIENT: ON
     hostname: frdpd.ipa.test
     dns: ["${FRDP_IPA_IP:-172.31.56.10}"]
     dns_search: ["ipa.test"]
@@ -129,7 +137,8 @@ services:
       FRDP_FREEIPA_SERVER: ipa.ipa.test
       FRDP_FREEIPA_DOMAIN: ipa.test
       FRDP_FREEIPA_REALM: IPA.TEST
-      FRDP_FREEIPA_SEARCH_BASE: dc=ipa,dc=test
+      FRDP_FREEIPA_HOST: frdpd.ipa.test
+      FRDP_FREEIPA_ENROLL_PASSWORD: ${FRDP_FREEIPA_ENROLL_PASSWORD:-IpaEnrollPassw0rd!}
       FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
       FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
       FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
@@ -160,6 +169,7 @@ services:
       FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
       FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
       FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+      FRDP_DENY_LABEL: policy-denied
       FRDP_E2E_TIMEOUT: 90
     depends_on:
       frdpd-freeipa:

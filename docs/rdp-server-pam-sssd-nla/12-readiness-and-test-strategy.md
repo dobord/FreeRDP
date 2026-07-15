@@ -18,14 +18,14 @@ making the current canonical helper topology repeatably green.
 | Area | Readiness | Current evidence | Production blocker |
 |---|---:|---|---|
 | Build integration | 65% | `WITH_FRDPD` builds the listener, helpers, agent, control CLI and focused tests; the generated installed sample follows the default-on or explicit-off NTLM build contract | The branch is far behind and diverged from `master`; package builds and a supported dependency matrix are not green |
-| Password-backed NLA and PAM | 82% | Integrated FreeRDP server callbacks, build-time optional (default-on) NTLM proof verification through a protected WinPR SAM, fail-closed proof binding to the configured PAM-normalized identity across equivalent split/down-level/UPN forms with malformed, embedded-data and ambiguous rejection tests; the proof may add a domain omitted by matching delegated FreeRDP password credentials, while any delegated domain remains mandatory and equal in the proof. Proof binding extracts only user/domain without duplicating the delegated password, mandatory PAM auth/account handling follows through the auth broker, and post-account `PAM_USER` plus canonical NSS/SSSD `pw_name` bind auth-response V2, groups, token and managed-session handoff. Independent bounded account/source failure budgets, focused normalization/conversation/lifecycle coverage, locked temporary secrets, immediate credential-staging cleanup, required auth broker IPC, and green real-client local-PAM, Samba AD/SSSD, and FreeIPA LDAP/Kerberos-through-SSSD baseline profiles cover accepted/wrong/disabled logins with exact fresh server-side outcomes: wrong passwords fail NTLM MIC verification before PAM, disabled accounts reach named PAM/SSSD denials, and denied probes leave empty session registries and durable runtime directories; managed graphical sessions and asserted supplementary AD-group membership through NSS/SSSD are also covered | Failure budgets are process-local and a previously unseen alias can still reach PAM once; SAM provisioning remains a separate password-equivalent secret store; mapping different NetBIOS and DNS/UPN domain names and Unicode-aware case folding still require explicit trusted policy; remaining SSPI/PAM-owned credential lifetime, Windows `mstsc`, Kerberos-first CredSSP, joined FreeIPA/HBAC, distributed abuse prevention, and broader domain-policy interoperability evidence remain absent |
+| Password-backed NLA and PAM | 85% | Integrated FreeRDP server callbacks, build-time optional (default-on) NTLM proof verification through a protected WinPR SAM, fail-closed proof binding to the configured PAM-normalized identity across equivalent split/down-level/UPN forms with malformed, embedded-data and ambiguous rejection tests; the proof may add a domain omitted by matching delegated FreeRDP password credentials, while any delegated domain remains mandatory and equal in the proof. Proof binding extracts only user/domain without duplicating the delegated password, mandatory PAM auth/account handling follows through the auth broker, and post-account `PAM_USER` plus canonical NSS/SSSD `pw_name` bind auth-response V2, groups, token and managed-session handoff. Independent bounded account/source failure budgets, focused normalization/conversation/lifecycle coverage, locked temporary secrets, immediate credential-staging cleanup, required auth broker IPC, and green real-client local-PAM, Samba AD/SSSD, and joined FreeIPA/SSSD profiles cover accepted/wrong/disabled-or-policy-denied logins with exact fresh server-side outcomes. FreeIPA additionally proves OTP host enrollment, a root-only host keytab, IPA identity/auth/access providers with Kerberos validation, and explicit HBAC allow/deny behavior; managed graphical sessions and AD supplementary-group membership through NSS/SSSD are also covered | Failure budgets are process-local and a previously unseen alias can still reach PAM once; SAM provisioning remains a separate password-equivalent secret store; mapping different NetBIOS and DNS/UPN domain names and Unicode-aware case folding still require explicit trusted policy; remaining SSPI/PAM-owned credential lifetime, Windows `mstsc`, Kerberos-first CredSSP, IPA keytab rollover, distributed abuse prevention, and broader domain-policy interoperability evidence remain absent |
 | Privilege-separated topology | 78% | `frdp-authd`, `frdp-sesmand`, per-user agent, Unix sockets, peer credential checks including root-gated live cross-UID rejection and post-rejection helper survival for both helper roles, process hardening, correlation IDs, role-bound bounded startup health checks, fail-closed helper outages, restart-on-failure unit policy, direct crash/restart coverage, root-gated transient-systemd `SIGKILL`/same-socket recovery for both helper roles, signed single-use session-open auth tokens bound to POSIX uid/gid/bounded supplementary groups/account state, fixed-window per-peer helper IPC rate limits, live-helper socket collision protection, explicit auth broker, session control responses, and no in-process PAM fallback | Installed distro-unit crash/restart with active sessions, prolonged outage policy, legacy V1/V2 compatibility IDs, and richer account-policy payload remain open |
 | Session lifecycle | 72% | PAM session ownership, covered identity drop, Xvfb agent startup, shared PID/start-time/effective-UID identity reads, versioned atomic session metadata committed before lifecycle responses, durable detach/reconnect state updates, inode-bound agent-socket/display-reservation cleanup, bounded agent heartbeat supervision, provider-backed manager crashes inside PAM open/close with bounded clients and restart reconciliation, a live stopped-agent cleanup gate, a live `SIGKILL`/same-runtime restart cleanup gate, and real `xfreerdp` local-PAM plus Samba AD/SSSD reconnect with stable session id/display/agent PID now exist | Restart intentionally cleans rather than restores sessions; the replacement process cannot close the lost PAM handle, and direct authd supervision, logind/cgroup ownership, full PAM reconciliation, production quota management, reconnect across restart, and Windows-client evidence remain absent |
 | Desktop data path | 35% | Input injection, raw/XDamage capture, bounded output scheduling, policy-gated Display Control transport, conversion/bounds and agent IPC coverage, a real-client `800x600` layout request, forced framebuffer capture smoke, and opportunistic NSCodec exist | Fixed-mode Xvfb cannot apply geometry changes; no production RFX/RDPGFX policy, alternate resizable backend, systematic performance, or resize-churn evidence exists |
 | Virtual channels | 55% | Static/dynamic filtering, pre-create DVC authorization, conditional `drdynvc` transport, a Display Control handler, policy-gated text-only `cliprdr`, bounded explicit clipboard IPC/X11 selection handling, focused tests, and live-client Display Control plus bidirectional Unicode clipboard evidence exist | No audio, file/image clipboard, device redirection or broader live-client channel matrix |
 | Kerberos-first path | 19% | A build-only GSSAPI helper skeleton, standalone no-core hardening, keytab environment selection, host-based acceptor-name import, delegated-credential flag rejection, base64 token decoding, fail-closed simple principal normalization and bounded group lookup coverage, Kerberos identity config validation with daemon fail-closed startup for enabled Kerberos mode, and architecture documentation exist | No CredSSP/SPNEGO token transport from `frdpd`, SSSD enterprise principal mapping, account/session binding or integrated security review |
 | Operations and packaging | 34% | Example systemd units, PAM file, configuration, install rules, draft MAC policy files with SELinux module/package and AppArmor parser validation when available, starter node_exporter/Prometheus/Grafana monitoring examples with focused validation, including session utilization export for capacity alerts, Debian and RPM preview package smoke evidence, and package signing/reproducible-build notes exist | No dependency-checked target-distro RPM CI, release signing repository, active SELinux/AppArmor enforcement review, upgrade/rollback, socket activation, dashboard import evidence, native metrics or operational SLOs |
-| Automated verification | 82% | Unit tests, helper-process component tests, live helper-topology startup smoke coverage, prerequisite-gated Xvfb/PAM live V3 open/list/detach/implicit-reconnect/hard-close plus sesmand `SIGKILL`/restart reconciliation coverage, metadata codec/store and same-inode recovery tests, malformed/slow helper-client coverage, focused ASan+UBSan and strict-warning gates including default-on/explicit-off NTLM build variants, systemd/tmpfiles/monitoring verification, ASan/UBSan-backed parser/policy fuzzers, and green real-client local-PAM, Samba AD/SSSD, and FreeIPA baseline Compose profiles proving disconnect/reconnect identity with retained-client logs/listings/XWD artifacts | Compose stability still needs repeated CI evidence; no Windows `mstsc`, joined FreeIPA/HBAC, reconnect across restart, full PAM crash reconciliation, graphical session load/soak, sustained fuzz corpus, broader selected RDP input fuzzing, full-session protocol regression, or Valgrind/LSan variant matrix yet |
+| Automated verification | 85% | Unit tests, helper-process component tests, live helper-topology startup smoke coverage, prerequisite-gated Xvfb/PAM live V3 open/list/detach/implicit-reconnect/hard-close plus sesmand `SIGKILL`/restart reconciliation coverage, metadata codec/store and same-inode recovery tests, malformed/slow helper-client coverage, focused ASan+UBSan and strict-warning gates including default-on/explicit-off NTLM build variants, systemd/tmpfiles/monitoring verification, ASan/UBSan-backed parser/policy fuzzers, and green real-client local-PAM, Samba AD/SSSD, and joined FreeIPA/HBAC Compose profiles proving disconnect/reconnect identity with retained-client logs/listings/XWD artifacts | Compose stability still needs repeated CI evidence; no Windows `mstsc`, IPA keytab rollover, reconnect across restart, full PAM crash reconciliation, graphical session load/soak, sustained fuzz corpus, broader selected RDP input fuzzing, full-session protocol regression, or Valgrind/LSan variant matrix yet |
 | Overall production readiness | **25–30%** | A testable MVP skeleton with meaningful security boundaries | Several correctness, lifecycle, interoperability and operability gates remain open |
 
 ## Highest-value implementation order
@@ -120,8 +120,8 @@ for an extended session, and denied channels cannot be opened or used.
 
 1. Implement the Kerberos acceptor path from the actual CredSSP/SPNEGO token,
    configured SPN/keytab and SSSD-backed principal mapping.
-2. Add joined-host FreeIPA with `id_provider=ipa`, keytab validation and explicit
-   HBAC; add strict Samba AD GPO policy after the baseline AD profile is stable.
+2. Add FreeIPA keytab rollover and broader topology/policy scenarios; add strict
+   Samba AD GPO policy after the baseline AD profile is stable.
 3. Complete DEB and RPM builds, service users/directories, permissions,
    post-install validation and upgrade tests.
 4. Validate SELinux and AppArmor policies in enforcing mode.
@@ -216,8 +216,8 @@ The Compose harness under `server/frdp/test/e2e` defines four profiles:
   lifecycle;
 - `samba`: provisioned Samba AD DC, machine join via `adcli`, SSSD AD, PAM and
   real RDP client;
-- `freeipa`: official FreeIPA server, LDAP identity plus Kerberos password auth
-  through SSSD, PAM and real RDP client.
+- `freeipa`: official FreeIPA server, OTP host enrollment, root-only keytab,
+  `sssd-ipa`, explicit HBAC allow/deny policy, PAM and real RDP client.
 
 Focused CTest coverage now syntax-checks the harness shell scripts, verifies
 the expected Compose profiles/services and fixture files remain present, and
@@ -227,10 +227,10 @@ fail-fast behavior and incomplete-attempt preservation.
 Each RDP profile starts with fresh profile containers, volumes, and artifacts,
 checks an enabled user,
 cleans its successful auth-only session, and proves that wrong-password and
-disabled/locked-account attempts leave no managed session or durable session
+disabled/locked-account or HBAC-policy attempts leave no managed session or durable session
 runtime artifact. A successful profile also requires the current server log to
 contain exactly three PAM accepts, one wrong-password NTLM MIC rejection before
-PAM, two named disabled-account PAM/SSSD denials from that probe's connection
+PAM, two named denied-user PAM/SSSD outcomes from that probe's connection
 path, and no NTLM proof/delegated-identity mismatch. It then checks a full connection, appearance
 in `frdpctl list-sessions`, reconnect identity, and final cleanup. The Samba and
 FreeIPA profiles are intentionally separate because
@@ -243,10 +243,12 @@ artifact directory. Two consecutive local-PAM real-client lifecycle runs have
 passed through this mode; this is a deterministic soak primitive, not a
 substitute for repeated CI history or long-running graphical load evidence.
 
-The current FreeIPA profile is a reproducible baseline, not final IPA policy
-coverage: it does not yet enroll the FRDP host or enforce HBAC through the IPA
-provider. The current Samba profile joins the host but keeps GPO access control
-permissive until authentication and lifecycle behavior are stable.
+The FreeIPA profile enrolls the FRDP host, validates its root-only host keytab,
+uses the IPA providers with Kerberos validation, disables the default
+`allow_all` HBAC rule, and proves an explicit allow plus enabled-user denial.
+Keytab rollover and broader IPA topology/policy cases remain external matrix
+work. The Samba profile joins the host but keeps GPO access control permissive
+until authentication and lifecycle behavior are stable.
 
 ### External lab E2E
 
@@ -254,7 +256,7 @@ Some requirements should not be forced into a single Docker host:
 
 - Windows `mstsc` client/build matrix;
 - Kerberos-only and ticket-renewal scenarios with real DNS/time behavior;
-- joined FreeIPA host, HBAC and keytab rollover;
+- FreeIPA keytab rollover and broader topology/policy scenarios;
 - AD GPO allow/deny and trust/forest scenarios;
 - reconnect across daemon restart;
 - clipboard interoperability beyond the current FreeRDP client and baseline audio policy;

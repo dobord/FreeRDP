@@ -121,6 +121,13 @@ RUN chmod 0755 /opt/frdp-e2e/scripts/*.sh \
     && mkdir -p /artifacts /etc/frdpd /run/frdp-authd /run/frdp-sesmand /var/log/sssd \
     && chmod 0700 /run/frdp-authd /run/frdp-sesmand
 
+ARG WITH_FREEIPA_CLIENT=OFF
+RUN if [ "$WITH_FREEIPA_CLIENT" = ON ]; then \
+        apt-get update \
+        && apt-get install -y --no-install-recommends freeipa-client \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
 ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
 ENTRYPOINT ["bash", "/opt/frdp-e2e/scripts/frdpd-entrypoint.sh"]
