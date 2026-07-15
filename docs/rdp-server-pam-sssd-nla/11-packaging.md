@@ -25,7 +25,18 @@ The `packaging/rpm/frdpd.spec` file is a starting point for building a server-on
 
 The `%files` section installs the daemons (`frdpd`, `frdp-authd`, `frdp-sesmand`, `frdp-session-agent`), the administrative tool `frdpctl`, the default-on NTLM provisioning tool `winpr-hash`, configuration files under `/etc/frdpd`, and documentation. `frdp-krb-authd` remains a build-only prototype until the Kerberos acceptor path is implemented.
 
-A local Ubuntu smoke build was verified with `rpmbuild -bb --nodeps` plus a temporary macro overlay for Fedora-style `%cmake`, `%cmake_build`, `%cmake_install`, `%_unitdir`, `%_tmpfilesdir`, and systemd scriptlet macros. That smoke produced `frdpd-0.1.0-1.x86_64.rpm` containing the FRDP daemons/helpers, `/etc/frdpd`, `/etc/pam.d/frdpd`, systemd units, the tmpfiles rule, monitoring examples, and inactive SELinux/AppArmor examples. Target RPM distro CI still needs to run with real BuildRequires resolution and distro-provided macros.
+A clean Fedora 42 container build was verified with `dnf builddep` followed by
+`rpmbuild -ba`, using only the dependencies and feature policy declared by the
+spec. The resulting source, binary, debuginfo, and debugsource RPMs were
+created with distro-provided macros. The binary RPM carries its exact in-tree
+FreeRDP/WinPR libraries in a private `/usr/lib64/frdpd` directory. Installing
+it through DNF in a separate clean Fedora 42 container resolved the remaining
+system dependencies; `rpm -V` and private-library `ldd` checks over all six
+packaged binaries passed.
+The FRDP workflow now performs the same dependency-checked build, package
+install, manifest and linkage checks and uploads the resulting RPM artifacts.
+Successful target-distro CI history and additional RPM distro coverage still
+need to accumulate.
 
 ## Reproducible builds and signing
 
@@ -72,7 +83,8 @@ Minimum release validation before signing:
 
 Open reproducibility gaps:
 
-- RPM builds still need dependency-checked CI verification on target distros with distro macros available.
+- The Fedora dependency-checked RPM job still needs successful CI history and
+  coverage on any additional target RPM distributions.
 - Debian maintainer scripts, copyright metadata, and lintian policy checks are
   still incomplete.
 - Installed package validation does not yet prove PAM login, AD/SSSD policy,
@@ -103,4 +115,8 @@ debian/
   source/
 ```
 
-Future work includes production Debian policy validation, dependency-checked RPM CI, production-reviewed enforcing SELinux and AppArmor policies, and automated package builds in CI. The packaging guidelines above keep pilot and GA packaging work tied to executable package builds instead of draft-only metadata.
+Future work includes production Debian policy validation, accumulated and
+broader target-distro RPM CI evidence, production-reviewed enforcing SELinux
+and AppArmor policies, signing, and repository publication. The packaging
+guidelines above keep pilot and GA packaging work tied to executable package
+builds instead of draft-only metadata.

@@ -10,6 +10,7 @@ on:
       - 'libfreerdp/core/server.c'
       - 'libfreerdp/core/server.h'
       - 'cmake/CompilerSanitizerOptions.cmake'
+      - 'packaging/rpm/frdpd.spec'
       - '.github/workflows/frdpd-compose.yml'
   push:
     branches: ['project/**']
@@ -20,6 +21,7 @@ on:
       - 'libfreerdp/core/server.c'
       - 'libfreerdp/core/server.h'
       - 'cmake/CompilerSanitizerOptions.cmake'
+      - 'packaging/rpm/frdpd.spec'
       - '.github/workflows/frdpd-compose.yml'
   schedule:
     - cron: '15 3 * * 0'
@@ -49,6 +51,69 @@ env:
   FRDP_E2E_ARTIFACTS: ${{ github.workspace }}/server/frdp/test/e2e/artifacts
 
 jobs:
+  rpm:
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.profile == 'quick' || inputs.profile == 'component' || inputs.profile == 'all'
+    runs-on: ubuntu-24.04
+    container: fedora:42
+    timeout-minutes: 60
+    steps:
+      - name: Install RPM build tooling
+        run: dnf -y install git rpm-build dnf-plugins-core
+
+      - uses: actions/checkout@v4
+
+      - name: Resolve declared build dependencies
+        run: dnf -y builddep packaging/rpm/frdpd.spec
+
+      - name: Build source and binary RPMs
+        run: |
+          mkdir -p "$HOME/rpmbuild/SOURCES"
+          git archive --format=tar.gz --prefix=frdpd-0.1.0/ \
+            --output="$HOME/rpmbuild/SOURCES/frdpd-0.1.0.tar.gz" HEAD
+          rpmbuild -ba packaging/rpm/frdpd.spec
+
+      - name: Validate package manifest and runtime dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          artifacts="$GITHUB_WORKSPACE/server/frdp/test/e2e/artifacts/rpm"
+          mkdir -p "$artifacts/RPMS" "$artifacts/SRPMS"
+          cp -a "$HOME/rpmbuild/RPMS/." "$artifacts/RPMS/"
+          cp -a "$HOME/rpmbuild/SRPMS/." "$artifacts/SRPMS/"
+          rpm_path=$(find "$HOME/rpmbuild/RPMS" -type f \
+            -name 'frdpd-0.1.0-*.x86_64.rpm' -print -quit)
+          test -n "$rpm_path"
+          rpm -qpl "$rpm_path" | tee "$artifacts/package-files.txt"
+          rpm -qpR "$rpm_path" | tee "$artifacts/package-requires.txt"
+          rpm -qp --provides "$rpm_path" | tee "$artifacts/package-provides.txt"
+          private_abi='^(libfreerdp3|libfreerdp-server3|libwinpr3|libwinpr-tools3)\.so\.3'
+          if grep -Eq "$private_abi" "$artifacts/package-requires.txt" ||
+             grep -Eq "$private_abi" "$artifacts/package-provides.txt"; then
+            exit 1
+          fi
+          dnf -y install "$rpm_path"
+          rpm -V frdpd
+          : > "$artifacts/runtime-linkage.txt"
+          for binary in frdpd frdp-authd frdp-sesmand frdp-session-agent frdpctl winpr-hash; do
+            linkage=$(ldd "/usr/bin/$binary")
+            printf '%s\n' "$linkage" | tee -a "$artifacts/runtime-linkage.txt"
+            if grep -q 'not found' <<< "$linkage"; then
+              exit 1
+            fi
+            grep -q '/lib64/frdpd/libwinpr3.so.3' <<< "$linkage"
+          done
+          grep -q '/lib64/frdpd/libfreerdp3.so.3' "$artifacts/runtime-linkage.txt"
+
+      - name: Upload RPM artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frdpd-rpm-${{ github.run_id }}
+          path: server/frdp/test/e2e/artifacts/rpm
+          if-no-files-found: ignore
+
   fuzz:
     if: >-
       github.event_name != 'workflow_dispatch' ||

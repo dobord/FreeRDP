@@ -302,6 +302,18 @@ endfunction()
 
 set(provider_repeat_expression
     "FRDP_E2E_REPETITIONS: \${{ github.event_name == 'schedule' && '2' || '1' }}")
+foreach(expected
+        "container: fedora:42"
+        "dnf -y builddep packaging/rpm/frdpd.spec"
+        "rpmbuild -ba packaging/rpm/frdpd.spec"
+        "dnf -y install \"$rpm_path\""
+        "rpm -V frdpd"
+        "rpm -qp --provides \"$rpm_path\""
+        "private_abi='^(libfreerdp3|libfreerdp-server3|libwinpr3|libwinpr-tools3)"
+        "grep -q '/lib64/frdpd/libwinpr3.so.3'"
+        "grep -q '/lib64/frdpd/libfreerdp3.so.3'")
+  expect_workflow_job_contains("rpm" "fuzz" "${expected}")
+endforeach()
 expect_workflow_job_contains("samba" "freeipa" "${provider_repeat_expression}")
 expect_workflow_job_contains("freeipa" "" "${provider_repeat_expression}")
 string(REGEX MATCHALL "FRDP_E2E_REPETITIONS:" provider_repeat_settings "${frdp_workflow}")
@@ -309,4 +321,27 @@ list(LENGTH provider_repeat_settings provider_repeat_count)
 if(NOT provider_repeat_count EQUAL 2)
   message(FATAL_ERROR
           "expected exactly two provider repetition settings, found ${provider_repeat_count}")
+endif()
+
+file(READ "${frdp_repo_root}/packaging/rpm/frdpd.spec" frdp_rpm_spec)
+foreach(expected
+        "BuildRequires: pkgconf-pkg-config, zlib-devel, cjson-devel, libicu-devel"
+        "BuildRequires: libjpeg-turbo-devel, libpng-devel"
+        "%global __provides_exclude_from ^%{_libdir}/frdpd/.*$"
+        "%global __requires_exclude ^(libfreerdp3|libfreerdp-server3|libwinpr3|libwinpr-tools3)"
+        "-DWITH_FRDPD=ON"
+        "-DWITH_CLIENT_COMMON=OFF"
+        "-DWITH_CLIENT_CHANNELS=OFF"
+        "-DCMAKE_INSTALL_SYSCONFDIR=%{_sysconfdir}"
+        "-DCMAKE_INSTALL_LIBDIR=%{_lib}/frdpd"
+        "%cmake_build --target winpr-tools winpr-hash"
+        "%cmake_install --component libraries"
+        "%{_libdir}/frdpd/lib*.so*"
+        "/usr/bin/winpr-hash"
+        "%{_datadir}/frdpd/monitoring/frdpd-grafana-dashboard.json")
+  expect_contains("${frdp_rpm_spec}" "${expected}" "FRDP RPM spec")
+endforeach()
+string(FIND "${frdp_rpm_spec}" "-DWITH_FRDPD_NTLM=OFF" rpm_ntlm_disabled)
+if(NOT rpm_ntlm_disabled EQUAL -1)
+  message(FATAL_ERROR "FRDP RPM spec disables default-on NTLM support")
 endif()
