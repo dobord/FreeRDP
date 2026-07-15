@@ -218,8 +218,10 @@ The Compose harness under `server/frdp/test/e2e` defines four profiles:
 - `freeipa`: official FreeIPA server, LDAP identity plus Kerberos password auth
   through SSSD, PAM and real RDP client.
 
-Focused CTest coverage now syntax-checks the harness shell scripts and verifies
-the expected Compose profiles/services and fixture files remain present.
+Focused CTest coverage now syntax-checks the harness shell scripts, verifies
+the expected Compose profiles/services and fixture files remain present, and
+uses a Docker-free runner fixture to enforce single-run layout, repeated
+fail-fast behavior and incomplete-attempt preservation.
 
 Each RDP profile starts with a fresh artifact directory, checks an enabled user,
 cleans its successful auth-only session, and proves that wrong-password and
@@ -232,6 +234,12 @@ in `frdpctl list-sessions`, reconnect identity, and final cleanup. The Samba and
 FreeIPA profiles are intentionally separate because
 they represent different identity and policy behavior, not interchangeable
 LDAP fixtures.
+
+`FRDP_E2E_REPETITIONS` repeats every selected profile from clean Compose
+volumes, stops at the first failed attempt, and retains each run in a separate
+artifact directory. Two consecutive local-PAM real-client lifecycle runs have
+passed through this mode; this is a deterministic soak primitive, not a
+substitute for repeated CI history or long-running graphical load evidence.
 
 The current FreeIPA profile is a reproducible baseline, not final IPA policy
 coverage: it does not yet enroll the FRDP host or enforce HBAC through the IPA

@@ -20,6 +20,7 @@ endfunction()
 
 foreach(script
         run.sh
+        TestRunner.sh
         scripts/frdpd-entrypoint.sh
         scripts/frdpd-healthcheck.sh
         scripts/freeipa-ready.sh
@@ -39,6 +40,16 @@ foreach(script
     message(FATAL_ERROR "bash syntax check failed for ${script}: ${stderr}\n${stdout}")
   endif()
 endforeach()
+
+execute_process(
+  COMMAND "${BASH_EXECUTABLE}" "${FRDP_E2E_DIR}/TestRunner.sh"
+  RESULT_VARIABLE runner_test_result
+  OUTPUT_VARIABLE runner_test_stdout
+  ERROR_VARIABLE runner_test_stderr)
+if(NOT runner_test_result EQUAL 0)
+  message(FATAL_ERROR
+    "E2E runner behavior test failed: ${runner_test_stderr}\n${runner_test_stdout}")
+endif()
 
 foreach(fixture
         .env.example
@@ -100,13 +111,16 @@ foreach(expected
         "all)"
         "FRDP_E2E_ARTIFACTS"
         "FRDP_E2E_PROFILE_TIMEOUT"
+        "FRDP_E2E_REPETITIONS"
         "profile_timeout"
+        "repetitions"
         "command -v git"
         "command -v tar"
         "command -v docker"
         "docker compose version"
         "command -v timeout"
         "timeout \"\${profile_timeout}s\""
+        "up --no-build"
         "snapshot_excluded_paths"
         "\${root#\"$repo_root/\"}/artifacts"
         "snapshot_excludes"
@@ -118,6 +132,15 @@ foreach(expected
         "compose-config.yaml"
         "must be a dedicated non-root directory named artifacts"
         "rm -rf -- \"\${artifacts:?}/$profile\""
+        "repetition-summary.txt"
+        "incomplete-run-$repeat_current"
+        "finalize_repeated_artifacts"
+        "transfer_artifact_tree"
+        "refresh_repeat_completed"
+        "repeat_finalizing"
+        "saved_status == \"$status\""
+        "set -Eeuo pipefail"
+        "run_profile_once"
         "validate_rdp_auth_artifacts"
         "server-auth.log"
         "expected 3 PAM accepts and 2 PAM denials"

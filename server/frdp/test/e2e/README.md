@@ -53,6 +53,16 @@ default is 1800 seconds, and a timeout leaves the usual `compose-up.log`,
 `compose.log`, `compose-ps.txt`, container logs, inspect JSON, and exit-code
 artifact for diagnosis.
 
+Set `FRDP_E2E_REPETITIONS=<count>` to run every selected profile repeatedly
+from clean Compose volumes and a fresh profile artifact directory. A repeated
+run stops on the first failure and stores each attempt under
+`artifacts/<profile>/run-N/`, with completion status in
+`repetition-summary.txt`. The default is one and retains the original artifact
+layout. If the runner is interrupted, its EXIT/signal handler restores completed
+attempts and preserves the current partial attempt as `incomplete-run-N`. The
+first attempt builds the selected images; later attempts reuse those exact
+images with `--no-build`.
+
 Set `FRDP_AUTH_TIMEOUT=<seconds>` or `FRDP_E2E_TIMEOUT=<seconds>` to tune the
 per-auth-only client timeout or managed-session wait loops used by
 `rdp-probe.sh`.
