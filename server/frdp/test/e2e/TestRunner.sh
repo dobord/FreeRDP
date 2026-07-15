@@ -23,6 +23,10 @@ for arg in "$@"; do
 	if [[ $arg == version ]]; then
 		exit 0
 	fi
+	if [[ $arg == down ]]; then
+		printf '%s\n' "$*" >>"$FRDP_FAKE_DOWN_LOG"
+		exit 0
+	fi
 	if [[ $arg == up ]]; then
 		printf '%s\n' "$*" >>"$FRDP_FAKE_UP_LOG"
 		count=0
@@ -82,6 +86,7 @@ run_case()
 		FRDP_E2E_REPETITIONS="$repetitions" \
 		FRDP_FAKE_COUNTER="$tmp/$name/counter" \
 		FRDP_FAKE_UP_LOG="$tmp/$name/up.log" \
+		FRDP_FAKE_DOWN_LOG="$tmp/$name/down.log" \
 		FRDP_FAKE_STATUSES="$statuses" \
 		FRDP_FAKE_INCOMPLETE="$incomplete" \
 		FRDP_FAKE_FINALIZE_SIGNAL="$finalize_signal" \
@@ -98,6 +103,8 @@ status=$(run_case single 1 7)
 [[ $status == 7 ]]
 [[ $(<"$tmp/single/artifacts/component/exit-code.txt") == 7 ]]
 [[ ! -e $tmp/single/artifacts/component/repetition-summary.txt ]]
+[[ $(grep -c -- '--profile component down --volumes --remove-orphans' \
+	"$tmp/single/down.log") == 2 ]]
 
 status=$(run_case repeated 3 0,7)
 [[ $status == 7 ]]
@@ -116,6 +123,8 @@ grep -Fxq 'requested=2 completed=0 status=1' \
 [[ -d $tmp/incomplete/artifacts/component/incomplete-run-1 ]]
 [[ ! -e $tmp/incomplete/artifacts/component/incomplete-run-1/exit-code.txt ]]
 [[ ! -e $tmp/incomplete/artifacts/component/run-1 ]]
+[[ $(grep -c -- '--profile component down --volumes --remove-orphans' \
+	"$tmp/incomplete/down.log") == 2 ]]
 
 status=$(run_case finalize-signal 2 0,0 0 1)
 [[ $status == 143 ]]

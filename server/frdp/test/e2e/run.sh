@@ -48,6 +48,7 @@ repeat_completed=0
 repeat_status=1
 repeat_finalizing=0
 repeat_pending=
+active_profile=
 
 cleanup_source_archive()
 {
@@ -131,6 +132,9 @@ cleanup_on_exit()
 		finalize_repeated_artifacts ||
 			printf 'repeated-run artifacts remain in %s\n' "$repeat_staging" >&2
 	fi
+	if [[ -n $active_profile ]]; then
+		cleanup "$active_profile"
+	fi
 	cleanup_source_archive
 }
 
@@ -158,8 +162,11 @@ compose=(docker compose -f "$compose_file")
 
 cleanup()
 {
+	local profile=$1
+
 	if [[ $keep != 1 ]]; then
-		"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+		"${compose[@]}" --profile "$profile" down --volumes --remove-orphans \
+			>/dev/null 2>&1 || true
 	fi
 }
 
@@ -231,6 +238,7 @@ run_profile_once()
 	local container_ids="$artifacts/$profile/container-ids.txt"
 	local up=(up --build)
 
+	active_profile=$profile
 	if [[ $build -eq 0 ]]; then
 		up=(up --no-build)
 	fi
@@ -238,7 +246,8 @@ run_profile_once()
 	rm -rf -- "${artifacts:?}/$profile"
 	mkdir -p "$artifacts/$profile"
 	: >"$output"
-	"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+	"${compose[@]}" --profile "$profile" down --volumes --remove-orphans \
+		>/dev/null 2>&1 || true
 	"${compose[@]}" --profile "$profile" config >"$artifacts/$profile/compose-config.yaml" 2>&1 || true
 
 	set +e
@@ -274,7 +283,8 @@ run_profile_once()
 		status=1
 	fi
 	printf '%s\n' "$status" >"$artifacts/$profile/exit-code.txt"
-	cleanup
+	cleanup "$profile"
+	active_profile=
 	return "$status"
 }
 
@@ -305,6 +315,7 @@ run_profile()
 	for ((run = 1; run <= repetitions; run++)); do
 		printf 'profile %s repetition %s/%s\n' "$profile" "$run" "$repetitions"
 		repeat_current=$run
+		active_profile=$profile
 		build=0
 		[[ $run -ne 1 ]] || build=1
 		set +e
@@ -314,6 +325,8 @@ run_profile()
 		)
 		status=$?
 		set -e
+		cleanup "$profile"
+		active_profile=
 		exit_code_file="$artifacts/$profile/exit-code.txt"
 		saved_status=
 		if [[ -f $exit_code_file ]]; then
