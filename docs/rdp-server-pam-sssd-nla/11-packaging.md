@@ -98,8 +98,10 @@ Open reproducibility gaps:
 
 - The Fedora dependency-checked RPM job still needs successful CI history and
   coverage on any additional target RPM distributions.
-- A complete source-package copyright audit and non-error lintian findings remain
-  open.
+- A complete source-package copyright audit remains open. The current pedantic
+  binary-package lintian run reports only the expected first-upload changelog
+  warning after manuals and systemd documentation links were added for every
+  packaged command.
 - Installed package validation does not yet prove AD/SSSD policy or real-client
   sessions with an SSSD provider during package upgrade/rollback, nor enforcing
   SELinux/AppArmor mode. Local PAM with an independent distro client is covered

@@ -58,7 +58,7 @@ the release record.
 
 | Capability | Status | Required evidence before GA |
 |---|---|---|
-| Debian package | Prototype | Accumulated dependency-checked CI, complete source copyright review, equivalent SSSD-provider active-session evidence across package upgrade/rollback, and review of remaining non-error lintian findings. Local-PAM login/reconnect plus active-session cleanup are covered independently at each transition. |
+| Debian package | Prototype | Accumulated dependency-checked CI, complete source copyright review, and equivalent SSSD-provider active-session evidence across package upgrade/rollback. All packaged commands now have manuals, daemon units link to them, and pedantic lintian reports only the expected first-upload changelog warning; local-PAM login/reconnect plus active-session cleanup are covered independently at each transition. |
 | RPM package | Prototype | Target distro CI with real BuildRequires, systemd scriptlets, SELinux review, install/upgrade/uninstall. |
 | systemd units and tmpfiles | Candidate | Distro verification, restart behavior, hardening review, runtime directory ownership checks. |
 | AppArmor and SELinux examples | Prototype | Enforcing policy review and target-distro validation. |

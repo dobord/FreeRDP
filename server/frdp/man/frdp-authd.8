@@ -1,0 +1,37 @@
+.TH FRDP-AUTHD 8 "July 2026" "FreeRDP" "System Administration"
+.SH NAME
+frdp-authd \- PAM authentication broker for frdpd
+.SH SYNOPSIS
+.B frdp-authd
+.RB [ --pam-service " " name " | " --config " " path ]
+.BI --socket " absolute-path"
+.SH DESCRIPTION
+.B frdp-authd
+is the privileged authentication and account-policy broker used by
+.BR frdpd (8).
+It accepts only the bounded local IPC protocol, performs non-interactive PAM
+authentication and account checks, resolves the canonical POSIX identity, and
+issues a short-lived authorization token for the session manager.
+.SH OPTIONS
+.TP
+.BI --pam-service " name"
+Select the PAM service directly.
+.TP
+.BI --config " path"
+Read the PAM service from the FRDP configuration.  This is mutually exclusive
+with
+.BR --pam-service .
+.TP
+.BI --socket " absolute-path"
+Listen on the specified Unix-domain socket.
+.TP
+.B --help
+Show command usage.
+.SH ENVIRONMENT
+.TP
+.B FRDP_AUTH_TOKEN_KEY
+Path to the owner-only shared authorization-token key.
+.SH SEE ALSO
+.BR frdpd (8),
+.BR frdp-sesmand (8),
+.BR pam (8)

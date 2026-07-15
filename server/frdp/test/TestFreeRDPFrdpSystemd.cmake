@@ -4,6 +4,9 @@ endif()
 if(NOT DEFINED FRDP_SYSTEMD_UNIT_DIR)
   message(FATAL_ERROR "FRDP_SYSTEMD_UNIT_DIR is not set")
 endif()
+if(NOT DEFINED FRDP_MAN_SOURCE_DIR)
+  message(FATAL_ERROR "FRDP_MAN_SOURCE_DIR is not set")
+endif()
 if(NOT DEFINED FRDP_INSTALL_FULL_BINDIR)
   message(FATAL_ERROR "FRDP_INSTALL_FULL_BINDIR is not set")
 endif()
@@ -14,12 +17,17 @@ endif()
 set(test_root "${CMAKE_CURRENT_BINARY_DIR}/TestFreeRDPFrdpSystemd")
 set(systemd_dir "${test_root}/etc/systemd/system")
 set(install_bindir "${test_root}${FRDP_INSTALL_FULL_BINDIR}")
+set(install_manroot "${test_root}/usr/share/man")
+set(install_man8dir "${install_manroot}/man8")
 
 file(REMOVE_RECURSE "${test_root}")
-file(MAKE_DIRECTORY "${systemd_dir}" "${install_bindir}")
+file(MAKE_DIRECTORY "${systemd_dir}" "${install_bindir}" "${install_man8dir}")
 
 foreach(unit frdpd.service frdp-authd.service frdp-sesmand.service)
   file(COPY "${FRDP_SYSTEMD_UNIT_DIR}/${unit}" DESTINATION "${systemd_dir}")
+endforeach()
+foreach(manpage frdpd.8 frdp-authd.8 frdp-sesmand.8)
+  file(COPY "${FRDP_MAN_SOURCE_DIR}/${manpage}" DESTINATION "${install_man8dir}")
 endforeach()
 
 function(require_unit_line unit expected_line)
@@ -34,6 +42,7 @@ function(require_unit_line unit expected_line)
 endfunction()
 
 foreach(line
+        "Documentation=man:frdpd(8)"
         "Wants=frdp-authd.service frdp-sesmand.service"
         "PrivateTmp=true"
         "PrivateDevices=true"
@@ -62,6 +71,7 @@ require_unit_line(frdpd.service "Restart=on-failure")
 require_unit_line(frdpd.service "RestartSec=1s")
 
 foreach(line
+        "Documentation=man:frdp-authd(8)"
         "ExecStart=${FRDP_INSTALL_FULL_BINDIR}/frdp-authd --config ${FRDP_INSTALL_FULL_SYSCONFDIR}/frdpd/frdpd.toml --socket /run/frdp-authd/authd.sock"
         "RuntimeDirectory=frdp-authd"
         "RuntimeDirectoryMode=0755"
@@ -91,6 +101,7 @@ require_unit_line(frdp-authd.service "Restart=on-failure")
 require_unit_line(frdp-authd.service "RestartSec=1s")
 
 foreach(line
+        "Documentation=man:frdp-sesmand(8)"
         "ExecStart=${FRDP_INSTALL_FULL_BINDIR}/frdp-sesmand --config ${FRDP_INSTALL_FULL_SYSCONFDIR}/frdpd/frdpd.toml --socket /run/frdp-sesmand/sesmand.sock"
         "RuntimeDirectory=frdp-sesmand"
         "RuntimeDirectoryMode=0755"
@@ -125,7 +136,8 @@ foreach(binary frdpd frdp-authd frdp-sesmand)
 endforeach()
 
 execute_process(
-  COMMAND "${SYSTEMD_ANALYZE_EXECUTABLE}" verify "--root=${test_root}"
+  COMMAND "${CMAKE_COMMAND}" -E env "MANPATH=${install_manroot}"
+          "${SYSTEMD_ANALYZE_EXECUTABLE}" verify "--root=${test_root}"
           frdpd.service frdp-authd.service frdp-sesmand.service
   RESULT_VARIABLE result
   OUTPUT_VARIABLE stdout

@@ -1,4 +1,6 @@
 if(NOT DEFINED FRDP_BUILD_DIR OR NOT DEFINED FRDP_INSTALL_BINDIR OR
+   NOT DEFINED FRDP_INSTALL_MANDIR OR
+   NOT DEFINED FRDP_VERSION_FULL OR
    NOT DEFINED FRDP_NTLM_PROVISIONING_AVAILABLE)
   message(FATAL_ERROR "FRDP install test arguments are incomplete")
 endif()
@@ -10,6 +12,12 @@ if(IS_ABSOLUTE "${FRDP_INSTALL_BINDIR}")
 else()
   set(installed_hash
       "${install_root}${install_prefix}/${FRDP_INSTALL_BINDIR}/winpr-hash")
+endif()
+if(IS_ABSOLUTE "${FRDP_INSTALL_MANDIR}")
+  set(installed_man_root "${install_root}${FRDP_INSTALL_MANDIR}")
+else()
+  set(installed_man_root
+      "${install_root}${install_prefix}/${FRDP_INSTALL_MANDIR}")
 endif()
 file(REMOVE_RECURSE "${install_root}")
 execute_process(
@@ -27,8 +35,29 @@ if(FRDP_NTLM_PROVISIONING_AVAILABLE)
   if(NOT EXISTS "${installed_hash}")
     message(FATAL_ERROR "NTLM-enabled server component omitted winpr-hash")
   endif()
+  if(NOT EXISTS "${installed_man_root}/man1/winpr-hash.1")
+    message(FATAL_ERROR "NTLM-enabled server component omitted winpr-hash(1)")
+  endif()
+  file(READ "${installed_man_root}/man1/winpr-hash.1" installed_hash_manpage)
+  string(FIND "${installed_hash_manpage}" "\"${FRDP_VERSION_FULL}\"" hash_version_index)
+  if(hash_version_index EQUAL -1)
+    message(FATAL_ERROR "installed winpr-hash(1) omitted the build version")
+  endif()
 elseif(EXISTS "${installed_hash}")
   message(FATAL_ERROR "NTLM-disabled server component installed winpr-hash")
+elseif(EXISTS "${installed_man_root}/man1/winpr-hash.1")
+  message(FATAL_ERROR "NTLM-disabled server component installed winpr-hash(1)")
 endif()
+
+foreach(manpage
+        man1/frdpctl.1
+        man8/frdpd.8
+        man8/frdp-authd.8
+        man8/frdp-sesmand.8
+        man8/frdp-session-agent.8)
+  if(NOT EXISTS "${installed_man_root}/${manpage}")
+    message(FATAL_ERROR "server component omitted ${manpage}")
+  endif()
+endforeach()
 
 file(REMOVE_RECURSE "${install_root}")

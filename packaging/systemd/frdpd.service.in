@@ -1,5 +1,6 @@
 [Unit]
 Description=FreeRDP PAM/SSSD/NLA Server
+Documentation=man:frdpd(8)
 Wants=frdp-authd.service frdp-sesmand.service
 After=network.target frdp-authd.service frdp-sesmand.service
 

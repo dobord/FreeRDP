@@ -41,6 +41,14 @@ if(WITH_FRDPD_NTLM AND TARGET winpr-hash)
   installwithrpath(TARGETS winpr-hash
                    DESTINATION ${CMAKE_INSTALL_BINDIR}
                    COMPONENT server)
+  set(MANPAGE_NAME winpr-hash)
+  set(WINPR_VERSION_FULL "${FREERDP_VERSION_FULL}")
+  configure_file(${CMAKE_SOURCE_DIR}/winpr/tools/hash-cli/winpr-hash.1.in
+                 ${CMAKE_CURRENT_BINARY_DIR}/winpr-hash.1 @ONLY)
+  unset(MANPAGE_NAME)
+  unset(WINPR_VERSION_FULL)
+  install(FILES ${CMAKE_CURRENT_BINARY_DIR}/winpr-hash.1
+          DESTINATION ${CMAKE_INSTALL_MANDIR}/man1 COMPONENT server)
 endif()
 
 function(frdp_apply_strict_warnings target)
@@ -182,6 +190,16 @@ install(FILES config/frdpd.env DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/frdpd COM
 install(FILES pam/frdpd DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/pam.d COMPONENT server)
 install(FILES ${FRDP_SYSTEMD_UNIT_FILES}
         DESTINATION ${FRDP_SYSTEMD_SYSTEM_UNIT_DIR}
+        COMPONENT server)
+install(FILES man/frdpctl.1
+        DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
+        COMPONENT server)
+install(FILES
+        man/frdpd.8
+        man/frdp-authd.8
+        man/frdp-sesmand.8
+        man/frdp-session-agent.8
+        DESTINATION ${CMAKE_INSTALL_MANDIR}/man8
         COMPONENT server)
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/tmpfiles/frdpd.conf
         DESTINATION ${FRDP_TMPFILES_DIR}

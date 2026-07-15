@@ -1,0 +1,34 @@
+.TH FRDP-SESSION-AGENT 8 "July 2026" "FreeRDP" "System Administration"
+.SH NAME
+frdp-session-agent \- per-session X11 backend for frdp-sesmand
+.SH SYNOPSIS
+.B frdp-session-agent
+.SH DESCRIPTION
+.B frdp-session-agent
+is an internal per-user process started and supervised by
+.BR frdp-sesmand (8).
+It starts the configured Xvfb display, injects validated keyboard and pointer
+input, captures bounded framebuffer tiles, and handles the supported display
+and text-clipboard IPC operations.
+.PP
+It is not intended to be started manually.  Session identity, inherited
+control descriptors, display geometry, and readiness reporting are supplied by
+the session manager through a protected environment and inherited file
+descriptors.
+.SH ENVIRONMENT
+.TP
+.B FRDP_SESSION_ID
+Managed session identifier.
+.TP
+.B FRDP_CORRELATION_ID
+Audit correlation identifier.
+.TP
+.BR DISPLAY , " FRDP_DISPLAY"
+Allocated X11 display.
+.TP
+.B FRDP_GEOMETRY
+Xvfb screen geometry.
+.SH SEE ALSO
+.BR frdpd (8),
+.BR frdp-sesmand (8),
+.BR Xvfb (1)

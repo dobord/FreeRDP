@@ -1,0 +1,44 @@
+.TH FRDPCTL 1 "July 2026" "FreeRDP" "User Commands"
+.SH NAME
+frdpctl \- inspect and control FRDP managed sessions
+.SH SYNOPSIS
+.B frdpctl status
+.RI [ --socket " path" ]
+.br
+.B frdpctl list-sessions
+.RI [ --socket " path" ]
+.br
+.B frdpctl kill-session
+.I id
+.RI [ --socket " path" ]
+.br
+.B frdpctl reload
+.RI [ --socket " path" ]
+.SH DESCRIPTION
+.B frdpctl
+uses the local session-manager IPC endpoint to report service reachability,
+list managed sessions, close a named session, or reload supported session
+policy.
+.SH COMMANDS
+.TP
+.B status
+Report session-manager reachability and lifecycle-state counts.
+.TP
+.B list-sessions
+List session identifiers, users, displays, states, and agent process IDs.
+.TP
+.BI kill-session " id"
+Close the named managed session and its owned resources.
+.TP
+.B reload
+Reload the PAM service and resource-limit policy used for future sessions.
+Heartbeat policy is also reloaded and its schedule is reset for existing
+sessions.
+.SH OPTIONS
+.TP
+.BI --socket " path"
+Use an alternate session-manager socket.  The default is
+.IR /run/frdp-sesmand/sesmand.sock .
+.SH SEE ALSO
+.BR frdpd (8),
+.BR frdp-sesmand (8)

@@ -1,0 +1,97 @@
+.TH FRDPD 8 "July 2026" "FreeRDP" "System Administration"
+.SH NAME
+frdpd \- FreeRDP PAM/SSSD/NLA server
+.SH SYNOPSIS
+.B frdpd
+.RI [ options ]
+.PP
+.B frdpd
+.BI --pam-auth-test " user"
+.RI [ --domain " domain" ]
+.RI [ --service " service" ]
+.RI [ --rhost " host" ]
+.RI [ --domain-mode= plain|downlevel|upn|auto ]
+.SH DESCRIPTION
+.B frdpd
+accepts RDP connections using TLS and CredSSP/NLA.  In the normal service
+topology it delegates authentication and account checks to
+.BR frdp-authd (8)
+and managed session ownership to
+.BR frdp-sesmand (8).
+.PP
+The packaged service is deliberately not enabled or started until TLS, PAM or
+SSSD policy, and the NTLM SAM (when enabled) have been provisioned.
+.SH OPTIONS
+.TP
+.BI --config= path
+Load the server configuration before command-line overrides.
+.TP
+.BI --bind= address
+Override the configured listen address.
+.TP
+.BI --port= port
+Override the configured TCP port.
+.TP
+.BI --max-connections= count
+Limit concurrent accepted peers; zero means unlimited.
+.TP
+.BI --cert= path
+Override the TLS certificate path.
+.TP
+.BI --key= path
+Override the TLS private-key path.
+.TP
+.BI --pam-service= name
+Override the PAM service name.
+.TP
+.BI --auth-socket= path
+Override the authentication-broker socket.
+.TP
+.BI --session-socket= path
+Override the session-manager socket.
+.TP
+.BI --domain-mode= plain|downlevel|upn|auto
+Control how a separately supplied RDP domain is combined with the username
+before PAM authentication.  Plain keeps the username unchanged; downlevel
+uses DOMAIN\euser; UPN uses user@domain; and auto selects UPN when the domain
+contains a dot, otherwise downlevel.  Already-qualified usernames and users
+without a separate domain remain unchanged.
+.TP
+.B --allow-tls-fallback
+Advertise TLS in addition to NLA.  NLA remains preferred.
+.TP
+.BI --pam-auth-test " user"
+Prompt for a password and run a local PAM authentication and account-policy
+smoke test without starting the listener or helper topology.
+.TP
+.BI --domain " domain"
+Supply a separate domain to
+.BR --pam-auth-test .
+.TP
+.BI --service " service"
+Select the PAM service for
+.BR --pam-auth-test .
+Normal server startup uses
+.BR --pam-service .
+.TP
+.BI --rhost " host"
+Set the PAM remote-host item for
+.BR --pam-auth-test .
+.TP
+.BR -h , " --help"
+Show command usage.
+.SH FILES
+.TP
+.I /etc/frdpd/frdpd.toml
+Main server and helper configuration.
+.TP
+.I /etc/frdpd/frdpd.env
+Optional service arguments.
+.TP
+.I /etc/frdpd/ntlm.sam
+Owner-only password-equivalent NTLM proof store for an NTLM-enabled build.
+.SH SEE ALSO
+.BR frdp-authd (8),
+.BR frdp-sesmand (8),
+.BR frdpctl (1),
+.BR winpr-hash (1)

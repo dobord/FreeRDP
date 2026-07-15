@@ -87,6 +87,12 @@ a non-installed prototype in the current package.
 /usr/bin/frdp-session-agent
 /usr/bin/frdpctl
 /usr/bin/winpr-hash
+%{_mandir}/man1/frdpctl.1*
+%{_mandir}/man1/winpr-hash.1*
+%{_mandir}/man8/frdpd.8*
+%{_mandir}/man8/frdp-authd.8*
+%{_mandir}/man8/frdp-sesmand.8*
+%{_mandir}/man8/frdp-session-agent.8*
 %dir %{_libdir}/frdpd
 %{_libdir}/frdpd/lib*.so*
 %dir %{_sysconfdir}/frdpd

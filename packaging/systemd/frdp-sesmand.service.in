@@ -1,5 +1,6 @@
 [Unit]
 Description=FreeRDP RDP Server Session Manager
+Documentation=man:frdp-sesmand(8)
 After=network.target
 
 [Service]

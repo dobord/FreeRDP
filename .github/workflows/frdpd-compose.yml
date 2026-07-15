@@ -144,6 +144,15 @@ jobs:
           fi
           grep -q "./usr/lib/$multiarch/frdpd/libwinpr3.so.3" \
             "$artifacts/package-files.txt"
+          for manual in \
+            usr/share/man/man1/frdpctl.1 \
+            usr/share/man/man1/winpr-hash.1 \
+            usr/share/man/man8/frdpd.8 \
+            usr/share/man/man8/frdp-authd.8 \
+            usr/share/man/man8/frdp-sesmand.8 \
+            usr/share/man/man8/frdp-session-agent.8; do
+            grep -Eq "[.]/${manual}([.]gz)?$" "$artifacts/package-files.txt"
+          done
           docker run --rm \
             -e FRDP_MULTIARCH="$multiarch" \
             -v "$deb_path:/tmp/frdpd.deb:ro" \
@@ -232,6 +241,15 @@ jobs:
              grep -Eq "$private_abi" "$artifacts/package-provides.txt"; then
             exit 1
           fi
+          for manual in \
+            usr/share/man/man1/frdpctl.1 \
+            usr/share/man/man1/winpr-hash.1 \
+            usr/share/man/man8/frdpd.8 \
+            usr/share/man/man8/frdp-authd.8 \
+            usr/share/man/man8/frdp-sesmand.8 \
+            usr/share/man/man8/frdp-session-agent.8; do
+            grep -Eq "^/${manual}([.]gz)?$" "$artifacts/package-files.txt"
+          done
           dnf -y install "$rpm_path"
           rpm -V frdpd
           : > "$artifacts/runtime-linkage.txt"

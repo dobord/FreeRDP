@@ -1,5 +1,6 @@
 [Unit]
 Description=FreeRDP RDP Server Authentication Broker
+Documentation=man:frdp-authd(8)
 After=network.target
 
 [Service]

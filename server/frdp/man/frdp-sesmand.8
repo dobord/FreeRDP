@@ -1,0 +1,49 @@
+.TH FRDP-SESMAND 8 "July 2026" "FreeRDP" "System Administration"
+.SH NAME
+frdp-sesmand \- managed PAM session service for frdpd
+.SH SYNOPSIS
+.B frdp-sesmand
+.RB [ --pam-service " " name " | " --config " " path ]
+.BI --socket " absolute-path"
+.PP
+.B frdp-sesmand
+.BI --pam-service " name"
+.BI --open-session " user"
+.SH DESCRIPTION
+.B frdp-sesmand
+verifies authorization tokens from
+.BR frdp-authd (8),
+owns PAM session handles, starts per-user
+.BR frdp-session-agent (8)
+processes, and exposes session list, detach, reconnect, close, and reload
+operations over a local Unix-domain socket.
+.SH OPTIONS
+.TP
+.BI --pam-service " name"
+Select the PAM service directly.
+.TP
+.BI --config " path"
+Read PAM, resource-limit, and heartbeat policy from the FRDP configuration.
+.TP
+.BI --socket " absolute-path"
+Listen on the specified Unix-domain socket.
+.TP
+.BI --open-session " user"
+Run the standalone development session path.  This requires
+.B FRDP_SESMAND_ALLOW_STANDALONE=1
+and is not the normal service topology.
+.TP
+.B --help
+Show command usage.
+.SH ENVIRONMENT
+.TP
+.B FRDP_AUTH_TOKEN_KEY
+Path to the owner-only shared authorization-token key.
+.TP
+.B FRDP_SESMAND_ALLOW_STANDALONE
+Set to 1 to permit the explicit development-only standalone path.
+.SH SEE ALSO
+.BR frdpd (8),
+.BR frdp-authd (8),
+.BR frdp-session-agent (8),
+.BR frdpctl (1)

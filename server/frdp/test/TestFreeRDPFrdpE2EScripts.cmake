@@ -423,6 +423,7 @@ foreach(expected
         "TestFreeRDPFrdpDebianMaintscripts.sh"
         "\"$artifacts/control/postrm\""
         "forbidden='(^|, )(libavcodec|libavformat|libavutil|libswscale|liburiparser|libxkbfile|libfreerdp|libwinpr)'"
+        "grep -Eq \"[.]/\${manual}([.]gz)?$\" \"$artifacts/package-files.txt\""
         "ubuntu:24.04 bash -lc"
         "dpkg -V frdpd"
         "test ! -e \"/etc/systemd/system/multi-user.target.wants/$unit\""
@@ -480,6 +481,7 @@ foreach(expected
         "rpm -V frdpd"
         "rpm -qp --provides \"$rpm_path\""
         "private_abi='^(libfreerdp3|libfreerdp-server3|libwinpr3|libwinpr-tools3)"
+        "grep -Eq \"^/\${manual}([.]gz)?$\" \"$artifacts/package-files.txt\""
         "grep -q '/lib64/frdpd/libwinpr3.so.3'"
         "grep -q '/lib64/frdpd/libfreerdp3.so.3'")
   expect_workflow_job_contains("rpm" "fuzz" "${expected}")
@@ -585,6 +587,12 @@ foreach(expected
         "%cmake_install --component libraries"
         "%{_libdir}/frdpd/lib*.so*"
         "/usr/bin/winpr-hash"
+        "%{_mandir}/man1/frdpctl.1*"
+        "%{_mandir}/man1/winpr-hash.1*"
+        "%{_mandir}/man8/frdpd.8*"
+        "%{_mandir}/man8/frdp-authd.8*"
+        "%{_mandir}/man8/frdp-sesmand.8*"
+        "%{_mandir}/man8/frdp-session-agent.8*"
         "%{_datadir}/frdpd/monitoring/frdpd-grafana-dashboard.json")
   expect_contains("${frdp_rpm_spec}" "${expected}" "FRDP RPM spec")
 endforeach()
