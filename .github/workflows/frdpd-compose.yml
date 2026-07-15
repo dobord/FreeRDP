@@ -188,9 +188,11 @@ jobs:
             '
           server/frdp/test/TestFreeRDPFrdpDebianLifecycle.sh "$deb_path" |
             tee "$artifacts/systemd-lifecycle.txt"
-          grep -Fxq "auth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,upgrade,rollback" \
+          grep -Fxq "auth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback" \
             "$artifacts/systemd-lifecycle.txt"
           grep -Fxq "active_helper_crash=frdp-sesmand" \
+            "$artifacts/systemd-lifecycle.txt"
+          grep -Fxq "inflight_helper_crash=frdp-authd" \
             "$artifacts/systemd-lifecycle.txt"
           grep -Fxq "helper_outage=frdp-authd,frdp-sesmand" \
             "$artifacts/systemd-lifecycle.txt"

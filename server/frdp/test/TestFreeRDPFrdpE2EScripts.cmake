@@ -63,10 +63,19 @@ foreach(expected
         "run_session_smoke base"
         "run_session_smoke upgrade"
         "run_session_smoke rollback"
-        "auth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,upgrade,rollback"
+        "auth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback"
         "active_helper_crash=frdp-sesmand"
+        "inflight_helper_crash=frdp-authd"
         "helper_outage=frdp-authd,frdp-sesmand"
         "assert_sesmand_active_session_recovery"
+        "assert_authd_inflight_recovery"
+        "pam_exec.so quiet"
+        "pam-delay-entered"
+        "kill -0 \"\$delay_pid\""
+        "! kill -0 \"\$delay_pid\""
+        "systemctl kill --signal=SIGKILL --kill-who=main frdp-authd.service"
+        "broker_error=unable to receive auth broker response"
+        "run_session_smoke post-authd-inflight-crash"
         "assert_helper_outage_recovery"
         "run_failed_auth_only"
         "systemctl stop \"\$unit\""
@@ -108,9 +117,9 @@ endif()
 string(REGEX MATCHALL "assert_real_services" lifecycle_assertions
              "${debian_lifecycle}")
 list(LENGTH lifecycle_assertions lifecycle_assertion_count)
-if(NOT lifecycle_assertion_count EQUAL 6)
+if(NOT lifecycle_assertion_count EQUAL 7)
   message(FATAL_ERROR
-          "Debian lifecycle test must define and invoke real-service checks at start, post-crash, post-outage, upgrade, and rollback")
+          "Debian lifecycle test must define and invoke real-service checks at start, post-crash, post-outage, post-inflight-crash, upgrade, and rollback")
 endif()
 foreach(forbidden
         "ExecStart="
@@ -455,8 +464,9 @@ foreach(expected
         "frdpd|frdp-authd|frdp-sesmand) exit 1"
         "TestFreeRDPFrdpDebianLifecycle.sh \"$deb_path\""
         "tee \"$artifacts/systemd-lifecycle.txt\""
-        "auth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,upgrade,rollback"
+        "auth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback"
         "active_helper_crash=frdp-sesmand"
+        "inflight_helper_crash=frdp-authd"
         "helper_outage=frdp-authd,frdp-sesmand"
         "active_transition=upgrade,rollback"
         "grep -q \"/lib/$FRDP_MULTIARCH/frdpd/libwinpr3.so.3\""

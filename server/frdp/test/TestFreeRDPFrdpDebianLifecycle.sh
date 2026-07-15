@@ -374,6 +374,116 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     run_session_smoke post-sesmand-crash
   }
 
+  assert_authd_inflight_recovery() {
+    local auth_only_arg client_pid delay_pid help_output i journal_cursor
+    local new_invocation new_pid new_socket_inode old_invocation old_pid old_socket_inode
+    local status
+    local artifacts=/tmp/lifecycle-authd-inflight-crash
+    local marker=/run/frdp-authd/pam-delay-entered
+    local pam_backup=/tmp/frdpd-pam-before-inflight-crash
+    local pam_delay=/usr/local/libexec/frdp-pam-delay
+
+    mkdir -p "$artifacts" /usr/local/libexec
+    help_output=$(xfreerdp3 /help 2>&1 || true)
+    if grep -q "/auth-only" <<< "$help_output"; then
+      auth_only_arg=/auth-only
+    else
+      grep -q "+auth-only" <<< "$help_output"
+      auth_only_arg=+auth-only
+    fi
+    cp --preserve=mode,ownership,timestamps /etc/pam.d/frdpd "$pam_backup"
+    printf "%s\n" "#!/bin/sh" "set -eu" \
+      "echo \"\$\$\" > /run/frdp-authd/pam-delay-entered" \
+      "sleep 30" > "$pam_delay"
+    chmod 0755 "$pam_delay"
+    {
+      printf "%s\n" "auth optional pam_exec.so quiet $pam_delay"
+      cat "$pam_backup"
+    } > /etc/pam.d/frdpd
+    rm -f "$marker"
+
+    old_pid=$(systemctl show --property=MainPID --value frdp-authd.service)
+    old_invocation=$(systemctl show --property=InvocationID --value frdp-authd.service)
+    old_socket_inode=$(stat -c %i /run/frdp-authd/authd.sock)
+    journal_cursor=$(journalctl -u frdpd.service -n 1 --show-cursor --no-pager | \
+      sed -n "s/^-- cursor: //p")
+    test "$old_pid" -gt 1
+    test -n "$old_invocation"
+    test -n "$journal_cursor"
+
+    (
+      if timeout 20 xvfb-run -a xfreerdp3 \
+           /v:127.0.0.1:3389 /u:lifecycle /p:RdpPassw0rd! /cert:ignore /sec:nla \
+           /size:800x600 /bpp:24 /audio-mode:2 /network:modem \
+           -gfx -disp -dynamic-resolution -clipboard -heartbeat -multitransport \
+           -auto-reconnect /log-level:INFO "$auth_only_arg" \
+           > "$artifacts/client.log" 2>&1; then
+        status=0
+      else
+        status=$?
+      fi
+      printf "%s\n" "$status" > "$artifacts/client.status"
+    ) &
+    client_pid=$!
+    for i in $(seq 1 100); do
+      if [[ -f "$marker" ]]; then
+        break
+      fi
+      kill -0 "$client_pid"
+      sleep 0.1
+    done
+    test -f "$marker"
+    delay_pid=$(cat "$marker")
+    [[ "$delay_pid" =~ ^[0-9]+$ ]]
+    test "$delay_pid" -gt 1
+    kill -0 "$delay_pid"
+    kill -0 "$client_pid"
+    test "$(systemctl show --property=MainPID --value frdp-authd.service)" = "$old_pid"
+
+    systemctl kill --signal=SIGKILL --kill-who=main frdp-authd.service
+    cp --preserve=mode,ownership,timestamps "$pam_backup" /etc/pam.d/frdpd
+    rm -f "$pam_delay" "$marker"
+    wait "$client_pid"
+    status=$(cat "$artifacts/client.status")
+    case "$status" in
+      0|124|125|126|127) return 1 ;;
+    esac
+    grep -Fq "ERRCONNECT_CONNECT_TRANSPORT_FAILED" "$artifacts/client.log"
+    journalctl --sync
+    journalctl -u frdpd.service --after-cursor "$journal_cursor" --no-pager \
+      > "$artifacts/server.log"
+    grep -Fq "broker_error=unable to receive auth broker response" "$artifacts/server.log"
+
+    new_pid=
+    new_socket_inode=
+    for i in $(seq 1 100); do
+      new_pid=$(systemctl show --property=MainPID --value frdp-authd.service)
+      if systemctl --quiet is-active frdp-authd.service &&
+         [[ "$new_pid" =~ ^[0-9]+$ ]] && (( new_pid > 1 )) &&
+         [[ "$new_pid" != "$old_pid" ]] && [[ -S /run/frdp-authd/authd.sock ]]; then
+        new_socket_inode=$(stat -c %i /run/frdp-authd/authd.sock)
+        if [[ "$new_socket_inode" != "$old_socket_inode" ]]; then
+          break
+        fi
+      fi
+      sleep 0.1
+    done
+    test "$new_pid" != "$old_pid"
+    test -n "$new_socket_inode"
+    test "$new_socket_inode" != "$old_socket_inode"
+    new_invocation=$(systemctl show --property=InvocationID --value frdp-authd.service)
+    test -n "$new_invocation"
+    test "$new_invocation" != "$old_invocation"
+    ! kill -0 "$delay_pid" 2>/dev/null
+    test "$(sha256sum /etc/pam.d/frdpd | cut -d" " -f1)" = "$pam_hash"
+    frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
+      > "$artifacts/session-list.txt"
+    grep -Fxq "No active sessions" "$artifacts/session-list.txt"
+    test -z "$(find /run/frdp-sesmand -mindepth 1 ! -name sesmand.sock -print -quit)"
+    assert_real_services
+    run_session_smoke post-authd-inflight-crash
+  }
+
   echo "stage=install"
   apt-get update -qq
   apt-get install -qq -y /tmp/frdpd-base.deb
@@ -415,6 +525,8 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
   assert_helper_outage_recovery frdp-authd.service /run/frdp-authd/authd.sock authd-outage
   echo "stage=sesmand-outage"
   assert_helper_outage_recovery frdp-sesmand.service /run/frdp-sesmand/sesmand.sock sesmand-outage
+  echo "stage=authd-inflight-crash"
+  assert_authd_inflight_recovery
 
   env_hash=$(sha256sum /etc/frdpd/frdpd.env | cut -d" " -f1)
   printf "%s\n" "# lifecycle-preserved" "FRDPD_ARGS=" > /etc/frdpd/frdpd.env
@@ -507,6 +619,6 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     "$secret_hashes"
   rm -rf /etc/frdpd
 
-  printf "base=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,upgrade,rollback\nactive_helper_crash=frdp-sesmand\nhelper_outage=frdp-authd,frdp-sesmand\nactive_transition=upgrade,rollback\nresult=pass\n" \
+  printf "base=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback\nactive_helper_crash=frdp-sesmand\ninflight_helper_crash=frdp-authd\nhelper_outage=frdp-authd,frdp-sesmand\nactive_transition=upgrade,rollback\nresult=pass\n" \
     "$base_version" "$upgrade_version" "$base_version"
 '
