@@ -133,6 +133,113 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
       /tmp/rdp-session-smoke.sh
   }
 
+  run_failed_auth_only() {
+    local auth_only_arg client_marker help_output journal_cursor server_marker
+    local stage=$1 status=0
+
+    help_output=$(xfreerdp3 /help 2>&1 || true)
+    if grep -q "/auth-only" <<< "$help_output"; then
+      auth_only_arg=/auth-only
+    else
+      grep -q "+auth-only" <<< "$help_output"
+      auth_only_arg=+auth-only
+    fi
+    mkdir -p "/tmp/lifecycle-outage-$stage"
+    journal_cursor=$(journalctl -u frdpd.service -n 1 --show-cursor --no-pager | \
+      sed -n "s/^-- cursor: //p")
+    test -n "$journal_cursor"
+    if timeout 20 xvfb-run -a xfreerdp3 \
+         /v:127.0.0.1:3389 /u:lifecycle /p:RdpPassw0rd! /cert:ignore /sec:nla \
+         /size:800x600 /bpp:24 /audio-mode:2 /network:modem \
+         -gfx -disp -dynamic-resolution -clipboard -heartbeat -multitransport \
+         -auto-reconnect /log-level:INFO "$auth_only_arg" \
+         > "/tmp/lifecycle-outage-$stage/client.log" 2>&1; then
+      status=0
+    else
+      status=$?
+    fi
+    case "$status" in
+      0|124|125|126|127) return 1 ;;
+    esac
+    journalctl --sync
+    journalctl -u frdpd.service --after-cursor "$journal_cursor" --no-pager \
+      > "/tmp/lifecycle-outage-$stage/server.log"
+    case "$stage" in
+      authd-outage-*)
+        client_marker="ERRCONNECT_CONNECT_TRANSPORT_FAILED"
+        server_marker="broker_error=unable to connect to auth broker"
+        ;;
+      sesmand-outage-*)
+        client_marker="ERRCONNECT_CONNECT_CANCELLED"
+        server_marker="session manager rejected login for lifecycle: IPC failure"
+        ;;
+      *) return 1 ;;
+    esac
+    grep -Fq "$client_marker" "/tmp/lifecycle-outage-$stage/client.log"
+    grep -Fq "$server_marker" "/tmp/lifecycle-outage-$stage/server.log"
+
+    if [[ -S /run/frdp-sesmand/sesmand.sock ]]; then
+      frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
+        > "/tmp/lifecycle-outage-$stage/session-list.txt"
+      grep -Fxq "No active sessions" \
+        "/tmp/lifecycle-outage-$stage/session-list.txt"
+      test -z "$(find /run/frdp-sesmand -mindepth 1 ! -name sesmand.sock -print -quit)"
+    else
+      test ! -e /run/frdp-sesmand
+    fi
+  }
+
+  assert_helper_outage_recovery() {
+    local i new_invocation new_pid new_socket_inode
+    local old_invocation old_pid old_socket_inode socket=$2 stage=$3 unit=$1
+
+    old_pid=$(systemctl show --property=MainPID --value "$unit")
+    old_invocation=$(systemctl show --property=InvocationID --value "$unit")
+    old_socket_inode=$(stat -c %i "$socket")
+    test "$old_pid" -gt 1
+    test -n "$old_invocation"
+
+    systemctl stop "$unit"
+    ! systemctl --quiet is-active "$unit"
+    test ! -S "$socket"
+    sleep 3
+    ! systemctl --quiet is-active "$unit"
+    test ! -S "$socket"
+    systemctl --quiet is-active frdpd.service
+    timeout 5 bash -c "</dev/tcp/127.0.0.1/3389"
+    run_failed_auth_only "${stage}-initial"
+    sleep 10
+    ! systemctl --quiet is-active "$unit"
+    test ! -S "$socket"
+    systemctl --quiet is-active frdpd.service
+    timeout 5 bash -c "</dev/tcp/127.0.0.1/3389"
+    run_failed_auth_only "${stage}-sustained"
+
+    systemctl start "$unit"
+    new_pid=
+    new_socket_inode=
+    for i in $(seq 1 50); do
+      new_pid=$(systemctl show --property=MainPID --value "$unit")
+      if systemctl --quiet is-active "$unit" &&
+         [[ "$new_pid" =~ ^[0-9]+$ ]] && (( new_pid > 1 )) &&
+         [[ "$new_pid" != "$old_pid" ]] && [[ -S "$socket" ]]; then
+        new_socket_inode=$(stat -c %i "$socket")
+        if [[ "$new_socket_inode" != "$old_socket_inode" ]]; then
+          break
+        fi
+      fi
+      sleep 0.1
+    done
+    test "$new_pid" != "$old_pid"
+    test -n "$new_socket_inode"
+    test "$new_socket_inode" != "$old_socket_inode"
+    new_invocation=$(systemctl show --property=InvocationID --value "$unit")
+    test -n "$new_invocation"
+    test "$new_invocation" != "$old_invocation"
+    assert_real_services
+    run_session_smoke "post-$stage"
+  }
+
   start_transition_session() {
     local stage=$1 i
 
@@ -304,6 +411,10 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
   run_session_smoke base
   echo "stage=active-sesmand-crash"
   assert_sesmand_active_session_recovery
+  echo "stage=authd-outage"
+  assert_helper_outage_recovery frdp-authd.service /run/frdp-authd/authd.sock authd-outage
+  echo "stage=sesmand-outage"
+  assert_helper_outage_recovery frdp-sesmand.service /run/frdp-sesmand/sesmand.sock sesmand-outage
 
   env_hash=$(sha256sum /etc/frdpd/frdpd.env | cut -d" " -f1)
   printf "%s\n" "# lifecycle-preserved" "FRDPD_ARGS=" > /etc/frdpd/frdpd.env
@@ -396,6 +507,6 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     "$secret_hashes"
   rm -rf /etc/frdpd
 
-  printf "base=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,upgrade,rollback\nactive_helper_crash=frdp-sesmand\nactive_transition=upgrade,rollback\nresult=pass\n" \
+  printf "base=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,upgrade,rollback\nactive_helper_crash=frdp-sesmand\nhelper_outage=frdp-authd,frdp-sesmand\nactive_transition=upgrade,rollback\nresult=pass\n" \
     "$base_version" "$upgrade_version" "$base_version"
 '

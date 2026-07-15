@@ -63,9 +63,23 @@ foreach(expected
         "run_session_smoke base"
         "run_session_smoke upgrade"
         "run_session_smoke rollback"
-        "auth_smoke=base,post-sesmand-crash,upgrade,rollback"
+        "auth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,upgrade,rollback"
         "active_helper_crash=frdp-sesmand"
+        "helper_outage=frdp-authd,frdp-sesmand"
         "assert_sesmand_active_session_recovery"
+        "assert_helper_outage_recovery"
+        "run_failed_auth_only"
+        "systemctl stop \"\$unit\""
+        "run_failed_auth_only \"\${stage}-initial\""
+        "run_failed_auth_only \"\${stage}-sustained\""
+        "sleep 10"
+        "0|124|125|126|127) return 1"
+        "ERRCONNECT_CONNECT_TRANSPORT_FAILED"
+        "ERRCONNECT_CONNECT_CANCELLED"
+        "broker_error=unable to connect to auth broker"
+        "session manager rejected login for lifecycle: IPC failure"
+        "journalctl -u frdpd.service --after-cursor"
+        "run_session_smoke \"post-\$stage\""
         "systemctl kill --signal=SIGKILL --kill-who=main frdp-sesmand.service"
         "new_socket_inode"
         "run_session_smoke post-sesmand-crash"
@@ -94,9 +108,9 @@ endif()
 string(REGEX MATCHALL "assert_real_services" lifecycle_assertions
              "${debian_lifecycle}")
 list(LENGTH lifecycle_assertions lifecycle_assertion_count)
-if(NOT lifecycle_assertion_count EQUAL 5)
+if(NOT lifecycle_assertion_count EQUAL 6)
   message(FATAL_ERROR
-          "Debian lifecycle test must define and invoke real-service checks at start, post-crash, upgrade, and rollback")
+          "Debian lifecycle test must define and invoke real-service checks at start, post-crash, post-outage, upgrade, and rollback")
 endif()
 foreach(forbidden
         "ExecStart="
@@ -441,8 +455,9 @@ foreach(expected
         "frdpd|frdp-authd|frdp-sesmand) exit 1"
         "TestFreeRDPFrdpDebianLifecycle.sh \"$deb_path\""
         "tee \"$artifacts/systemd-lifecycle.txt\""
-        "auth_smoke=base,post-sesmand-crash,upgrade,rollback"
+        "auth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,upgrade,rollback"
         "active_helper_crash=frdp-sesmand"
+        "helper_outage=frdp-authd,frdp-sesmand"
         "active_transition=upgrade,rollback"
         "grep -q \"/lib/$FRDP_MULTIARCH/frdpd/libwinpr3.so.3\""
         "grep -q \"/lib/$FRDP_MULTIARCH/frdpd/libfreerdp3.so.3\""
