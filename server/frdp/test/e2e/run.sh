@@ -177,6 +177,7 @@ validate_rdp_auth_artifacts()
 	local server_id server_log server_env test_user deny_user accepted rejected evidence
 	local total_accepted total_rejected
 	local ntlm_proof_rejected wrong_password_rejected denied_user_rejected
+	local keytab_rollover old_kvno new_kvno
 	local expected_accepted=3
 	local provider_result=
 
@@ -256,8 +257,32 @@ validate_rdp_auth_artifacts()
 		fi
 	fi
 	if [[ $profile == freeipa ]]; then
+		keytab_rollover="$artifacts/freeipa/freeipa-keytab-rollover.txt"
+		if [[ ! -s $keytab_rollover ]]; then
+			printf 'profile freeipa is missing keytab rollover evidence\n' >&2
+			return 1
+		fi
+		for evidence in \
+			'principal=host/frdpd.ipa.test@IPA.TEST' \
+			'old_key_rejected=pass' \
+			'new_key_accepted=pass' \
+			'post_rollover_pam_sssd_rdp=pass'; do
+			if ! grep -Fxq "$evidence" "$keytab_rollover"; then
+				printf 'profile freeipa is missing keytab rollover evidence: %s\n' \
+					"$evidence" >&2
+				return 1
+			fi
+		done
+		old_kvno=$(sed -n 's/^old_kvno=//p' "$keytab_rollover")
+		new_kvno=$(sed -n 's/^new_kvno=//p' "$keytab_rollover")
+		if [[ ! $old_kvno =~ ^[1-9][0-9]*$ || ! $new_kvno =~ ^[1-9][0-9]*$ ]] ||
+			((new_kvno <= old_kvno)); then
+			printf 'profile freeipa keytab rollover did not increase the KVNO\n' >&2
+			return 1
+		fi
 		for evidence in \
 			'FreeIPA host enrollment, keytab validation, and HBAC allow/deny checks passed' \
+			'FreeIPA host keytab rollover passed for host/frdpd.ipa.test@IPA.TEST KVNO' \
 			'Access granted by HBAC rule [frdpd-allow]' \
 			'Access denied by HBAC rules'; do
 			if ! grep -Fq "$evidence" "$server_log"; then

@@ -26,6 +26,16 @@ chmod 0777 "$FRDP_ARTIFACT_DIR/provider-sesmand-crash" \
 
 bash /opt/frdp-e2e/scripts/rdp-probe.sh
 
+if [[ $FRDP_IDENTITY_PROVIDER == freeipa ]]; then
+	rollover_result="$FRDP_E2E_CONTROL_DIR/keytab-rollover-result"
+	[[ -s $rollover_result ]] || {
+		printf 'FreeIPA keytab rollover result is missing\n' >&2
+		exit 1
+	}
+	install -m 0644 "$rollover_result" "$FRDP_ARTIFACT_DIR/freeipa-keytab-rollover.txt"
+	printf 'post_rollover_pam_sssd_rdp=pass\n' >>"$FRDP_ARTIFACT_DIR/freeipa-keytab-rollover.txt"
+fi
+
 : >"$FRDP_E2E_CONTROL_DIR/arm-sesmand-crash"
 FRDP_ARTIFACT_DIR="$FRDP_ARTIFACT_DIR/provider-sesmand-crash" \
 	FRDP_SESSION_EXPECT_MANAGER_CRASH=1 \

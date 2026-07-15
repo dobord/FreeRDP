@@ -13,7 +13,9 @@ FRDP_AUTH_SOCKET=${FRDP_AUTH_SOCKET:-/run/frdp-authd/authd.sock}
 FRDP_SESSION_SOCKET=${FRDP_SESSION_SOCKET:-/run/frdp-sesmand/sesmand.sock}
 FRDP_CONFIG=${FRDP_CONFIG:-/etc/frdpd/frdpd.toml}
 FRDP_E2E_SESMAND_CRASH_RECOVERY=${FRDP_E2E_SESMAND_CRASH_RECOVERY:-0}
+FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER=${FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER:-0}
 FRDP_E2E_CONTROL_DIR=${FRDP_E2E_CONTROL_DIR:-/run/frdp-e2e-control}
+FRDP_E2E_KEYTAB_DIR=${FRDP_E2E_KEYTAB_DIR:-/run/frdp-e2e-keytab}
 
 children=()
 stopping=0
@@ -119,6 +121,69 @@ start_sssd()
 		sleep 1
 	done
 	return 1
+}
+
+keytab_max_kvno()
+{
+	local keytab=$1
+	local principal=$2
+
+	klist -k "$keytab" | awk -v principal="$principal" \
+		'$1 ~ /^[0-9]+$/ && $2 == principal { if ($1 > max) max = $1; found = 1 }
+		 END { if (found) print max; else exit 1 }'
+}
+
+rotate_freeipa_keytab()
+{
+	local realm=$1
+	local host=$2
+	local principal="host/$host@$realm"
+	local old_kvno=
+	local new_kvno=
+	local request="$FRDP_E2E_KEYTAB_DIR/.keytab-rollover-request.$$"
+	local ready="$FRDP_E2E_KEYTAB_DIR/keytab-rollover-ready"
+	local next="$FRDP_E2E_KEYTAB_DIR/freeipa-keytab.next"
+	local ccache="FILE:/tmp/frdp-e2e-keytab-rollover.ccache"
+	local installed=/etc/krb5.keytab.rollover
+
+	old_kvno=$(keytab_max_kvno /etc/krb5.keytab "$principal") ||
+		fail "could not read the enrolled FreeIPA host key KVNO"
+	KRB5CCNAME=$ccache kinit -k -t /etc/krb5.keytab "$principal" ||
+		fail "enrolled FreeIPA host keytab could not obtain a ticket before rollover"
+	KRB5CCNAME=$ccache kdestroy >/dev/null 2>&1 || true
+	printf 'principal=%s\nold_kvno=%s\n' "$principal" "$old_kvno" >"$request"
+	mv -f "$request" "$FRDP_E2E_KEYTAB_DIR/keytab-rollover-request"
+
+	for ((i = 0; i < 180; i++)); do
+		[[ ! -f $FRDP_E2E_KEYTAB_DIR/keytab-rollover-failed ]] ||
+			fail "FreeIPA server rejected the host keytab rollover request"
+		[[ -f $ready && -s $next ]] && break
+		sleep 1
+	done
+	[[ -f $ready && -s $next ]] || fail "FreeIPA host keytab rollover timed out"
+	grep -Fxq "principal=$principal" "$ready" ||
+		fail "FreeIPA keytab rollover returned the wrong principal"
+	grep -Fxq "old_kvno=$old_kvno" "$ready" ||
+		fail "FreeIPA keytab rollover returned the wrong prior KVNO"
+	new_kvno=$(sed -n 's/^new_kvno=//p' "$ready")
+	if [[ ! $new_kvno =~ ^[1-9][0-9]*$ ]] || ((new_kvno <= old_kvno)); then
+		fail "FreeIPA keytab rollover did not increase the host key KVNO"
+	fi
+	[[ $(keytab_max_kvno "$next" "$principal") == "$new_kvno" ]] ||
+		fail "FreeIPA rollover keytab does not contain the announced KVNO"
+	if KRB5CCNAME=$ccache kinit -k -t /etc/krb5.keytab "$principal" >/dev/null 2>&1; then
+		KRB5CCNAME=$ccache kdestroy >/dev/null 2>&1 || true
+		fail "FreeIPA accepted the old host key after rollover"
+	fi
+	install -o root -g root -m 0600 "$next" "$installed"
+	mv -f "$installed" /etc/krb5.keytab
+	KRB5CCNAME=$ccache kinit -k -t /etc/krb5.keytab "$principal" ||
+		fail "FreeIPA rejected the rotated host keytab"
+	KRB5CCNAME=$ccache kdestroy >/dev/null 2>&1 || true
+	printf 'principal=%s\nold_kvno=%s\nnew_kvno=%s\nold_key_rejected=pass\nnew_key_accepted=pass\n' \
+		"$principal" "$old_kvno" "$new_kvno" \
+		>"$FRDP_E2E_CONTROL_DIR/keytab-rollover-result"
+	log "FreeIPA host keytab rollover passed for $principal KVNO $old_kvno -> $new_kvno"
 }
 
 wait_supplementary_group()
@@ -227,6 +292,9 @@ EOF
 	denied_checks=$(LC_ALL=C sssctl user-checks -a acct -s frdpd "$FRDP_DENY_USER" 2>&1) || true
 	grep -Fq 'pam_acct_mgmt: Permission denied' <<<"$denied_checks" ||
 		fail "FreeIPA HBAC did not deny the policy-test user"
+	if [[ $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER == 1 ]]; then
+		rotate_freeipa_keytab "$realm" "$host"
+	fi
 	log "FreeIPA host enrollment, keytab validation, and HBAC allow/deny checks passed"
 }
 
@@ -530,24 +598,37 @@ chmod 0700 /run/frdp-authd /run/frdp-sesmand /run/frdp-auth-token
 chmod 1777 /tmp /tmp/.X11-unix
 rm -f "$FRDP_AUTH_SOCKET" "$FRDP_SESSION_SOCKET"
 
-log "configuring identity provider: $FRDP_IDENTITY_PROVIDER"
-configure_identity
-generate_tls_identity
-generate_ntlm_test_sam
-
 if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY != 0 && $FRDP_E2E_SESMAND_CRASH_RECOVERY != 1 ]]; then
 	fail "FRDP_E2E_SESMAND_CRASH_RECOVERY must be 0 or 1"
+fi
+if [[ $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER != 0 && $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER != 1 ]]; then
+	fail "FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER must be 0 or 1"
+fi
+if [[ $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER == 1 && $FRDP_IDENTITY_PROVIDER != freeipa ]]; then
+	fail "keytab rollover requires the FreeIPA provider profile"
 fi
 if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 && $FRDP_IDENTITY_PROVIDER != samba &&
 	$FRDP_IDENTITY_PROVIDER != freeipa ]]; then
 	fail "frdp-sesmand crash recovery injection requires a Samba or FreeIPA provider profile"
 fi
+if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 || $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER == 1 ]]; then
+	mkdir -p "$FRDP_E2E_CONTROL_DIR"
+	rm -f "$FRDP_E2E_CONTROL_DIR"/*
+fi
+if [[ $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER == 1 ]]; then
+	mkdir -p "$FRDP_E2E_KEYTAB_DIR"
+	chmod 0700 "$FRDP_E2E_KEYTAB_DIR"
+	rm -f "$FRDP_E2E_KEYTAB_DIR"/*
+fi
+
+log "configuring identity provider: $FRDP_IDENTITY_PROVIDER"
+configure_identity
+generate_tls_identity
+generate_ntlm_test_sam
 
 frdp-authd --config "$FRDP_CONFIG" --socket "$FRDP_AUTH_SOCKET" &
 children+=("$!")
 if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 ]]; then
-	mkdir -p "$FRDP_E2E_CONTROL_DIR"
-	rm -f "$FRDP_E2E_CONTROL_DIR"/*
 	run_sesmand_supervisor &
 	children+=("$!")
 else

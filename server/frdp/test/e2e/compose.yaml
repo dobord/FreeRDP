@@ -89,7 +89,9 @@ services:
       FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
       FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
       FRDP_FREEIPA_HOST: frdpd.ipa.test
+      FRDP_FREEIPA_REALM: IPA.TEST
       FRDP_FREEIPA_ENROLL_PASSWORD: ${FRDP_FREEIPA_ENROLL_PASSWORD:-IpaEnrollPassw0rd!}
+      FRDP_E2E_KEYTAB_DIR: /frdp-e2e-keytab
     command:
       - ipa-server-install
       - -U
@@ -107,6 +109,7 @@ services:
       - /tmp
     volumes:
       - freeipa-data:/data
+      - freeipa-keytab:/frdp-e2e-keytab
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
     healthcheck:
       test: ["CMD", "/usr/local/sbin/frdp-e2e-freeipa-ready"]
@@ -140,6 +143,8 @@ services:
       FRDP_FREEIPA_HOST: frdpd.ipa.test
       FRDP_FREEIPA_ENROLL_PASSWORD: ${FRDP_FREEIPA_ENROLL_PASSWORD:-IpaEnrollPassw0rd!}
       FRDP_E2E_SESMAND_CRASH_RECOVERY: 1
+      FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER: 1
+      FRDP_E2E_KEYTAB_DIR: /run/frdp-e2e-keytab
       FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
       FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
       FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
@@ -153,6 +158,7 @@ services:
       - freeipa-sesmand:/run/frdp-sesmand
       - freeipa-x11:/tmp/.X11-unix
       - freeipa-control:/run/frdp-e2e-control
+      - freeipa-keytab:/run/frdp-e2e-keytab
     networks:
       frdp-e2e:
         ipv4_address: ${FRDP_FREEIPA_SERVER_IP:-172.31.56.31}
@@ -292,6 +298,7 @@ volumes:
   freeipa-sesmand:
   freeipa-x11:
   freeipa-control:
+  freeipa-keytab:
   samba-sesmand:
   samba-x11:
   samba-control:

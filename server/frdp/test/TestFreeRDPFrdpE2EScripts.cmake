@@ -49,6 +49,20 @@ foreach(script
   endif()
 endforeach()
 
+set(freeipa_rollover_test
+    "${FRDP_E2E_DIR}/../TestFreeRDPFrdpFreeIPAKeytabRollover.sh")
+expect_file("${freeipa_rollover_test}")
+execute_process(
+  COMMAND "${BASH_EXECUTABLE}" "${freeipa_rollover_test}"
+          "${FRDP_E2E_DIR}/scripts/freeipa-ready.sh"
+  RESULT_VARIABLE freeipa_rollover_result
+  OUTPUT_VARIABLE freeipa_rollover_stdout
+  ERROR_VARIABLE freeipa_rollover_stderr)
+if(NOT freeipa_rollover_result EQUAL 0)
+  message(FATAL_ERROR
+          "FreeIPA keytab rollover fault test failed: ${freeipa_rollover_stderr}\n${freeipa_rollover_stdout}")
+endif()
+
 set(debian_lifecycle_test
     "${FRDP_E2E_DIR}/../TestFreeRDPFrdpDebianLifecycle.sh")
 expect_file("${debian_lifecycle_test}")
@@ -198,6 +212,9 @@ foreach(expected
         "rdp-provider-recovery.sh"
         "samba-control:/run/frdp-e2e-control"
         "freeipa-control:/run/frdp-e2e-control"
+        "freeipa-keytab:/frdp-e2e-keytab"
+        "freeipa-keytab:/run/frdp-e2e-keytab"
+        "FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER: 1"
         "FRDP_FREEIPA_ENROLL_PASSWORD: \${FRDP_FREEIPA_ENROLL_PASSWORD:-IpaEnrollPassw0rd!}"
         "FRDP_DENY_LABEL: policy-denied"
         "WITH_FREEIPA_CLIENT: ON"
@@ -205,6 +222,18 @@ foreach(expected
         "grep -Fxq")
   expect_contains("${compose}" "${expected}" "E2E compose file")
 endforeach()
+
+string(FIND "${compose}" "  rdp-client-freeipa:" freeipa_client_start)
+string(FIND "${compose}" "  samba-dc:" samba_service_start)
+if(freeipa_client_start EQUAL -1 OR samba_service_start EQUAL -1 OR
+   samba_service_start LESS_EQUAL freeipa_client_start)
+  message(FATAL_ERROR "could not isolate the FreeIPA client Compose service")
+endif()
+math(EXPR freeipa_client_length "${samba_service_start} - ${freeipa_client_start}")
+string(SUBSTRING "${compose}" ${freeipa_client_start} ${freeipa_client_length}
+       freeipa_client_service)
+expect_not_contains("${freeipa_client_service}" "freeipa-keytab"
+                    "FreeIPA RDP client service")
 
 file(READ "${FRDP_E2E_DIR}/Dockerfile" frdp_dockerfile)
 foreach(expected
@@ -257,6 +286,11 @@ foreach(expected
         "access_provider = ipa"
         "krb5_validate = true"
         "host/$host@$realm"
+        "rotate_freeipa_keytab"
+        "FreeIPA accepted the old host key after rollover"
+        "FreeIPA rejected the rotated host keytab"
+        "old_key_rejected=pass"
+        "new_key_accepted=pass"
         "FreeIPA HBAC did not allow the test user"
         "pam_acct_mgmt: Permission denied"
         "FreeIPA HBAC did not deny the policy-test user")
@@ -266,6 +300,11 @@ endforeach()
 file(READ "${FRDP_E2E_DIR}/scripts/freeipa-ready.sh" freeipa_ready)
 foreach(expected
         "ipa host-add"
+        "ipa-getkeytab -p \"$principal\" -k \"$temporary\""
+        "new_kvno <= old_kvno"
+        "flock -n 9"
+        "keytab-rollover-in-progress"
+        "status != 0"
         "ipa hbacrule-add-user"
         "ipa hbacrule-add-host"
         "ipa hbacrule-add-service"
@@ -320,6 +359,9 @@ foreach(expected
         "one NTLM proof rejection and two denied-user PAM denials"
         "proof identity does not match the delegated credentials"
         "provider-recovery.txt"
+        "freeipa-keytab-rollover.txt"
+        "post_rollover_pam_sssd_rdp=pass"
+        "profile freeipa keytab rollover did not increase the KVNO"
         "active_session_crash=pass"
         "post_recovery_session=pass"
         "profile freeipa is missing joined-host evidence"
@@ -431,6 +473,9 @@ file(READ "${FRDP_E2E_DIR}/scripts/rdp-provider-recovery.sh"
      provider_recovery)
 foreach(expected
         "bash /opt/frdp-e2e/scripts/rdp-probe.sh"
+        "keytab-rollover-result"
+        "freeipa-keytab-rollover.txt"
+        "post_rollover_pam_sssd_rdp=pass"
         "arm-sesmand-crash"
         "FRDP_SESSION_EXPECT_MANAGER_CRASH=1"
         "provider-post-recovery"
