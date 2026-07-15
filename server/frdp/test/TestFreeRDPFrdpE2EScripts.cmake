@@ -26,6 +26,7 @@ foreach(script
         scripts/freeipa-ready.sh
         scripts/rdp-load-probe.sh
         scripts/rdp-probe.sh
+        scripts/rdp-provider-recovery.sh
         scripts/rdp-protocol-regression.sh
         scripts/rdp-session-smoke.sh
         scripts/samba-entrypoint.sh)
@@ -186,6 +187,9 @@ foreach(expected
         "profiles: [\"samba\"]"
         "profiles: [\"freeipa\"]"
         "FRDP_TEST_GROUP: \${FRDP_TEST_GROUP:-rdp-users}"
+        "FRDP_E2E_SESMAND_CRASH_RECOVERY: 1"
+        "rdp-provider-recovery.sh"
+        "samba-control:/run/frdp-e2e-control"
         "FRDP_FREEIPA_ENROLL_PASSWORD: \${FRDP_FREEIPA_ENROLL_PASSWORD:-IpaEnrollPassw0rd!}"
         "FRDP_DENY_LABEL: policy-denied"
         "WITH_FREEIPA_CLIENT: ON"
@@ -219,6 +223,19 @@ foreach(expected
         "SSSD resolved supplementary group"
         "SSSD did not resolve supplementary group")
   expect_contains("${frdpd_entrypoint}" "${expected}" "frdpd entrypoint")
+endforeach()
+
+foreach(expected
+        "FRDP_E2E_SESMAND_CRASH_RECOVERY"
+        "run_sesmand_supervisor"
+        "inject_sesmand_crash"
+        "sesmand-crash-triggered"
+        "kill -KILL \"\$old_pid\""
+        "new_inode != \"\$old_inode\""
+        "No active sessions"
+        "provider-backed frdp-sesmand recovery passed")
+  expect_contains("${frdpd_entrypoint}" "${expected}"
+                  "frdpd provider recovery entrypoint")
 endforeach()
 
 foreach(expected
@@ -286,9 +303,12 @@ foreach(expected
         "run_profile_once"
         "validate_rdp_auth_artifacts"
         "server-auth.log"
-        "expected 3 PAM accepts and 2 PAM denials"
+        "expected %s PAM accepts and 2 PAM denials"
         "one NTLM proof rejection and two denied-user PAM denials"
         "proof identity does not match the delegated credentials"
+        "provider-recovery.txt"
+        "active_session_crash=pass"
+        "post_recovery_session=pass"
         "profile freeipa is missing joined-host evidence"
         "Access granted by HBAC rule [frdpd-allow]"
         "Access denied by HBAC rules"
@@ -361,6 +381,7 @@ foreach(expected
         "FRDP_SESSION_TIMEOUT"
         "FRDP_SESSION_HOLD_SECONDS"
         "FRDP_SESSION_MINIMAL_CHANNELS"
+        "FRDP_SESSION_EXPECT_MANAGER_CRASH"
         "\"/audio-mode:2\""
         "\"/network:modem\""
         "RDP_ARGS+=(\"-disp\" \"-dynamic-resolution\" \"-clipboard\")"
@@ -384,10 +405,26 @@ foreach(expected
         "session_identity_is_exclusively_active"
         "process_is_running"
         "managed RDP session reattached with stable id/display/PID"
+        "sesmand-recovery"
+        "session manager endpoint identity was not replaced"
+        "manager crash closed and cleaned held session"
         "session-list-after-reconnect.txt"
         "frdpctl kill-session \"$session_id\" --socket"
         "managed RDP session was cleaned after explicit kill-session")
   expect_contains("${session_smoke}" "${expected}" "E2E session smoke script")
+endforeach()
+
+file(READ "${FRDP_E2E_DIR}/scripts/rdp-provider-recovery.sh"
+     provider_recovery)
+foreach(expected
+        "bash /opt/frdp-e2e/scripts/rdp-probe.sh"
+        "arm-sesmand-crash"
+        "FRDP_SESSION_EXPECT_MANAGER_CRASH=1"
+        "provider-post-recovery"
+        "provider=samba-ad-sssd"
+        "post_recovery_session=pass")
+  expect_contains("${provider_recovery}" "${expected}"
+                  "provider recovery probe")
 endforeach()
 
 file(READ "${frdp_repo_root}/.github/workflows/frdpd-compose.yml" frdp_workflow)

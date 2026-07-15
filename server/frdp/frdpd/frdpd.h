@@ -59,6 +59,7 @@ extern "C"
 		BOOL managed_session_open;
 		BOOL agent_input_warned;
 		BOOL agent_frame_warned;
+		UINT32 agent_frame_failures;
 		BOOL framebuffer_active;
 		BOOL framebuffer_output_suppressed;
 		UINT32 framebuffer_next_x;

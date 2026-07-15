@@ -64,6 +64,7 @@
 #define FRDPD_FRAME_INTERVAL_MS 50ULL
 #define FRDPD_FRAME_PUMP_BUDGET_MS 30ULL
 #define FRDPD_FRAME_IPC_TIMEOUT_US 100000
+#define FRDPD_FRAME_IPC_FAILURE_LIMIT 3U
 #define FRDPD_FRAME_HASH_OFFSET 1469598103934665603ULL
 #define FRDPD_FRAME_HASH_PRIME 1099511628211ULL
 #define FRDPD_NSC_COLOR_LOSS_LEVEL 1U
@@ -394,6 +395,7 @@ static void frdpd_reset_framebuffer_state(frdpdPeerContext* context)
 		return;
 	context->framebuffer_active = FALSE;
 	context->framebuffer_output_suppressed = FALSE;
+	context->agent_frame_failures = 0;
 	frdpd_invalidate_framebuffer_cache(context);
 	frdpd_reset_frame_encoder(context);
 }
@@ -813,9 +815,10 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 	const UINT64 pump_started = now;
 	char log_session_id[FRDPD_LOG_STRING_SIZE] = { 0 };
 
-	if (!client || !client->context || !context || !context->managed_session_open ||
-	    !context->framebuffer_active || context->framebuffer_output_suppressed ||
-	    (context->agent_socket[0] == '\0'))
+	if (!client || !client->context || !context ||
+	    !frdpd_frame_agent_should_probe(context->managed_session_open, context->framebuffer_active,
+	                                    context->framebuffer_output_suppressed,
+	                                    context->agent_socket[0] != '\0'))
 		return TRUE;
 	if ((context->framebuffer_last_tick != 0) &&
 	    (now - context->framebuffer_last_tick < FRDPD_FRAME_INTERVAL_MS))
@@ -859,6 +862,8 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 
 		if (!frdpd_receive_agent_frame(context, x, y, width, height, request_flags, &frame, &data))
 		{
+			const BOOL terminal = frdpd_frame_ipc_failure_is_terminal(
+			    &context->agent_frame_failures, FRDPD_FRAME_IPC_FAILURE_LIMIT);
 			if (!context->agent_frame_warned)
 			{
 				WLog_WARN(
@@ -867,6 +872,25 @@ static BOOL frdpd_pump_agent_framebuffer(freerdp_peer* client, frdpdPeerContext*
 				    frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)));
 				context->agent_frame_warned = TRUE;
 			}
+			if (terminal)
+			{
+				WLog_ERR(
+				    TAG,
+				    "correlation_id=%s closing session_id=%s after %" PRIu32
+				    " consecutive agent framebuffer IPC failures",
+				    context->correlation_id,
+				    frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)),
+				    context->agent_frame_failures);
+				return FALSE;
+			}
+			frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
+			return TRUE;
+		}
+		context->agent_frame_failures = 0;
+		if (context->framebuffer_output_suppressed)
+		{
+			free(data);
+			context->agent_frame_warned = FALSE;
 			frdpd_advance_frame_cursor(context, desktop_width, desktop_height);
 			return TRUE;
 		}

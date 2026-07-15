@@ -233,6 +233,7 @@ services:
       FRDP_AD_ADMIN_PASSWORD: ${FRDP_AD_ADMIN_PASSWORD:-SambaAdminPassw0rd!}
       FRDP_AD_HOST_FQDN: frdpd.ad.test
       FRDP_AD_COMPUTER_NAME: FRDPD
+      FRDP_E2E_SESMAND_CRASH_RECOVERY: 1
       FRDP_TEST_USER: ${FRDP_TEST_USER:-rdpuser}
       FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
       FRDP_TEST_GROUP: ${FRDP_TEST_GROUP:-rdp-users}
@@ -246,6 +247,7 @@ services:
     volumes:
       - samba-sesmand:/run/frdp-sesmand
       - samba-x11:/tmp/.X11-unix
+      - samba-control:/run/frdp-e2e-control
     networks:
       frdp-e2e:
         ipv4_address: ${FRDP_SAMBA_SERVER_IP:-172.31.56.32}
@@ -254,7 +256,7 @@ services:
   rdp-client-samba:
     <<: *frdp-image
     profiles: ["samba"]
-    entrypoint: ["bash", "/opt/frdp-e2e/scripts/rdp-probe.sh"]
+    entrypoint: ["bash", "/opt/frdp-e2e/scripts/rdp-provider-recovery.sh"]
     dns: ["${FRDP_AD_DC_IP:-172.31.56.20}"]
     extra_hosts:
       - "frdpd.ad.test:${FRDP_SAMBA_SERVER_IP:-172.31.56.32}"
@@ -272,6 +274,7 @@ services:
     volumes:
       - samba-sesmand:/run/frdp-sesmand:ro
       - samba-x11:/tmp/.X11-unix
+      - samba-control:/run/frdp-e2e-control
       - ${FRDP_E2E_ARTIFACTS:-./artifacts}/samba:/artifacts
     networks:
       frdp-e2e:
@@ -285,6 +288,7 @@ volumes:
   freeipa-x11:
   samba-sesmand:
   samba-x11:
+  samba-control:
 
 networks:
   frdp-e2e:

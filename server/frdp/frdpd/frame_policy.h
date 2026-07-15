@@ -23,4 +23,8 @@ int frdpd_frame_pump_budget_is_exhausted(uint64_t now_ms, uint64_t pump_started_
                                          uint32_t completed_tiles, uint32_t max_tiles,
                                          uint64_t budget_ms);
 
+int frdpd_frame_ipc_failure_is_terminal(uint32_t* consecutive_failures, uint32_t failure_limit);
+int frdpd_frame_agent_should_probe(int managed_session_open, int framebuffer_active,
+                                   int output_suppressed, int has_agent_socket);
+
 #endif /* FREERDP_SERVER_FRDPD_FRAME_POLICY_H */

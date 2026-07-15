@@ -71,3 +71,19 @@ int frdpd_frame_pump_budget_is_exhausted(uint64_t now_ms, uint64_t pump_started_
 		return 1;
 	return (now_ms - pump_started_ms) >= budget_ms;
 }
+
+int frdpd_frame_ipc_failure_is_terminal(uint32_t* consecutive_failures, uint32_t failure_limit)
+{
+	if (!consecutive_failures || (failure_limit == 0))
+		return 1;
+	if (*consecutive_failures < failure_limit)
+		(*consecutive_failures)++;
+	return *consecutive_failures >= failure_limit;
+}
+
+int frdpd_frame_agent_should_probe(int managed_session_open, int framebuffer_active,
+                                   int output_suppressed, int has_agent_socket)
+{
+	(void)output_suppressed;
+	return managed_session_open && framebuffer_active && has_agent_socket;
+}

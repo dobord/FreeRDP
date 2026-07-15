@@ -177,6 +177,7 @@ validate_rdp_auth_artifacts()
 	local server_id server_log server_env test_user deny_user accepted rejected evidence
 	local total_accepted total_rejected
 	local ntlm_proof_rejected wrong_password_rejected denied_user_rejected
+	local expected_accepted=3
 
 	server_id=$("${compose[@]}" --profile "$profile" ps -a -q "$server_service" 2>/dev/null || true)
 	if [[ -z $server_id || $server_id == *$'\n'* ]]; then
@@ -208,10 +209,14 @@ validate_rdp_auth_artifacts()
 		"$server_log" || true)
 	rejected=$((wrong_password_rejected + denied_user_rejected))
 	total_rejected=$(grep -c 'PAM rejected RDP login.*: denied ' "$server_log" || true)
-	if [[ $accepted -ne 3 || $total_accepted -ne 3 || $rejected -ne 2 ||
+	if [[ $profile == samba ]]; then
+		expected_accepted=6
+	fi
+	if [[ $accepted -ne $expected_accepted || $total_accepted -ne $expected_accepted ||
+		$rejected -ne 2 ||
 		$total_rejected -ne 2 ]]; then
-		printf 'profile %s expected 3 PAM accepts and 2 PAM denials, got %s and %s\n' \
-			"$profile" "$total_accepted" "$total_rejected" >&2
+		printf 'profile %s expected %s PAM accepts and 2 PAM denials, got %s and %s\n' \
+			"$profile" "$expected_accepted" "$total_accepted" "$total_rejected" >&2
 		return 1
 	fi
 	if [[ $ntlm_proof_rejected -ne 1 || $wrong_password_rejected -ne 0 ||
@@ -224,6 +229,24 @@ validate_rdp_auth_artifacts()
 		printf 'profile %s encountered an NTLM proof/delegated identity mismatch\n' \
 			"$profile" >&2
 		return 1
+	fi
+	if [[ $profile == samba ]]; then
+		for evidence in \
+			'provider=samba-ad-sssd' \
+			'helper=frdp-sesmand' \
+			'active_session_crash=pass' \
+			'post_recovery_session=pass'; do
+			if ! grep -Fxq "$evidence" "$artifacts/samba/provider-recovery.txt"; then
+				printf 'profile samba is missing provider recovery evidence: %s\n' \
+					"$evidence" >&2
+				return 1
+			fi
+		done
+		if ! grep -Fq 'provider-backed frdp-sesmand recovery passed for provider=samba' \
+			"$server_log"; then
+			printf 'profile samba is missing server-side helper recovery evidence\n' >&2
+			return 1
+		fi
 	fi
 	if [[ $profile == freeipa ]]; then
 		for evidence in \

@@ -9,6 +9,8 @@ FRDP_SESSION_SOCKET=${FRDP_SESSION_SOCKET:-/run/frdp-sesmand/sesmand.sock}
 FRDP_SESSION_TIMEOUT=${FRDP_SESSION_TIMEOUT:-60}
 FRDP_SESSION_HOLD_SECONDS=${FRDP_SESSION_HOLD_SECONDS:-5}
 FRDP_ARTIFACT_DIR=${FRDP_ARTIFACT_DIR:-/artifacts/session-smoke}
+FRDP_SESSION_EXPECT_MANAGER_CRASH=${FRDP_SESSION_EXPECT_MANAGER_CRASH:-0}
+FRDP_E2E_CONTROL_DIR=${FRDP_E2E_CONTROL_DIR:-/run/frdp-e2e-control}
 
 mkdir -p "$FRDP_ARTIFACT_DIR"
 
@@ -144,6 +146,8 @@ build_args()
 
 positive_integer "$FRDP_SESSION_TIMEOUT" || fail "FRDP_SESSION_TIMEOUT must be positive"
 positive_integer "$FRDP_SESSION_HOLD_SECONDS" || fail "FRDP_SESSION_HOLD_SECONDS must be positive"
+[[ $FRDP_SESSION_EXPECT_MANAGER_CRASH == 0 || $FRDP_SESSION_EXPECT_MANAGER_CRASH == 1 ]] ||
+	fail "FRDP_SESSION_EXPECT_MANAGER_CRASH must be 0 or 1"
 command -v Xvfb >/dev/null 2>&1 || fail "Xvfb executable was not found"
 command -v xdpyinfo >/dev/null 2>&1 || fail "xdpyinfo executable was not found"
 command -v xwd >/dev/null 2>&1 || fail "xwd executable was not found"
@@ -167,6 +171,8 @@ xvfb_pid=
 Xvfb "$display_name" -screen 0 1024x768x24 -nolisten tcp >"$FRDP_ARTIFACT_DIR/client-xvfb.log" 2>&1 &
 xvfb_pid=$!
 client_pid=
+# ShellCheck cannot infer that the EXIT trap invokes this function after the crash-mode exit.
+# shellcheck disable=SC2317
 cleanup()
 {
 	if [[ -n ${client_pid:-} ]]; then
@@ -233,6 +239,52 @@ frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" | tee "$FRDP_ARTIFACT_DIR/
 	fail "managed session $session_id did not open as active"
 [[ -n $open_display ]] || fail "managed session $session_id has no display"
 positive_integer "$open_pid" || fail "managed session $session_id has invalid agent PID '$open_pid'"
+if [[ $FRDP_SESSION_EXPECT_MANAGER_CRASH == 1 ]]; then
+	observed_file="$FRDP_E2E_CONTROL_DIR/client-session-observed"
+	printf 'session_id=%s\nagent_pid=%s\n' "$session_id" "$open_pid" >"${observed_file}.tmp"
+	mv -f "${observed_file}.tmp" "$observed_file"
+	recovery_file="$FRDP_E2E_CONTROL_DIR/sesmand-recovery"
+	for ((i = 0; i < FRDP_SESSION_TIMEOUT * 10; i++)); do
+		[[ ! -f $recovery_file ]] || break
+		process_is_running "$client_pid" || true
+		sleep 0.1
+	done
+	[[ -f $recovery_file ]] || fail "session manager crash recovery did not complete"
+	for key in session_id agent_pid old_pid new_pid old_inode new_inode result; do
+		count=$(grep -c "^${key}=" "$recovery_file" || true)
+		[[ $count -eq 1 ]] || fail "recovery result has an invalid $key field"
+	done
+	recovered_session_id=$(sed -n 's/^session_id=//p' "$recovery_file")
+	recovered_agent_pid=$(sed -n 's/^agent_pid=//p' "$recovery_file")
+	old_manager_pid=$(sed -n 's/^old_pid=//p' "$recovery_file")
+	new_manager_pid=$(sed -n 's/^new_pid=//p' "$recovery_file")
+	old_socket_inode=$(sed -n 's/^old_inode=//p' "$recovery_file")
+	new_socket_inode=$(sed -n 's/^new_inode=//p' "$recovery_file")
+	grep -Fxq 'result=pass' "$recovery_file" || fail "session manager recovery did not pass"
+	[[ $recovered_session_id == "$session_id" && $recovered_agent_pid == "$open_pid" ]] ||
+		fail "recovery result does not identify the held session"
+	positive_integer "$old_manager_pid" || fail "recovery result has an invalid old manager PID"
+	positive_integer "$new_manager_pid" || fail "recovery result has an invalid new manager PID"
+	positive_integer "$old_socket_inode" || fail "recovery result has an invalid old socket inode"
+	positive_integer "$new_socket_inode" || fail "recovery result has an invalid new socket inode"
+	[[ $new_manager_pid != "$old_manager_pid" && $new_socket_inode != "$old_socket_inode" ]] ||
+		fail "session manager endpoint identity was not replaced"
+	for ((i = 0; i < FRDP_SESSION_TIMEOUT * 10; i++)); do
+		process_is_running "$client_pid" || break
+		sleep 0.1
+	done
+	process_is_running "$client_pid" && fail "xfreerdp remained connected after session cleanup"
+	wait "$client_pid" 2>/dev/null || true
+	client_pid=
+	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
+		>"$FRDP_ARTIFACT_DIR/session-list-after-manager-crash.txt" 2>&1 ||
+		fail "replacement session manager is unreachable"
+	grep -Fxq 'No active sessions' "$FRDP_ARTIFACT_DIR/session-list-after-manager-crash.txt" ||
+		fail "replacement session manager retained stale session state"
+	log "manager crash closed and cleaned held session $session_id"
+	exit 0
+fi
+
 sleep "$FRDP_SESSION_HOLD_SECONDS"
 process_is_running "$client_pid" || fail "xfreerdp did not remain connected"
 frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \

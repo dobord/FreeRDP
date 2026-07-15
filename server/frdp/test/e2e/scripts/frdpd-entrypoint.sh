@@ -12,8 +12,11 @@ FRDP_SSSD_DEBUG_LEVEL=${FRDP_SSSD_DEBUG_LEVEL:-3}
 FRDP_AUTH_SOCKET=${FRDP_AUTH_SOCKET:-/run/frdp-authd/authd.sock}
 FRDP_SESSION_SOCKET=${FRDP_SESSION_SOCKET:-/run/frdp-sesmand/sesmand.sock}
 FRDP_CONFIG=${FRDP_CONFIG:-/etc/frdpd/frdpd.toml}
+FRDP_E2E_SESMAND_CRASH_RECOVERY=${FRDP_E2E_SESMAND_CRASH_RECOVERY:-0}
+FRDP_E2E_CONTROL_DIR=${FRDP_E2E_CONTROL_DIR:-/run/frdp-e2e-control}
 
 children=()
+auxiliary=()
 stopping=0
 
 log()
@@ -54,6 +57,27 @@ wait_socket()
 
 	for ((i = 0; i < attempts; i++)); do
 		[[ -S $path ]] && return 0
+		sleep 0.1
+	done
+	return 1
+}
+
+wait_replaced_socket()
+{
+	local path=$1
+	local pid=$2
+	local previous_inode=${3:-}
+	local inode
+
+	for ((i = 0; i < 100; i++)); do
+		kill -0 "$pid" 2>/dev/null || return 1
+		if [[ -S $path ]]; then
+			inode=$(stat -c %i "$path")
+			if [[ -z $previous_inode || $inode != "$previous_inode" ]]; then
+				printf '%s\n' "$inode"
+				return 0
+			fi
+		fi
 		sleep 0.1
 	done
 	return 1
@@ -339,6 +363,149 @@ generate_ntlm_test_sam()
 	chmod 0600 /etc/frdpd/ntlm.sam
 }
 
+publish_sesmand_state()
+{
+	local pid=$1
+	local inode=$2
+	local generation=$3
+	local temporary="$FRDP_E2E_CONTROL_DIR/.sesmand-state.$$"
+
+	printf 'pid=%s\ninode=%s\ngeneration=%s\n' "$pid" "$inode" "$generation" >"$temporary"
+	mv -f "$temporary" "$FRDP_E2E_CONTROL_DIR/sesmand-state"
+}
+
+run_sesmand_supervisor()
+{
+	local generation=0
+	local inode=
+	local old_inode=
+	local pid=
+	local status=0
+
+	trap '[[ -z ${pid:-} ]] || kill -TERM "$pid" 2>/dev/null || true; [[ -z ${pid:-} ]] || wait "$pid" 2>/dev/null || true; exit 143' TERM INT
+	while ((generation < 2)); do
+		frdp-sesmand --config "$FRDP_CONFIG" --socket "$FRDP_SESSION_SOCKET" &
+		pid=$!
+		inode=$(wait_replaced_socket "$FRDP_SESSION_SOCKET" "$pid" "$old_inode") || {
+			kill -TERM "$pid" 2>/dev/null || true
+			wait "$pid" 2>/dev/null || true
+			return 1
+		}
+		publish_sesmand_state "$pid" "$inode" "$generation"
+		if ((generation == 1)); then
+			: >"$FRDP_E2E_CONTROL_DIR/sesmand-restarted"
+		fi
+
+		set +e
+		wait "$pid"
+		status=$?
+		set -e
+		pid=
+		if ((generation == 0)) && [[ -f $FRDP_E2E_CONTROL_DIR/sesmand-crash-triggered ]] &&
+			((status != 0)); then
+			old_inode=$inode
+			generation=1
+			continue
+		fi
+		return "$status"
+	done
+	return 1
+}
+
+inject_sesmand_crash()
+{
+	local agent_pid=
+	local generation=
+	local i
+	local new_inode=
+	local new_pid=
+	local old_inode=
+	local old_pid=
+	local session_id=
+	local observed_agent_pid=
+	local observed_session_id=
+	local socket_pin
+	local state
+	local temporary="$FRDP_E2E_CONTROL_DIR/.sesmand-recovery.$$"
+	socket_pin="$(dirname "$FRDP_SESSION_SOCKET")/.e2e-old-sesmand-socket"
+
+	for ((i = 0; i < 600; i++)); do
+		[[ ! -f $FRDP_E2E_CONTROL_DIR/arm-sesmand-crash ]] || break
+		sleep 0.1
+	done
+	[[ -f $FRDP_E2E_CONTROL_DIR/arm-sesmand-crash ]] || return 1
+	for ((i = 0; i < 600; i++)); do
+		[[ ! -f $FRDP_E2E_CONTROL_DIR/client-session-observed ]] || break
+		sleep 0.1
+	done
+	[[ -f $FRDP_E2E_CONTROL_DIR/client-session-observed ]] || return 1
+	observed_session_id=$(sed -n 's/^session_id=//p' "$FRDP_E2E_CONTROL_DIR/client-session-observed")
+	observed_agent_pid=$(sed -n 's/^agent_pid=//p' "$FRDP_E2E_CONTROL_DIR/client-session-observed")
+	[[ -n $observed_session_id && $observed_agent_pid =~ ^[0-9]+$ ]]
+
+	for ((i = 0; i < 600; i++)); do
+		if [[ -f $FRDP_E2E_CONTROL_DIR/sesmand-state ]]; then
+			old_pid=$(sed -n 's/^pid=//p' "$FRDP_E2E_CONTROL_DIR/sesmand-state")
+			old_inode=$(sed -n 's/^inode=//p' "$FRDP_E2E_CONTROL_DIR/sesmand-state")
+			generation=$(sed -n 's/^generation=//p' "$FRDP_E2E_CONTROL_DIR/sesmand-state")
+		fi
+		frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$FRDP_E2E_CONTROL_DIR/session-before-crash" 2>/dev/null || true
+		read -r session_id agent_pid < <(
+			awk -v user="$FRDP_TEST_USER" 'NR > 1 && $2 == user && $4 == "active" { print $1, $5; exit }' \
+				"$FRDP_E2E_CONTROL_DIR/session-before-crash") || true
+		if [[ $old_pid =~ ^[0-9]+$ && $old_inode =~ ^[0-9]+$ && $generation == 0 &&
+			$agent_pid == "$observed_agent_pid" && $session_id == "$observed_session_id" ]]; then
+			break
+		fi
+		sleep 0.1
+	done
+	[[ $old_pid =~ ^[0-9]+$ && $old_inode =~ ^[0-9]+$ && $generation == 0 ]]
+	[[ $agent_pid =~ ^[0-9]+$ && -n $session_id ]]
+	kill -0 "$old_pid"
+	kill -0 "$agent_pid"
+	rm -f "$socket_pin"
+	ln "$FRDP_SESSION_SOCKET" "$socket_pin"
+	[[ $(stat -c %i "$socket_pin") == "$old_inode" ]]
+	: >"$FRDP_E2E_CONTROL_DIR/sesmand-crash-triggered"
+	kill -KILL "$old_pid"
+
+	for ((i = 0; i < 600; i++)); do
+		if [[ -f $FRDP_E2E_CONTROL_DIR/sesmand-restarted ]]; then
+			new_pid=$(sed -n 's/^pid=//p' "$FRDP_E2E_CONTROL_DIR/sesmand-state")
+			new_inode=$(sed -n 's/^inode=//p' "$FRDP_E2E_CONTROL_DIR/sesmand-state")
+			generation=$(sed -n 's/^generation=//p' "$FRDP_E2E_CONTROL_DIR/sesmand-state")
+			if [[ $new_pid =~ ^[0-9]+$ && $new_inode =~ ^[0-9]+$ && $generation == 1 &&
+				$new_pid != "$old_pid" && $new_inode != "$old_inode" ]]; then
+				break
+			fi
+		fi
+		sleep 0.1
+	done
+	[[ $new_pid =~ ^[0-9]+$ && $new_inode =~ ^[0-9]+$ && $generation == 1 ]]
+	[[ $new_pid != "$old_pid" && $new_inode != "$old_inode" ]]
+	frdpctl status --socket "$FRDP_SESSION_SOCKET" | grep -Fxq 'Session manager: reachable'
+	rm -f "$socket_pin"
+
+	for ((i = 0; i < 600; i++)); do
+		state=$(ps -o stat= -p "$agent_pid" 2>/dev/null | tr -d '[:space:]' || true)
+		frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$FRDP_E2E_CONTROL_DIR/session-after-crash" 2>/dev/null || true
+		if [[ -z $state || $state == Z* ]] &&
+			grep -Fxq 'No active sessions' "$FRDP_E2E_CONTROL_DIR/session-after-crash" &&
+			[[ -z $(find "$(dirname "$FRDP_SESSION_SOCKET")" -mindepth 1 ! -name "$(basename "$FRDP_SESSION_SOCKET")" -print -quit) ]]; then
+			break
+		fi
+		sleep 0.1
+	done
+	[[ -z $state || $state == Z* ]]
+	grep -Fxq 'No active sessions' "$FRDP_E2E_CONTROL_DIR/session-after-crash"
+	[[ -z $(find "$(dirname "$FRDP_SESSION_SOCKET")" -mindepth 1 ! -name "$(basename "$FRDP_SESSION_SOCKET")" -print -quit) ]]
+
+	printf 'session_id=%s\nagent_pid=%s\nold_pid=%s\nnew_pid=%s\nold_inode=%s\nnew_inode=%s\nresult=pass\n' \
+		"$session_id" "$agent_pid" "$old_pid" "$new_pid" "$old_inode" "$new_inode" >"$temporary"
+	mv -f "$temporary" "$FRDP_E2E_CONTROL_DIR/sesmand-recovery"
+	log "provider-backed frdp-sesmand recovery passed for provider=$FRDP_IDENTITY_PROVIDER session=$session_id"
+}
+
 shutdown_children()
 {
 	local pid
@@ -348,8 +515,14 @@ shutdown_children()
 	fi
 	stopping=1
 	trap - TERM INT EXIT
+	for pid in "${auxiliary[@]}"; do
+		kill -TERM "$pid" 2>/dev/null || true
+	done
 	for pid in "${children[@]}"; do
 		kill -TERM "$pid" 2>/dev/null || true
+	done
+	for pid in "${auxiliary[@]}"; do
+		wait "$pid" 2>/dev/null || true
 	done
 	for pid in "${children[@]}"; do
 		wait "$pid" 2>/dev/null || true
@@ -369,16 +542,35 @@ configure_identity
 generate_tls_identity
 generate_ntlm_test_sam
 
+if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY != 0 && $FRDP_E2E_SESMAND_CRASH_RECOVERY != 1 ]]; then
+	fail "FRDP_E2E_SESMAND_CRASH_RECOVERY must be 0 or 1"
+fi
+if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 && $FRDP_IDENTITY_PROVIDER != samba ]]; then
+	fail "frdp-sesmand crash recovery injection is restricted to the Samba provider profile"
+fi
+
 frdp-authd --config "$FRDP_CONFIG" --socket "$FRDP_AUTH_SOCKET" &
 children+=("$!")
-frdp-sesmand --config "$FRDP_CONFIG" --socket "$FRDP_SESSION_SOCKET" &
-children+=("$!")
+if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 ]]; then
+	mkdir -p "$FRDP_E2E_CONTROL_DIR"
+	rm -f "$FRDP_E2E_CONTROL_DIR"/*
+	run_sesmand_supervisor &
+	children+=("$!")
+else
+	frdp-sesmand --config "$FRDP_CONFIG" --socket "$FRDP_SESSION_SOCKET" &
+	children+=("$!")
+fi
 
 wait_socket "$FRDP_AUTH_SOCKET" || fail "frdp-authd socket was not created"
 wait_socket "$FRDP_SESSION_SOCKET" || fail "frdp-sesmand socket was not created"
 
 frdpd --config "$FRDP_CONFIG" --domain-mode=plain &
 children+=("$!")
+
+if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 ]]; then
+	inject_sesmand_crash &
+	auxiliary+=("$!")
+fi
 
 log "FRDP stack started for provider=$FRDP_IDENTITY_PROVIDER user=$FRDP_TEST_USER"
 set +e

@@ -149,6 +149,41 @@ static int test_frame_pump_budget(void)
 	return 0;
 }
 
+static int test_frame_ipc_failure_limit(void)
+{
+	uint32_t failures = 0;
+
+	if (frdpd_frame_ipc_failure_is_terminal(&failures, 3) || (failures != 1))
+		return -1;
+	if (frdpd_frame_ipc_failure_is_terminal(&failures, 3) || (failures != 2))
+		return -1;
+	if (!frdpd_frame_ipc_failure_is_terminal(&failures, 3) || (failures != 3))
+		return -1;
+	if (!frdpd_frame_ipc_failure_is_terminal(&failures, 3) || (failures != 3))
+		return -1;
+	if (!frdpd_frame_ipc_failure_is_terminal(NULL, 3))
+		return -1;
+	failures = 0;
+	if (!frdpd_frame_ipc_failure_is_terminal(&failures, 0) || (failures != 0))
+		return -1;
+	return 0;
+}
+
+static int test_frame_agent_probe_policy(void)
+{
+	if (!frdpd_frame_agent_should_probe(1, 1, 0, 1))
+		return -1;
+	if (!frdpd_frame_agent_should_probe(1, 1, 1, 1))
+		return -1;
+	if (frdpd_frame_agent_should_probe(0, 1, 0, 1))
+		return -1;
+	if (frdpd_frame_agent_should_probe(1, 0, 0, 1))
+		return -1;
+	if (frdpd_frame_agent_should_probe(1, 1, 0, 0))
+		return -1;
+	return 0;
+}
+
 int TestFreeRDPFrdpFramePolicy(int argc, char* argv[])
 {
 	(void)argc;
@@ -187,6 +222,16 @@ int TestFreeRDPFrdpFramePolicy(int argc, char* argv[])
 	if (test_frame_pump_budget() != 0)
 	{
 		fprintf(stderr, "frame pump budget policy failed\n");
+		return -1;
+	}
+	if (test_frame_ipc_failure_limit() != 0)
+	{
+		fprintf(stderr, "frame IPC failure limit policy failed\n");
+		return -1;
+	}
+	if (test_frame_agent_probe_policy() != 0)
+	{
+		fprintf(stderr, "frame agent probe policy failed\n");
 		return -1;
 	}
 	return 0;
