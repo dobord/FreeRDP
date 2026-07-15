@@ -402,6 +402,8 @@ jobs:
        (inputs.profile == 'samba' || inputs.profile == 'all'))
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      FRDP_E2E_REPETITIONS: ${{ github.event_name == 'schedule' && '2' || '1' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -423,6 +425,8 @@ jobs:
        (inputs.profile == 'freeipa' || inputs.profile == 'all'))
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    env:
+      FRDP_E2E_REPETITIONS: ${{ github.event_name == 'schedule' && '2' || '1' }}
     steps:
       - uses: actions/checkout@v4
 
