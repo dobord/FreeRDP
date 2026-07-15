@@ -51,6 +51,20 @@ if(NOT runner_test_result EQUAL 0)
     "E2E runner behavior test failed: ${runner_test_stderr}\n${runner_test_stdout}")
 endif()
 
+get_filename_component(frdp_repo_root "${FRDP_E2E_DIR}/../../../.." ABSOLUTE)
+set(debian_maintscript_test
+    "${frdp_repo_root}/server/frdp/test/TestFreeRDPFrdpDebianMaintscripts.sh")
+expect_file("${debian_maintscript_test}")
+execute_process(
+  COMMAND "${BASH_EXECUTABLE}" -n "${debian_maintscript_test}"
+  RESULT_VARIABLE maintscript_test_result
+  OUTPUT_VARIABLE maintscript_test_stdout
+  ERROR_VARIABLE maintscript_test_stderr)
+if(NOT maintscript_test_result EQUAL 0)
+  message(FATAL_ERROR
+          "Debian maintainer-script syntax test failed: ${maintscript_test_stderr}\n${maintscript_test_stdout}")
+endif()
+
 foreach(fixture
         .env.example
         Dockerfile
@@ -278,7 +292,6 @@ foreach(expected
   expect_contains("${session_smoke}" "${expected}" "E2E session smoke script")
 endforeach()
 
-get_filename_component(frdp_repo_root "${FRDP_E2E_DIR}/../../../.." ABSOLUTE)
 file(READ "${frdp_repo_root}/.github/workflows/frdpd-compose.yml" frdp_workflow)
 
 function(expect_workflow_job_contains job next_job needle)
@@ -339,9 +352,14 @@ foreach(expected
         "test -s \"$build_artifacts/frdpd_lintian.txt\""
         "test ! -e \"$artifacts/control/shlibs\""
         "test ! -e \"$artifacts/control/triggers\""
+        "TestFreeRDPFrdpDebianMaintscripts.sh"
+        "\"$artifacts/control/postrm\""
         "forbidden='(^|, )(libavcodec|libavformat|libavutil|libswscale|liburiparser|libxkbfile|libfreerdp|libwinpr)'"
         "ubuntu:24.04 bash -lc"
         "dpkg -V frdpd"
+        "test ! -e \"/etc/systemd/system/multi-user.target.wants/$unit\""
+        "for process in /proc/[0-9]*/comm"
+        "frdpd|frdp-authd|frdp-sesmand) exit 1"
         "grep -q \"/lib/$FRDP_MULTIARCH/frdpd/libwinpr3.so.3\""
         "grep -q \"/lib/$FRDP_MULTIARCH/frdpd/libfreerdp3.so.3\""
         "winpr-hash -u alice --password-stdin"
@@ -349,6 +367,29 @@ foreach(expected
         "test ! -e /usr/bin/frdpd")
   expect_workflow_job_contains("deb" "rpm" "${expected}")
 endforeach()
+expect_workflow_job_contains("deb" "rpm"
+  "if grep -q \"was-enabled defaults to true\" \"$artifacts/control/postinst\"; then
+            exit 1
+          fi")
+expect_workflow_job_contains("deb" "rpm"
+  "test \"$(grep -c 'if deb-systemd-helper debian-installed' \\
+            \"$artifacts/control/postinst\")\" -eq 3")
+expect_workflow_job_contains("deb" "rpm"
+  "test \"$(grep -c 'deb-systemd-invoke' \"$artifacts/control/postinst\")\" -eq 1")
+expect_workflow_job_contains("deb" "rpm"
+  "grep -Fq 'for unit in frdp-authd.service frdp-sesmand.service frdpd.service' \\
+            \"$artifacts/control/postinst\"")
+expect_workflow_job_contains("deb" "rpm"
+  "grep -Fq 'if systemctl --system --quiet is-active \"$unit\"; then' \\
+            \"$artifacts/control/postinst\"")
+expect_workflow_job_contains("deb" "rpm"
+  "grep -Fq 'deb-systemd-invoke restart \"$unit\"' \\
+            \"$artifacts/control/postinst\"")
+expect_workflow_job_contains("deb" "rpm"
+  "test \"$(grep -c 'deb-systemd-invoke' \"$artifacts/control/prerm\")\" -eq 1")
+expect_workflow_job_contains("deb" "rpm"
+  "grep -Fq 'deb-systemd-invoke stop frdp-authd.service frdp-sesmand.service frdpd.service' \\
+            \"$artifacts/control/prerm\"")
 expect_workflow_job_ordered("deb" "rpm"
   "output_dir=\"$FRDP_E2E_ARTIFACTS/deb/build\""
   "set +e"
@@ -418,8 +459,35 @@ foreach(expected
         "-DWINPR_UTILS_IMAGE_JPEG=OFF"
         "-DCMAKE_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH)/frdpd"
         "override_dh_makeshlibs:"
-        "dh_makeshlibs -Xusr/lib/$(DEB_HOST_MULTIARCH)/frdpd/")
+        "dh_makeshlibs -Xusr/lib/$(DEB_HOST_MULTIARCH)/frdpd/"
+        "override_dh_installsystemd:"
+        "dh_installsystemd --no-enable --no-start")
   expect_contains("${frdp_debian_rules}" "${expected}" "FRDP Debian rules")
+endforeach()
+foreach(script frdpd.postinst frdpd.prerm frdpd.postrm)
+  expect_file("${frdp_repo_root}/debian/${script}")
+endforeach()
+file(READ "${frdp_repo_root}/debian/frdpd.postinst" frdp_debian_postinst)
+foreach(expected
+        "[ -z \"\${DPKG_ROOT:-}\" ]"
+        "[ -n \"\${2:-}\" ]"
+        "for unit in frdp-authd.service frdp-sesmand.service frdpd.service"
+        "systemctl --system --quiet is-active \"$unit\""
+        "deb-systemd-invoke restart \"$unit\"")
+  expect_contains("${frdp_debian_postinst}" "${expected}" "FRDP Debian postinst")
+endforeach()
+file(READ "${frdp_repo_root}/debian/frdpd.prerm" frdp_debian_prerm)
+foreach(expected
+        "[ \"$1\" = \"remove\" ]"
+        "deb-systemd-invoke stop frdp-authd.service frdp-sesmand.service frdpd.service")
+  expect_contains("${frdp_debian_prerm}" "${expected}" "FRDP Debian prerm")
+endforeach()
+file(READ "${frdp_repo_root}/debian/frdpd.postrm" frdp_debian_postrm)
+foreach(expected
+        "if [ -z \"\${DPKG_ROOT:-}\" ]; then"
+        "elif [ \"$1\" = \"purge\" ]"
+        "deb-systemd-helper purge frdp-authd.service frdp-sesmand.service frdpd.service")
+  expect_contains("${frdp_debian_postrm}" "${expected}" "FRDP Debian postrm")
 endforeach()
 expect_workflow_job_contains("samba" "freeipa" "${provider_repeat_expression}")
 expect_workflow_job_contains("freeipa" "" "${provider_repeat_expression}")

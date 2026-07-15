@@ -131,10 +131,26 @@ Installed unit examples:
 - `frdp-sesmand.service`;
 - per-user transient units for `frdp-session-agent`.
 
-The helper units are required for normal listener startup. The shipped `frdpd.service` requires and
+The helper units are required for normal listener startup. The shipped `frdpd.service` pulls in and
 orders `frdp-authd.service` and `frdp-sesmand.service`; all three units read
 `/etc/frdpd/frdpd.toml`, the shipped config points at the helper default sockets,
 and `FRDPD_ARGS` can stay empty for the canonical helper topology.
+
+The Debian preview package deliberately leaves all three units disabled and stopped after installation.
+Provision the TLS certificate and key, review `/etc/pam.d/frdpd`, validate SSSD/NSS access, and configure
+the protected NTLM SAM path before exposing the listener. Then enable the listener only; its systemd
+dependencies start both helper units for each boot:
+
+```bash
+systemctl enable --now frdpd.service
+```
+
+Do not enable either helper as a standalone boot service. Before the first enable, use
+`systemd-analyze verify` and the local PAM smoke path where appropriate, then confirm all three units
+and their journals after startup.
+
+On package upgrade, only units that are already running are restarted after the new files are configured.
+Package removal stops the listener and both helpers even when they were started manually.
 
 The shipped unit hardening baseline is enforced by `TestFreeRDPFrdpSystemd`.
 The listener unit includes:

@@ -116,6 +116,26 @@ jobs:
           dpkg-deb --control "$deb_path" "$artifacts/control"
           test ! -e "$artifacts/control/shlibs"
           test ! -e "$artifacts/control/triggers"
+          server/frdp/test/TestFreeRDPFrdpDebianMaintscripts.sh \
+            "$artifacts/control/postinst" "$artifacts/control/prerm" \
+            "$artifacts/control/postrm"
+          if grep -q "was-enabled defaults to true" "$artifacts/control/postinst"; then
+            exit 1
+          fi
+          test "$(grep -c 'if deb-systemd-helper debian-installed' \
+            "$artifacts/control/postinst")" -eq 3
+          test "$(grep -c 'deb-systemd-invoke' "$artifacts/control/postinst")" -eq 1
+          grep -Fq 'for unit in frdp-authd.service frdp-sesmand.service frdpd.service' \
+            "$artifacts/control/postinst"
+          # shellcheck disable=SC2016
+          grep -Fq 'if systemctl --system --quiet is-active "$unit"; then' \
+            "$artifacts/control/postinst"
+          # shellcheck disable=SC2016
+          grep -Fq 'deb-systemd-invoke restart "$unit"' \
+            "$artifacts/control/postinst"
+          test "$(grep -c 'deb-systemd-invoke' "$artifacts/control/prerm")" -eq 1
+          grep -Fq 'deb-systemd-invoke stop frdp-authd.service frdp-sesmand.service frdpd.service' \
+            "$artifacts/control/prerm"
           depends=$(dpkg-deb --field "$deb_path" Depends)
           forbidden='(^|, )(libavcodec|libavformat|libavutil|libswscale|liburiparser|libxkbfile|libfreerdp|libwinpr)'
           if grep -Eq "$forbidden" <<< "$depends"; then
@@ -131,6 +151,14 @@ jobs:
               apt-get update
               apt-get install -y /tmp/frdpd.deb
               dpkg -V frdpd
+              for unit in frdpd.service frdp-authd.service frdp-sesmand.service; do
+                test ! -e "/etc/systemd/system/multi-user.target.wants/$unit"
+              done
+              for process in /proc/[0-9]*/comm; do
+                case $(cat "$process") in
+                  frdpd|frdp-authd|frdp-sesmand) exit 1 ;;
+                esac
+              done
               for binary in frdpd frdp-authd frdp-sesmand frdp-session-agent frdpctl winpr-hash; do
                 linkage=$(ldd "/usr/bin/$binary")
                 if grep -q "not found" <<< "$linkage"; then

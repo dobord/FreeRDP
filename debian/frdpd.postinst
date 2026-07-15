@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+#DEBHELPER#
+
+# Initial installation is deliberately inert. Restart only services that were
+# already running before an upgrade, after the new files are configured.
+if [ -z "${DPKG_ROOT:-}" ] && [ "$1" = "configure" ] && [ -n "${2:-}" ] && \
+	[ -d /run/systemd/system ]; then
+	systemctl --system daemon-reload >/dev/null || true
+	for unit in frdp-authd.service frdp-sesmand.service frdpd.service; do
+		if systemctl --system --quiet is-active "$unit"; then
+			deb-systemd-invoke restart "$unit" >/dev/null || true
+		fi
+	done
+fi

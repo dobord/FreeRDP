@@ -78,6 +78,11 @@ override_dh_shlibdeps:
 override_dh_makeshlibs:
 	dh_makeshlibs -Xusr/lib/$(DEB_HOST_MULTIARCH)/frdpd/
 
+# Installation precedes site-specific TLS, PAM, and SSSD provisioning. Keep
+# every unit disabled and stopped until the administrator enables frdpd.
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start
+
 override_dh_auto_clean:
 	rm -rf $(BUILD_DIR)
 

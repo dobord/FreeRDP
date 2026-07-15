@@ -13,7 +13,10 @@ The root `debian/` directory contains minimal preview packaging for the server-o
 - The binary package carries scoped DEP-5 metadata for the Apache-2.0 runtime sources plus the BSD, Boost, Expat, HPND, Zlib, and public-domain exceptions in its build closure. This does not replace a complete source-package copyright audit. The clean builder runs pedantic `lintian`, writes the complete report directly into the retained artifact directory even when the policy check fails, and rejects error-level violations.
 - The FRDP workflow repeats the dependency-resolved build, checks package metadata and the private multiarch layout, installs the package in a clean target container, and uploads the `.deb`, control archive, lintian report, and manifests. Successful CI history still needs to accumulate.
 - Sign the resulting packages with the project’s GPG key and publish them to an APT repository.
-- Remaining Debian work includes a complete source-package copyright audit, resolving or formally reviewing non-error lintian findings, systemd enablement policy, package signing, upgrade/rollback tests, PAM/SSSD real-login validation against the installed package, and validation of installed SELinux/AppArmor draft examples.
+- The Debian package has an explicit fail-closed service policy: installation does not enable or start
+  `frdpd`, `frdp-authd`, or `frdp-sesmand`. After TLS, PAM/SSSD, and NTLM SAM provisioning, the
+  administrator enables only `frdpd.service`; its dependencies start the helpers.
+- Remaining Debian work includes a complete source-package copyright audit, resolving or formally reviewing non-error lintian findings, package signing, upgrade/rollback tests, PAM/SSSD real-login validation against the installed package, and validation of installed SELinux/AppArmor draft examples.
 
 ## RPM packaging
 
@@ -87,7 +90,7 @@ Open reproducibility gaps:
 - The Fedora dependency-checked RPM job still needs successful CI history and
   coverage on any additional target RPM distributions.
 - A complete source-package copyright audit, non-error lintian findings,
-  service enablement policy, and upgrade/rollback validation remain open.
+  upgrade/rollback validation remain open.
 - Installed package validation does not yet prove PAM login, AD/SSSD policy,
   real-client sessions, upgrade/rollback, or enforcing SELinux/AppArmor mode.
 - Successful Debian and Fedora package-job history still needs to accumulate,

@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+# Stop manually started or enabled services before their binaries are removed.
+if [ -z "${DPKG_ROOT:-}" ] && [ "$1" = "remove" ] && [ -d /run/systemd/system ]; then
+	deb-systemd-invoke stop frdp-authd.service frdp-sesmand.service frdpd.service \
+		>/dev/null || true
+fi
+
+#DEBHELPER#

@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+# Generated systemd snippets target the host manager, so run them only for the
+# real root. Preserve deb-systemd-helper state cleanup for an alternate root.
+if [ -z "${DPKG_ROOT:-}" ]; then
+	:
+#DEBHELPER#
+elif [ "$1" = "purge" ] && [ -x "$(command -v deb-systemd-helper)" ]; then
+	deb-systemd-helper purge frdp-authd.service frdp-sesmand.service frdpd.service \
+		>/dev/null || true
+fi
