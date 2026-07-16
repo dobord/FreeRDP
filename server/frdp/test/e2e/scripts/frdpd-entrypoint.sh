@@ -14,6 +14,7 @@ FRDP_SESSION_SOCKET=${FRDP_SESSION_SOCKET:-/run/frdp-sesmand/sesmand.sock}
 FRDP_CONFIG=${FRDP_CONFIG:-/etc/frdpd/frdpd.toml}
 FRDP_E2E_SESMAND_CRASH_RECOVERY=${FRDP_E2E_SESMAND_CRASH_RECOVERY:-0}
 FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER=${FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER:-0}
+FRDP_E2E_POLICY_RELOAD=${FRDP_E2E_POLICY_RELOAD:-0}
 FRDP_E2E_CONTROL_DIR=${FRDP_E2E_CONTROL_DIR:-/run/frdp-e2e-control}
 FRDP_E2E_KEYTAB_DIR=${FRDP_E2E_KEYTAB_DIR:-/run/frdp-e2e-keytab}
 
@@ -489,6 +490,59 @@ run_sesmand_supervisor()
 	return 1
 }
 
+run_policy_reload_supervisor()
+{
+	local frdpd_pid=$1
+	local mode=
+	local next="${FRDP_CONFIG}.next"
+	local original="${FRDP_CONFIG}.e2e-original"
+	local ready=
+	local request=
+	local temporary=
+
+	cp -p "$FRDP_CONFIG" "$original"
+	trap 'exit 0' TERM INT
+	while kill -0 "$frdpd_pid" 2>/dev/null; do
+		for mode in deny malformed restore; do
+			request="$FRDP_E2E_CONTROL_DIR/policy-reload-${mode}-request"
+			[[ -f $request ]] || continue
+			ready="$FRDP_E2E_CONTROL_DIR/policy-reload-${mode}-ready"
+			temporary="$FRDP_E2E_CONTROL_DIR/.policy-reload-${mode}-ready.$$"
+			case "$mode" in
+				deny)
+					awk '
+						$0 == "static_mode = \"blocklist\"" {
+							print "static_mode = \"allowlist\""; next
+						}
+						$0 == "static_deny = \"\"" {
+							print "static_allow = \"\""; next
+						}
+						{ print }
+					' "$original" >"$next"
+					grep -Fxq 'static_mode = "allowlist"' "$next"
+					grep -Fxq 'static_allow = ""' "$next"
+					;;
+				malformed)
+					printf '[channels\n' >"$next"
+					;;
+				restore)
+					cp "$original" "$next"
+					;;
+			esac
+			chmod 0600 "$next"
+			mv -f "$next" "$FRDP_CONFIG"
+			kill -HUP "$frdpd_pid"
+			sleep 1
+			kill -0 "$frdpd_pid"
+			printf 'mode=%s\nresult=pass\n' "$mode" >"$temporary"
+			mv -f "$temporary" "$ready"
+			rm -f "$request"
+		done
+		sleep 0.1
+	done
+	return 1
+}
+
 inject_sesmand_crash()
 {
 	local agent_pid=
@@ -614,6 +668,9 @@ fi
 if [[ $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER != 0 && $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER != 1 ]]; then
 	fail "FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER must be 0 or 1"
 fi
+if [[ $FRDP_E2E_POLICY_RELOAD != 0 && $FRDP_E2E_POLICY_RELOAD != 1 ]]; then
+	fail "FRDP_E2E_POLICY_RELOAD must be 0 or 1"
+fi
 if [[ $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER == 1 && $FRDP_IDENTITY_PROVIDER != freeipa ]]; then
 	fail "keytab rollover requires the FreeIPA provider profile"
 fi
@@ -621,7 +678,11 @@ if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 && $FRDP_IDENTITY_PROVIDER != samba 
 	$FRDP_IDENTITY_PROVIDER != freeipa ]]; then
 	fail "frdp-sesmand crash recovery injection requires a Samba or FreeIPA provider profile"
 fi
-if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 || $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER == 1 ]]; then
+if [[ $FRDP_E2E_POLICY_RELOAD == 1 && $FRDP_IDENTITY_PROVIDER != local ]]; then
+	fail "frdpd policy reload injection requires the local provider profile"
+fi
+if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 || $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER == 1 ||
+	$FRDP_E2E_POLICY_RELOAD == 1 ]]; then
 	mkdir -p "$FRDP_E2E_CONTROL_DIR"
 	rm -f "$FRDP_E2E_CONTROL_DIR"/*
 fi
@@ -650,7 +711,13 @@ wait_socket "$FRDP_AUTH_SOCKET" || fail "frdp-authd socket was not created"
 wait_socket "$FRDP_SESSION_SOCKET" || fail "frdp-sesmand socket was not created"
 
 frdpd --config "$FRDP_CONFIG" --domain-mode=plain &
-children+=("$!")
+frdpd_pid=$!
+children+=("$frdpd_pid")
+
+if [[ $FRDP_E2E_POLICY_RELOAD == 1 ]]; then
+	run_policy_reload_supervisor "$frdpd_pid" &
+	children+=("$!")
+fi
 
 if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 ]]; then
 	inject_sesmand_crash &

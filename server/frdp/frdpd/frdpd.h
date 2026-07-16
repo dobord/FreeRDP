@@ -93,6 +93,8 @@ extern "C"
 		UINT32 display_control_monitor_count;
 		MONITOR_DEF display_control_monitors[16];
 		CRITICAL_SECTION display_control_lock;
+		frdpChannelPolicy channels;
+		frdpClipboardPolicy clipboard;
 		char* pam_user;
 		char authorization_id[192];
 		uid_t uid;

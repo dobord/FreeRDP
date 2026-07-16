@@ -91,10 +91,14 @@ typedef struct
 } frdpdOptions;
 
 static volatile sig_atomic_t g_frdpd_running = 1;
+static volatile sig_atomic_t g_frdpd_reload_requested = 0;
+/* Peer workers are detached, so this lock intentionally lives until process exit. */
+static CRITICAL_SECTION g_frdpd_policy_lock;
 
 static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
                                        const MONITOR_DEF* monitors);
 static BOOL frdpd_process_pending_display_control(frdpdPeerContext* context);
+static BOOL frdpd_apply_file_config(frdpdOptions* options);
 
 #ifdef WITH_FRDPD_NTLM
 static BOOL frdpd_prepare_ntlm_sam_file(frdpdServerConfig* config)
@@ -162,8 +166,10 @@ static BOOL frdpd_disable_core_dumps(void)
 
 static void frdpd_signal_handler(int signum)
 {
-	WINPR_UNUSED(signum);
-	g_frdpd_running = 0;
+	if (signum == SIGHUP)
+		g_frdpd_reload_requested = 1;
+	else
+		g_frdpd_running = 0;
 }
 
 static BOOL frdpd_install_signal_handlers(void)
@@ -176,6 +182,8 @@ static BOOL frdpd_install_signal_handlers(void)
 	if (sigaction(SIGINT, &action, NULL) != 0)
 		return FALSE;
 	if (sigaction(SIGTERM, &action, NULL) != 0)
+		return FALSE;
+	if (sigaction(SIGHUP, &action, NULL) != 0)
 		return FALSE;
 	return TRUE;
 }
@@ -1351,18 +1359,14 @@ static BOOL frdpd_dvc_authorize(void* userdata, DWORD SessionId, const char* cha
                                 DWORD flags)
 {
 	frdpdPeerContext* context = (frdpdPeerContext*)userdata;
-	frdpdServerConfig* config = NULL;
 
 	WINPR_UNUSED(SessionId);
 	WINPR_UNUSED(flags);
 
-	if (!context || !context->_p.peer)
+	if (!context)
 		return FALSE;
-	config = (frdpdServerConfig*)context->_p.peer->ContextExtra;
-	if (!config)
-		return FALSE;
-	return frdp_channel_policy_dynamic_allowed_for_runtime(&config->channels, channelName) ? TRUE
-	                                                                                       : FALSE;
+	return frdp_channel_policy_dynamic_allowed_for_runtime(&context->channels, channelName) ? TRUE
+	                                                                                        : FALSE;
 }
 
 static BOOL frdpd_display_control_channel_id_assigned(DispServerContext* display_control,
@@ -1826,10 +1830,10 @@ static BOOL frdpd_peer_client_capabilities(freerdp_peer* client)
 		    settings, FreeRDP_ChannelDefArray, i);
 
 		int allowed = frdp_channel_policy_static_channel_allowed_for_runtime(
-		    &config->channels, &config->clipboard, channel, name, sizeof(name));
+		    &context->channels, &context->clipboard, channel, name, sizeof(name));
 		if (allowed && (strcmp(name, "drdynvc") == 0))
 		{
-			allowed = frdp_channel_policy_dynamic_allowed_for_runtime(&config->channels,
+			allowed = frdp_channel_policy_dynamic_allowed_for_runtime(&context->channels,
 			                                                          DISP_DVC_CHANNEL_NAME);
 			context->drdynvc_joined = allowed ? TRUE : FALSE;
 		}
@@ -2115,6 +2119,10 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 	if (!frdpd_peer_init(client))
 		goto fail;
 	context = (frdpdPeerContext*)client->context;
+	EnterCriticalSection(&g_frdpd_policy_lock);
+	context->channels = config->channels;
+	context->clipboard = config->clipboard;
+	LeaveCriticalSection(&g_frdpd_policy_lock);
 	if (!frdpd_configure_security(client, config))
 		goto fail;
 
@@ -2233,15 +2241,59 @@ static BOOL frdpd_peer_accepted(freerdp_listener* instance, freerdp_peer* client
 	return TRUE;
 }
 
-static void frdpd_server_mainloop(freerdp_listener* instance)
+static void frdpd_reload_peer_policy(frdpdOptions* options)
+{
+	frdpConfig config = { 0 };
+	frdpdOptions candidate = { 0 };
+
+	WINPR_ASSERT(options);
+	g_frdpd_reload_requested = 0;
+	if (!options->config_path)
+	{
+		WLog_WARN(TAG, "ignoring SIGHUP because frdpd was started without --config");
+		return;
+	}
+	if (frdp_config_load(options->config_path, &config) != 0)
+	{
+		WLog_ERR(TAG,
+		         "failed to reload channel and clipboard policy from %s; retaining previous "
+		         "policy",
+		         options->config_path);
+		return;
+	}
+	candidate.file_config = config;
+	if (!frdpd_apply_file_config(&candidate))
+	{
+		WLog_ERR(TAG,
+		         "configuration from %s is not supported by frdpd; retaining previous channel "
+		         "and clipboard policy",
+		         options->config_path);
+		return;
+	}
+
+	EnterCriticalSection(&g_frdpd_policy_lock);
+	options->server.channels = config.channels;
+	options->server.clipboard = config.clipboard;
+	LeaveCriticalSection(&g_frdpd_policy_lock);
+	WLog_INFO(TAG,
+	          "reloaded channel and clipboard policy from %s for new connections; existing "
+	          "connections retain their policy snapshot",
+	          options->config_path);
+}
+
+static void frdpd_server_mainloop(freerdp_listener* instance, frdpdOptions* options)
 {
 	WINPR_ASSERT(instance);
+	WINPR_ASSERT(options);
 
 	while (g_frdpd_running)
 	{
 		HANDLE handles[MAXIMUM_WAIT_OBJECTS] = { 0 };
 		DWORD count = 0;
 		DWORD status = 0;
+
+		if (g_frdpd_reload_requested)
+			frdpd_reload_peer_policy(options);
 
 		WINPR_ASSERT(instance->GetEventHandles);
 		count = instance->GetEventHandles(instance, handles, ARRAYSIZE(handles));
@@ -2732,6 +2784,11 @@ static int frdpd_run_server(frdpdOptions* options)
 		WLog_ERR(TAG, "Failed to install signal handlers");
 		return -1;
 	}
+	if (!InitializeCriticalSectionAndSpinCount(&g_frdpd_policy_lock, 4000))
+	{
+		WLog_ERR(TAG, "Failed to initialize peer policy lock");
+		return -1;
+	}
 	if (!WTSRegisterWtsApiFunctionTable(FreeRDP_InitWtsApi()))
 	{
 		WLog_ERR(TAG, "Failed to initialize the FreeRDP virtual channel manager");
@@ -2763,7 +2820,7 @@ static int frdpd_run_server(frdpdOptions* options)
 	WLog_INFO(
 	    TAG, "frdpd listening on %s:%" PRIu16 " with PAM service '%s' and NLA/CredSSP enabled",
 	    config->bind_address ? config->bind_address : "0.0.0.0", config->port, config->pam_service);
-	frdpd_server_mainloop(listener);
+	frdpd_server_mainloop(listener, options);
 	rc = 0;
 
 fail:

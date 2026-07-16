@@ -178,8 +178,9 @@ validate_rdp_auth_artifacts()
 	local dc_id dc_log
 	local total_accepted total_rejected
 	local ntlm_proof_rejected wrong_password_rejected denied_user_rejected
+	local policy_reload_failed policy_channel_rejected
 	local keytab_rollover old_kvno new_kvno
-	local expected_accepted=3
+	local expected_accepted=4
 	local provider_result=
 
 	server_id=$("${compose[@]}" --profile "$profile" ps -a -q "$server_service" 2>/dev/null || true)
@@ -210,6 +211,9 @@ validate_rdp_auth_artifacts()
 	)
 	ntlm_proof_rejected=$(grep -Fc 'Message Integrity Check (MIC) verification failed!' \
 		"$server_log" || true)
+	policy_reload_failed=$(grep -Fc 'failed to reload channel and clipboard policy from' \
+		"$server_log" || true)
+	policy_channel_rejected=$(grep -c 'rejected static virtual channel' "$server_log" || true)
 	rejected=$((wrong_password_rejected + denied_user_rejected))
 	total_rejected=$(grep -c 'PAM rejected RDP login.*: denied ' "$server_log" || true)
 	if [[ $profile == samba || $profile == freeipa ]]; then
@@ -231,6 +235,12 @@ validate_rdp_auth_artifacts()
 	if grep -q 'proof identity does not match the delegated credentials' "$server_log"; then
 		printf 'profile %s encountered an NTLM proof/delegated identity mismatch\n' \
 			"$profile" >&2
+		return 1
+	fi
+	if [[ $profile == local ]] &&
+		[[ $policy_reload_failed -ne 1 || $policy_channel_rejected -ne 2 ]]; then
+		printf 'profile local expected 1 rejected policy reload and 2 channel denials; got %s and %s\n' \
+			"$policy_reload_failed" "$policy_channel_rejected" >&2
 		return 1
 	fi
 	if [[ $profile == samba || $profile == freeipa ]]; then

@@ -12,6 +12,8 @@ FRDP_SESSION_SOCKET=${FRDP_SESSION_SOCKET:-/run/frdp-sesmand/sesmand.sock}
 FRDP_E2E_TIMEOUT=${FRDP_E2E_TIMEOUT:-60}
 FRDP_AUTH_TIMEOUT=${FRDP_AUTH_TIMEOUT:-45}
 FRDP_ARTIFACT_DIR=${FRDP_ARTIFACT_DIR:-/artifacts}
+FRDP_E2E_POLICY_RELOAD=${FRDP_E2E_POLICY_RELOAD:-0}
+FRDP_E2E_CONTROL_DIR=${FRDP_E2E_CONTROL_DIR:-/run/frdp-e2e-control}
 
 mkdir -p "$FRDP_ARTIFACT_DIR"
 
@@ -135,6 +137,41 @@ run_auth_only()
 	log "auth-only '$label' produced expected result: $expected"
 }
 
+run_policy_denied_auth_only()
+{
+	local label=$1
+	local logfile="$FRDP_ARTIFACT_DIR/auth-${label}.log"
+	local status=0
+
+	build_args "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"
+	set +e
+	timeout "${FRDP_AUTH_TIMEOUT}s" xvfb-run -a "$XFREERDP" "${RDP_ARGS[@]}" \
+		"$AUTH_ONLY_ARG" >"$logfile" 2>&1
+	status=$?
+	set -e
+	[[ $status -ne 124 ]] || fail "policy-denied auth-only '$label' timed out"
+	log "policy-denied auth-only '$label' completed with client status $status"
+}
+
+request_policy_reload()
+{
+	local mode=$1
+	local ready="$FRDP_E2E_CONTROL_DIR/policy-reload-${mode}-ready"
+	local request="$FRDP_E2E_CONTROL_DIR/policy-reload-${mode}-request"
+
+	rm -f "$ready"
+	: >"$request"
+	for ((i = 0; i < 100; i++)); do
+		if [[ -f $ready ]] && grep -Fxq "mode=$mode" "$ready" &&
+			grep -Fxq 'result=pass' "$ready"; then
+			log "frdpd policy reload command completed: $mode"
+			return 0
+		fi
+		sleep 0.1
+	done
+	fail "frdpd policy reload command timed out: $mode"
+}
+
 assert_no_managed_sessions()
 {
 	local label=$1
@@ -214,6 +251,8 @@ stop_process()
 
 positive_integer "$FRDP_E2E_TIMEOUT" || fail "FRDP_E2E_TIMEOUT must be positive"
 positive_integer "$FRDP_AUTH_TIMEOUT" || fail "FRDP_AUTH_TIMEOUT must be positive"
+[[ $FRDP_E2E_POLICY_RELOAD == 0 || $FRDP_E2E_POLICY_RELOAD == 1 ]] ||
+	fail "FRDP_E2E_POLICY_RELOAD must be 0 or 1"
 command -v timeout >/dev/null 2>&1 || fail "timeout executable was not found"
 command -v xvfb-run >/dev/null 2>&1 || fail "xvfb-run executable was not found"
 command -v Xvfb >/dev/null 2>&1 || fail "Xvfb executable was not found"
@@ -342,6 +381,46 @@ done
 [[ $client_clipboard_text == "$server_clipboard_text" ]] ||
 	fail "server-to-client Unicode clipboard transfer failed"
 log "server-to-client Unicode clipboard transfer passed"
+if [[ $FRDP_E2E_POLICY_RELOAD == 1 ]]; then
+	request_policy_reload deny
+	run_policy_denied_auth_only reload-denied
+	process_is_running "$client_pid" || fail "active peer was disconnected by policy reload"
+	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
+		>"$FRDP_ARTIFACT_DIR/session-list-after-policy-deny.txt" 2>&1 ||
+		fail "failed to list the active session after policy deny reload"
+	session_identity_is_exclusively_active \
+		"$FRDP_ARTIFACT_DIR/session-list-after-policy-deny.txt" "$session_id" "$FRDP_TEST_USER" \
+		"$open_display" "$open_pid" ||
+		fail "policy reload changed or duplicated the active managed session"
+
+	stop_process "$client_clipboard_pid"
+	client_clipboard_pid=
+	client_clipboard_text='client-to-server clipboard after deny reload'
+	printf '%s' "$client_clipboard_text" | xclip -selection clipboard -in &
+	client_clipboard_pid=$!
+	server_clipboard_text=
+	for ((i = 0; i < 100; i++)); do
+		server_clipboard_text=$(DISPLAY="$open_display" timeout 1s xclip -selection clipboard -out 2>/dev/null || true)
+		[[ $server_clipboard_text == "$client_clipboard_text" ]] && break
+		sleep 0.1
+	done
+	[[ $server_clipboard_text == "$client_clipboard_text" ]] ||
+		fail "active peer lost its clipboard policy snapshot after reload"
+	log "active peer retained its channel and clipboard policy snapshot"
+
+	request_policy_reload malformed
+	run_policy_denied_auth_only reload-malformed-retained-deny
+	process_is_running "$client_pid" || fail "active peer was disconnected by failed policy reload"
+	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
+		>"$FRDP_ARTIFACT_DIR/session-list-after-malformed-policy-reload.txt" 2>&1 ||
+		fail "failed to list the active session after malformed policy reload"
+	session_identity_is_exclusively_active \
+		"$FRDP_ARTIFACT_DIR/session-list-after-malformed-policy-reload.txt" "$session_id" \
+		"$FRDP_TEST_USER" "$open_display" "$open_pid" ||
+		fail "failed policy reload changed or duplicated the active managed session"
+	request_policy_reload restore
+	log "invalid reload retained the last policy and the original policy was restored"
+fi
 for ((i = 0; i < 100; i++)); do
 	grep -q "DisplayControlCapsPdu" "$FRDP_ARTIFACT_DIR/rdp-session.log" && break
 	sleep 0.1

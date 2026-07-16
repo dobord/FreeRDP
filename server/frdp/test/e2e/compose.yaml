@@ -39,11 +39,13 @@ services:
       FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
       FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
       FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+      FRDP_E2E_POLICY_RELOAD: 1
     healthcheck: *frdp-healthcheck
     stop_grace_period: 30s
     volumes:
       - local-sesmand:/run/frdp-sesmand
       - local-x11:/tmp/.X11-unix
+      - local-control:/run/frdp-e2e-control
     networks:
       frdp-e2e:
         ipv4_address: ${FRDP_LOCAL_SERVER_IP:-172.31.56.30}
@@ -59,12 +61,14 @@ services:
       FRDP_TEST_PASSWORD: ${FRDP_TEST_PASSWORD:-RdpPassw0rd!}
       FRDP_DENY_USER: ${FRDP_DENY_USER:-rdpdisabled}
       FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
+      FRDP_E2E_POLICY_RELOAD: 1
     depends_on:
       frdpd-local:
         condition: service_healthy
     volumes:
       - local-sesmand:/run/frdp-sesmand:ro
       - local-x11:/tmp/.X11-unix
+      - local-control:/run/frdp-e2e-control
       - ${FRDP_E2E_ARTIFACTS:-./artifacts}/local:/artifacts
     networks:
       frdp-e2e:
@@ -296,6 +300,7 @@ services:
 volumes:
   local-sesmand:
   local-x11:
+  local-control:
   freeipa-data:
   freeipa-sesmand:
   freeipa-x11:

@@ -42,6 +42,7 @@ After successful PAM authentication and account management, `frdp-authd` reads t
 - `dynamic_deny` (string): Optional comma-separated exact dynamic virtual channel names to reject in `blocklist` mode, for example `"rdpgfx,disp"`. Default empty. The key is rejected unless `dynamic_mode = "blocklist"`, even when the value is empty.
 - `dynamic_allow` (string): Optional comma-separated exact dynamic virtual channel names to allow in `allowlist` mode, for example `"rdpgfx,disp"`. Default empty. The key is rejected unless `dynamic_mode = "allowlist"`, even when the value is empty.
 - Allowing a name only permits negotiation/filter passage; runtime gates still deny arbitrary static channels and named handlers that are not implemented yet, including `rdpsnd` audio output and `rdpdr` device redirection.
+- A running `frdpd --config <path>` rereads `[channels]` on `SIGHUP`. The complete file must still parse and pass the daemon's startup-level file checks; otherwise the daemon logs the failure and retains the last applied policy. New peers receive the reloaded policy, while existing peers retain the immutable snapshot taken when they connected.
 
 ## [clipboard]
 
@@ -50,7 +51,9 @@ After successful PAM authentication and account management, `frdp-authd` reads t
 - `max_text_bytes` (integer): Maximum UTF/text payload size accepted by the text clipboard policy. Default `65536`; valid range is `1..1048576`. The value must be an unquoted integer.
 - The effective X11 payload limit is additionally capped below the display server's ordinary maximum request size. Oversized transfers and the X11 `INCR` protocol fail closed; configure `max_text_bytes` below that backend limit for interoperable transfers.
 - File clipboard, paths, images, and arbitrary formats remain unsupported and must stay denied until separate policy and runtime tests exist.
-- Clipboard policy is applied when a peer starts; `frdpctl reload` does not yet change existing peer/channel instances.
+- A running `frdpd --config <path>` rereads `[clipboard]` together with `[channels]` on `SIGHUP`. New peers receive the reloaded policy; existing clipboard/channel instances retain their connection-time snapshot. `SIGHUP` without `--config` is ignored with a warning. `frdpctl reload` remains the separate `frdp-sesmand` operation.
+
+`frdpd` deliberately ignores changes to listener address/port, TLS material, authentication/PAM/SSSD/NTLM settings, helper sockets, session policy, and audit settings during `SIGHUP`; restart the affected daemon to apply those fields. In particular, replacing `ntlm_sam_file` does not replace the inode pinned at startup.
 
 ## [audit]
 

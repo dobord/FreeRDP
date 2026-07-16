@@ -228,6 +228,8 @@ foreach(expected
         "profiles: [\"samba\"]"
         "profiles: [\"freeipa\"]"
         "FRDP_TEST_GROUP: \${FRDP_TEST_GROUP:-rdp-users}"
+        "FRDP_E2E_POLICY_RELOAD: 1"
+        "local-control:/run/frdp-e2e-control"
         "FRDP_E2E_SESMAND_CRASH_RECOVERY: 1"
         "rdp-provider-recovery.sh"
         "samba-control:/run/frdp-e2e-control"
@@ -295,6 +297,16 @@ foreach(expected
         "ad_gpo_map_remote_interactive = +frdpd"
         "Samba AD enforcing GPO allow/deny checks passed")
   expect_contains("${frdpd_entrypoint}" "${expected}" "frdpd entrypoint")
+endforeach()
+
+foreach(expected
+        "FRDP_E2E_POLICY_RELOAD"
+        "run_policy_reload_supervisor"
+        "policy-reload-\${mode}-request"
+        "kill -HUP \"\$frdpd_pid\""
+        "run_policy_reload_supervisor \"\$frdpd_pid\" &")
+  expect_contains("${frdpd_entrypoint}" "${expected}"
+                  "frdpd policy reload entrypoint")
 endforeach()
 
 foreach(expected
@@ -443,6 +455,11 @@ foreach(expected
         "managed RDP session reattached with stable id/display/PID"
         "client-to-server Unicode clipboard transfer passed"
         "server-to-client Unicode clipboard transfer passed"
+        "request_policy_reload deny"
+        "run_policy_denied_auth_only"
+        "reload-malformed-retained-deny"
+        "active peer retained its channel and clipboard policy snapshot"
+        "request_policy_reload restore"
         "session-list-after-reconnect.txt")
   expect_contains("${rdp_probe}" "${expected}" "E2E RDP probe script")
 endforeach()

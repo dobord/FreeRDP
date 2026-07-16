@@ -22,11 +22,9 @@
 #define FRDPD_CLIPBOARD_POLL_INTERVAL_MS 500ULL
 #define FRDPD_CLIPBOARD_IPC_TIMEOUT_MS 2000
 
-static const frdpdServerConfig* frdpd_clipboard_config(const frdpdPeerContext* context)
+static const frdpClipboardPolicy* frdpd_clipboard_policy(const frdpdPeerContext* context)
 {
-	if (!context || !context->_p.peer)
-		return NULL;
-	return (const frdpdServerConfig*)context->_p.peer->ContextExtra;
+	return context ? &context->clipboard : NULL;
 }
 
 static BOOL frdpd_clipboard_set_ipc_timeout(int fd)
@@ -149,15 +147,15 @@ static UINT frdpd_clipboard_client_format_list(CliprdrServerContext* clipboard,
                                                const CLIPRDR_FORMAT_LIST* format_list)
 {
 	frdpdPeerContext* context = clipboard ? (frdpdPeerContext*)clipboard->custom : NULL;
-	const frdpdServerConfig* config = frdpd_clipboard_config(context);
+	const frdpClipboardPolicy* policy = frdpd_clipboard_policy(context);
 	CLIPRDR_FORMAT_DATA_REQUEST request = { 0 };
 	BOOL unicode_text = FALSE;
 	BOOL clear_text = FALSE;
 	const BOOL valid_formats = format_list && (format_list->formats || (format_list->numFormats == 0U));
 
-	if (!clipboard || !context || !config || !format_list)
+	if (!clipboard || !context || !policy || !format_list)
 		return ERROR_INVALID_PARAMETER;
-	if (frdpd_clipboard_client_to_server_enabled(&config->clipboard) && valid_formats)
+	if (frdpd_clipboard_client_to_server_enabled(policy) && valid_formats)
 	{
 		for (UINT32 i = 0; i < format_list->numFormats; i++)
 		{
@@ -180,14 +178,14 @@ static UINT frdpd_clipboard_client_format_list(CliprdrServerContext* clipboard,
 	}
 	else if (unicode_text)
 		context->clipboard_client_data_pending = TRUE;
-	else if (valid_formats && frdpd_clipboard_client_to_server_enabled(&config->clipboard))
+	else if (valid_formats && frdpd_clipboard_client_to_server_enabled(policy))
 		clear_text = TRUE;
 	LeaveCriticalSection(&context->clipboard_lock);
 	if (frdpd_clipboard_send_format_list_response(clipboard, TRUE) != CHANNEL_RC_OK)
 		return ERROR_INTERNAL_ERROR;
 	if (clear_text)
 	{
-		if (frdpd_clipboard_agent_set(context, NULL, 0U, config->clipboard.max_text_bytes))
+		if (frdpd_clipboard_agent_set(context, NULL, 0U, policy->max_text_bytes))
 		{
 			EnterCriticalSection(&context->clipboard_lock);
 			context->clipboard_last_hash = frdpd_clipboard_hash(NULL, 0U);
@@ -216,24 +214,24 @@ frdpd_clipboard_client_format_data_response(CliprdrServerContext* clipboard,
                                             const CLIPRDR_FORMAT_DATA_RESPONSE* format_response)
 {
 	frdpdPeerContext* context = clipboard ? (frdpdPeerContext*)clipboard->custom : NULL;
-	const frdpdServerConfig* config = frdpd_clipboard_config(context);
+	const frdpClipboardPolicy* policy = frdpd_clipboard_policy(context);
 	BYTE* text = NULL;
 	UINT32 text_length = 0;
 	BOOL pending = FALSE;
 
-	if (!clipboard || !context || !config || !format_response)
+	if (!clipboard || !context || !policy || !format_response)
 		return ERROR_INVALID_PARAMETER;
 	EnterCriticalSection(&context->clipboard_lock);
 	pending = context->clipboard_client_data_pending;
 	context->clipboard_client_data_pending = FALSE;
 	LeaveCriticalSection(&context->clipboard_lock);
-	if (!pending || !frdpd_clipboard_client_to_server_enabled(&config->clipboard) ||
+	if (!pending || !frdpd_clipboard_client_to_server_enabled(policy) ||
 	    (format_response->common.msgFlags != CB_RESPONSE_OK) ||
 	    !frdpd_clipboard_utf16le_to_utf8(format_response->requestedFormatData,
-	                                     format_response->common.dataLen,
-	                                     config->clipboard.max_text_bytes, &text, &text_length))
+	                                     format_response->common.dataLen, policy->max_text_bytes,
+	                                     &text, &text_length))
 		return CHANNEL_RC_OK;
-	if (!frdpd_clipboard_agent_set(context, text, text_length, config->clipboard.max_text_bytes))
+	if (!frdpd_clipboard_agent_set(context, text, text_length, policy->max_text_bytes))
 	{
 		free(text);
 		return CHANNEL_RC_OK;
@@ -252,7 +250,7 @@ frdpd_clipboard_client_format_data_request(CliprdrServerContext* clipboard,
                                            const CLIPRDR_FORMAT_DATA_REQUEST* format_request)
 {
 	frdpdPeerContext* context = clipboard ? (frdpdPeerContext*)clipboard->custom : NULL;
-	const frdpdServerConfig* config = frdpd_clipboard_config(context);
+	const frdpClipboardPolicy* policy = frdpd_clipboard_policy(context);
 	CLIPRDR_FORMAT_DATA_RESPONSE response = { 0 };
 	BYTE* text = NULL;
 	BYTE* wide = NULL;
@@ -261,12 +259,12 @@ frdpd_clipboard_client_format_data_request(CliprdrServerContext* clipboard,
 	BOOL success = FALSE;
 	UINT rc = CHANNEL_RC_OK;
 
-	if (!clipboard || !context || !config || !format_request)
+	if (!clipboard || !context || !policy || !format_request)
 		return ERROR_INVALID_PARAMETER;
 	if ((format_request->requestedFormatId == CF_UNICODETEXT) &&
-	    frdpd_clipboard_server_to_client_enabled(&config->clipboard) &&
-	    frdpd_clipboard_agent_get(context, config->clipboard.max_text_bytes, &text, &text_length) &&
-	    frdpd_clipboard_utf8_to_utf16le(text, text_length, config->clipboard.max_text_bytes, &wide,
+	    frdpd_clipboard_server_to_client_enabled(policy) &&
+	    frdpd_clipboard_agent_get(context, policy->max_text_bytes, &text, &text_length) &&
+	    frdpd_clipboard_utf8_to_utf16le(text, text_length, policy->max_text_bytes, &wide,
 	                                    &wide_length))
 		success = TRUE;
 
@@ -295,7 +293,7 @@ frdpd_clipboard_client_file_contents_request(CliprdrServerContext* clipboard,
 }
 
 static BOOL frdpd_clipboard_announce_if_changed(frdpdPeerContext* context,
-                                                const frdpdServerConfig* config)
+                                                const frdpClipboardPolicy* policy)
 {
 	CLIPRDR_FORMAT format = { CF_UNICODETEXT, NULL };
 	CLIPRDR_FORMAT_LIST list = { 0 };
@@ -304,9 +302,9 @@ static BOOL frdpd_clipboard_announce_if_changed(frdpdPeerContext* context,
 	UINT64 hash = 0;
 	BOOL changed = FALSE;
 
-	if (!frdpd_clipboard_server_to_client_enabled(&config->clipboard))
+	if (!frdpd_clipboard_server_to_client_enabled(policy))
 		return TRUE;
-	if (!frdpd_clipboard_agent_get(context, config->clipboard.max_text_bytes, &text, &text_length))
+	if (!frdpd_clipboard_agent_get(context, policy->max_text_bytes, &text, &text_length))
 		return TRUE;
 	hash = frdpd_clipboard_hash(text, text_length);
 	EnterCriticalSection(&context->clipboard_lock);
@@ -332,11 +330,11 @@ static BOOL frdpd_clipboard_announce_if_changed(frdpdPeerContext* context,
 
 BOOL frdpd_clipboard_runtime_service(frdpdPeerContext* context)
 {
-	const frdpdServerConfig* config = frdpd_clipboard_config(context);
+	const frdpClipboardPolicy* policy = frdpd_clipboard_policy(context);
 	const UINT64 now = GetTickCount64();
 
-	if (!context || !config || !context->cliprdr_joined ||
-	    (config->clipboard.mode != FRDP_CLIPBOARD_MODE_TEXT))
+	if (!context || !policy || !context->cliprdr_joined ||
+	    (policy->mode != FRDP_CLIPBOARD_MODE_TEXT))
 		return TRUE;
 	if (!context->clipboard_context)
 	{
@@ -369,7 +367,7 @@ BOOL frdpd_clipboard_runtime_service(frdpdPeerContext* context)
 	    ((now - context->clipboard_last_poll_tick) < FRDPD_CLIPBOARD_POLL_INTERVAL_MS))
 		return TRUE;
 	context->clipboard_last_poll_tick = now;
-	return frdpd_clipboard_announce_if_changed(context, config);
+	return frdpd_clipboard_announce_if_changed(context, policy);
 }
 
 void frdpd_clipboard_runtime_stop(frdpdPeerContext* context)
