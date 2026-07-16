@@ -101,18 +101,23 @@ if [[ "$provider" == samba ]]; then
     -e FRDP_TEST_USER=rdpuser \
     -e 'FRDP_TEST_PASSWORD=RdpPassw0rd!' \
     -e FRDP_TEST_GROUP=rdp-users \
-    -e FRDP_DENY_USER=rdpdisabled \
+    -e FRDP_DENY_USER=rdpgpodenied \
     -e 'FRDP_DENY_PASSWORD=DeniedPassw0rd!' \
     "$dc_image" >/dev/null
   for _ in $(seq 1 120); do
-    if docker exec "$dc_container" samba-tool user show rdpuser >/dev/null 2>&1 &&
+    if docker exec "$dc_container" test -f /run/frdp-gpo-ready &&
+       docker exec "$dc_container" samba-tool user show rdpuser >/dev/null 2>&1 &&
        docker exec "$dc_container" samba-tool group listmembers rdp-users 2>/dev/null |
          grep -Fxq rdpuser; then
       break
     fi
     sleep 1
   done
+  docker exec "$dc_container" test -f /run/frdp-gpo-ready
   docker exec "$dc_container" samba-tool user show rdpuser >/dev/null
+  docker logs "$dc_container" 2>&1 |
+    grep -E 'Samba AD enforcing GPO \{[0-9A-F-]{36}\}' |
+    grep -Fq 'allows rdp-users and denies enabled user rdpgpodenied for frdpd'
   dc_ip=$(docker inspect --format "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
     "$dc_container")
   [[ "$dc_ip" =~ ^[0-9]+([.][0-9]+){3}$ ]]
@@ -145,11 +150,15 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
     local)
       test_user=lifecycle
       test_password="RdpPassw0rd!"
+      gpo_policy=not-applicable
       rdp_domain=
       ;;
     samba)
       test_user=rdpuser
       test_password="RdpPassw0rd!"
+      deny_user=rdpgpodenied
+      deny_password="DeniedPassw0rd!"
+      gpo_policy=base,upgrade,rollback
       rdp_domain=AD
       ;;
     *) exit 2 ;;
@@ -159,6 +168,15 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
     client_domain_args+=("/d:$rdp_domain")
   fi
   chmod 0755 /tmp/rdp-session-smoke.sh
+
+  assert_samba_gpo_policy() {
+    local checks
+
+    checks=$(LC_ALL=C sssctl user-checks -a acct -s frdpd "$test_user" 2>&1)
+    grep -Fq "pam_acct_mgmt: Success" <<< "$checks"
+    checks=$(LC_ALL=C sssctl user-checks -a acct -s frdpd "$deny_user" 2>&1 || true)
+    grep -Fq "pam_acct_mgmt: Permission denied" <<< "$checks"
+  }
 
   assert_real_services() {
     local attempt argv0 binary comm entry pid unit
@@ -209,6 +227,7 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
       adcli testjoin --domain=ad.test --domain-controller=dc.ad.test >/dev/null
       getent passwd "$test_user" >/dev/null
       id -nG "$test_user" | tr " " "\n" | grep -Fxq rdp-users
+      assert_samba_gpo_policy
     fi
   }
 
@@ -224,6 +243,50 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
     FRDP_SESSION_TIMEOUT=30 \
     FRDP_ARTIFACT_DIR="/tmp/lifecycle-smoke-$stage" \
       /tmp/rdp-session-smoke.sh
+  }
+
+  run_samba_gpo_denial() {
+    local auth_only_arg help_output journal_cursor stage=$1 status=0
+    local artifacts="/tmp/lifecycle-gpo-$1"
+
+    [[ "$FRDP_LIFECYCLE_PROVIDER" == samba ]]
+    help_output=$(xfreerdp3 /help 2>&1 || true)
+    if grep -q "/auth-only" <<< "$help_output"; then
+      auth_only_arg=/auth-only
+    else
+      grep -q "+auth-only" <<< "$help_output"
+      auth_only_arg=+auth-only
+    fi
+    mkdir -p "$artifacts"
+    journal_cursor=$(journalctl -u frdpd.service -n 1 --show-cursor --no-pager | \
+      sed -n "s/^-- cursor: //p")
+    test -n "$journal_cursor"
+    if timeout 20 xvfb-run -a xfreerdp3 \
+         /v:127.0.0.1:3389 "/u:$deny_user" "/p:$deny_password" \
+         "${client_domain_args[@]}" /cert:ignore /sec:nla \
+         /size:800x600 /bpp:24 /audio-mode:2 /network:modem \
+         -gfx -disp -dynamic-resolution -clipboard -heartbeat -multitransport \
+         -auto-reconnect /log-level:INFO "$auth_only_arg" \
+         > "$artifacts/client.log" 2>&1; then
+      status=0
+    else
+      status=$?
+    fi
+    case "$status" in
+      0|124|125|126|127) return 1 ;;
+    esac
+    journalctl --sync
+    journalctl -u frdpd.service --after-cursor "$journal_cursor" --no-pager \
+      > "$artifacts/server.log"
+    grep -F "PAM rejected RDP login for $deny_user from" "$artifacts/server.log" |
+      grep -Fq ": denied "
+    ! grep -Fq "Message Integrity Check (MIC) verification failed" \
+      "$artifacts/server.log"
+    frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
+      > "$artifacts/session-list.txt"
+    grep -Fxq "No active sessions" "$artifacts/session-list.txt"
+    test -z "$(find /run/frdp-sesmand -mindepth 1 ! -name sesmand.sock -print -quit)"
+    printf "stage=%s user=%s result=gpo-denied\n" "$stage" "$deny_user"
   }
 
   run_failed_auth_only() {
@@ -582,7 +645,7 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
   }
 
   configure_samba_identity() {
-    local checks i
+    local i
 
     for i in $(seq 1 120); do
       if getent hosts dc.ad.test >/dev/null 2>&1 &&
@@ -639,7 +702,8 @@ use_fully_qualified_names = false
 fallback_homedir = /home/%u
 default_shell = /bin/bash
 dyndns_update = false
-ad_gpo_access_control = permissive
+ad_gpo_access_control = enforcing
+ad_gpo_map_remote_interactive = +frdpd
 EOF
     chmod 0600 /etc/sssd/sssd.conf
     for database in passwd group; do
@@ -667,10 +731,8 @@ EOF
     done
     getent passwd "$test_user"
     id -nG "$test_user" | tr " " "\n" | grep -Fxq rdp-users
-    checks=$(LC_ALL=C sssctl user-checks -a acct -s frdpd "$test_user" 2>&1)
-    grep -Fq "pam_acct_mgmt: Success" <<< "$checks"
-    checks=$(LC_ALL=C sssctl user-checks -a acct -s frdpd rdpdisabled 2>&1 || true)
-    grep -Fq "pam_acct_mgmt: Permission denied" <<< "$checks"
+    getent passwd "$deny_user"
+    assert_samba_gpo_policy
   }
 
   echo "stage=install"
@@ -709,11 +771,18 @@ EOF
   chmod 0644 /etc/frdpd/tls.crt
   printf "%s" "$test_password" | \
     winpr-hash -u "$test_user" --password-stdin -f sam > /etc/frdpd/ntlm.sam
+  if [[ "$FRDP_LIFECYCLE_PROVIDER" == samba ]]; then
+    printf "%s" "$deny_password" | \
+      winpr-hash -u "$deny_user" --password-stdin -f sam >> /etc/frdpd/ntlm.sam
+  fi
   chmod 0600 /etc/frdpd/ntlm.sam
   secret_hashes=$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)
   systemctl enable --now frdpd.service
   assert_real_services
   run_session_smoke base
+  if [[ "$FRDP_LIFECYCLE_PROVIDER" == samba ]]; then
+    run_samba_gpo_denial base
+  fi
   echo "stage=active-sesmand-crash"
   assert_sesmand_active_session_recovery
   echo "stage=authd-outage"
@@ -758,6 +827,9 @@ EOF
   assert_real_services
   assert_transition_session_closed
   run_session_smoke upgrade
+  if [[ "$FRDP_LIFECYCLE_PROVIDER" == samba ]]; then
+    run_samba_gpo_denial upgrade
+  fi
   for unit in frdp-authd.service frdp-sesmand.service frdpd.service; do
     systemctl show --property=InvocationID --value "$unit"
   done > /tmp/invocations-upgrade
@@ -780,6 +852,9 @@ EOF
   assert_real_services
   assert_transition_session_closed
   run_session_smoke rollback
+  if [[ "$FRDP_LIFECYCLE_PROVIDER" == samba ]]; then
+    run_samba_gpo_denial rollback
+  fi
   for unit in frdp-authd.service frdp-sesmand.service frdpd.service; do
     systemctl show --property=InvocationID --value "$unit"
   done > /tmp/invocations-rollback
@@ -814,6 +889,7 @@ EOF
     "$secret_hashes"
   rm -rf /etc/frdpd
 
-  printf "provider=%s\nbase=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback\nactive_helper_crash=frdp-sesmand\ninflight_helper_crash=frdp-authd\nhelper_outage=frdp-authd,frdp-sesmand\nactive_transition=upgrade,rollback\nresult=pass\n" \
-    "$FRDP_LIFECYCLE_PROVIDER" "$base_version" "$upgrade_version" "$base_version"
+  printf "provider=%s\nbase=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback\ngpo_policy=%s\nactive_helper_crash=frdp-sesmand\ninflight_helper_crash=frdp-authd\nhelper_outage=frdp-authd,frdp-sesmand\nactive_transition=upgrade,rollback\nresult=pass\n" \
+    "$FRDP_LIFECYCLE_PROVIDER" "$base_version" "$upgrade_version" "$base_version" \
+    "$gpo_policy"
 '

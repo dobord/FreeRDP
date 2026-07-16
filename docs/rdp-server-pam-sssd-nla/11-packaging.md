@@ -104,8 +104,11 @@ Open reproducibility gaps:
   packaged command.
 - Installed package validation now joins a package host to Samba AD, verifies
   SSSD account and supplementary-group policy, and holds real-client sessions
-  across package upgrade/rollback. It proves bounded old-session cleanup, fresh
-  domain login/reconnect, and an unchanged SSSD service and machine join at each
+  across package upgrade/rollback. It also keeps SSSD GPO access control in
+  enforcing mode and proves an enabled remote-interactive deny user reaches
+  PAM and leaves no session artifacts at the base, upgraded, and rolled-back
+  versions. The gate proves bounded old-session cleanup, fresh allowed-domain
+  login/reconnect, and an unchanged SSSD service and machine join at each
   package version. Other providers and enforcing SELinux/AppArmor mode remain
   open; local PAM is covered independently at the same transitions.
 - Successful Debian and Fedora package-job history still needs to accumulate,

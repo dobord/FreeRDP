@@ -31,7 +31,9 @@ making the current canonical helper topology repeatably green.
 The Samba evidence includes a domain-root security GPO with explicit
 remote-interactive allow/deny rights, SSSD enforcing mode, `frdpd` PAM-service
 mapping, and both preflight `sssctl` and real NLA/PAM outcomes for enabled
-allowed and denied users.
+allowed and denied users. The installed Ubuntu DEB lifecycle repeats the real
+denied-user proof without session artifacts at base, upgrade, and rollback
+while preserving the machine join and SSSD invocation.
 
 ## Highest-value implementation order
 

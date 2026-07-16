@@ -190,6 +190,8 @@ jobs:
             tee "$artifacts/systemd-lifecycle.txt"
           grep -Fxq "auth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback" \
             "$artifacts/systemd-lifecycle.txt"
+          grep -Fxq "gpo_policy=not-applicable" \
+            "$artifacts/systemd-lifecycle.txt"
           grep -Fxq "active_helper_crash=frdp-sesmand" \
             "$artifacts/systemd-lifecycle.txt"
           grep -Fxq "inflight_helper_crash=frdp-authd" \
@@ -204,6 +206,8 @@ jobs:
           grep -Fxq "provider=samba" \
             "$artifacts/systemd-lifecycle-samba.txt"
           grep -Fxq "auth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback" \
+            "$artifacts/systemd-lifecycle-samba.txt"
+          grep -Fxq "gpo_policy=base,upgrade,rollback" \
             "$artifacts/systemd-lifecycle-samba.txt"
           grep -Fxq "active_helper_crash=frdp-sesmand" \
             "$artifacts/systemd-lifecycle-samba.txt"
