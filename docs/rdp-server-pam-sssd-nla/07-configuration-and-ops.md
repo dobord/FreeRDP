@@ -32,6 +32,8 @@ session_socket = "/run/frdp-sesmand/sesmand.sock"
 # Also apply those limits through a transient per-session systemd scope.
 # Keep false where no system manager/system bus is available.
 # systemd_scope = false
+# Optional per-session CPU capacity; 100 is one CPU. Requires systemd_scope=true.
+# cpu_quota_percent = 100
 # agent_heartbeat_interval_ms = 5000
 # agent_heartbeat_timeout_ms = 500
 # agent_heartbeat_failures = 3
@@ -195,12 +197,13 @@ restrictions, `SystemCallArchitectures=native`, and explicit write access only t
 manager and its launched desktop agent process groups. Per-session agents always receive configured
 POSIX `RLIMIT_NPROC` and `RLIMIT_AS` guards. With `[session].systemd_scope = true`, the manager holds
 each child behind a launch barrier while it creates a transient `frdp-session-<uuid>.scope`, moves the
-child PID into it, maps the same limits to `TasksMax` and `MemoryMax`, and confirms active state. Startup,
+child PID into it, maps the same limits to `TasksMax` and `MemoryMax`, applies an optional static
+`CPUQuotaPerSecUSec`, and confirms active state. Startup,
 reload, asynchronous unit creation, and session creation fail closed when requested ownership cannot be
 established. Durable metadata drives restart cleanup; stale bus handles reconnect, and bounded stop falls
 back to cgroup-v2 `cgroup.kill` plus the process-group guard. Leave the setting disabled
-without a system manager/system bus. systemd-logind registration, lost-PAM-handle reconciliation, CPU
-quotas, and production dynamic quota management remain open.
+without a system manager/system bus. systemd-logind registration, lost-PAM-handle reconciliation, and
+production dynamic quota management remain open.
 
 SELinux and AppArmor draft profiles install as inactive examples under `/usr/share/frdpd/security`. They are
 not loaded automatically and must be reviewed, adapted, and validated for the target distribution before use.

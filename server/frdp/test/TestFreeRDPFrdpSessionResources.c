@@ -151,25 +151,29 @@ static int test_session_capacity_policy(void)
 
 static int test_systemd_scope_policy(void)
 {
-	const frdpSessionResourcePolicy policy = { .max_processes = 77,
-		                                       .memory_max_mb = 1536,
-		                                       .systemd_scope = 1 };
+	const frdpSessionResourcePolicy policy = {
+		.max_processes = 77, .memory_max_mb = 1536, .cpu_quota_percent = 250, .systemd_scope = 1
+	};
 	char name[FRDP_SESMAND_SCOPE_NAME_SIZE] = { 0 };
 	uint64_t tasks_max = 0;
 	uint64_t memory_max = 0;
+	uint64_t cpu_quota_per_sec_usec = 0;
 
 	if (frdp_sesmand_scope_name("01234567-89ab-cdef-0123-456789abcdef", name, sizeof(name)) != 0 ||
 	    strcmp(name, "frdp-session-01234567-89ab-cdef-0123-456789abcdef.scope") != 0)
 		return -1;
-	if ((frdp_sesmand_scope_limits(&policy, &tasks_max, &memory_max) != 0) || (tasks_max != 77U) ||
-	    (memory_max != 1536ULL * 1024ULL * 1024ULL))
+	if ((frdp_sesmand_scope_limits(&policy, &tasks_max, &memory_max, &cpu_quota_per_sec_usec) !=
+	     0) ||
+	    (tasks_max != 77U) || (memory_max != 1536ULL * 1024ULL * 1024ULL) ||
+	    (cpu_quota_per_sec_usec != 2500000ULL))
 		return -1;
 	if ((frdp_sesmand_scope_name("01234567-89AB-cdef-0123-456789abcdef", name, sizeof(name)) ==
 	     0) ||
 	    (frdp_sesmand_scope_name("../invalid", name, sizeof(name)) == 0) ||
 	    (frdp_sesmand_scope_name("01234567-89ab-cdef-0123-456789abcdef", name, 8U) == 0) ||
-	    (frdp_sesmand_scope_limits(NULL, &tasks_max, &memory_max) == 0) ||
-	    (frdp_sesmand_scope_limits(&policy, NULL, &memory_max) == 0))
+	    (frdp_sesmand_scope_limits(NULL, &tasks_max, &memory_max, &cpu_quota_per_sec_usec) == 0) ||
+	    (frdp_sesmand_scope_limits(&policy, NULL, &memory_max, &cpu_quota_per_sec_usec) == 0) ||
+	    (frdp_sesmand_scope_limits(&policy, &tasks_max, &memory_max, NULL) == 0))
 		return -1;
 	return 0;
 }

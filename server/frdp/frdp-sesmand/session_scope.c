@@ -67,15 +67,19 @@ static int scope_name_is_valid(const char* name)
 }
 
 int frdp_sesmand_scope_limits(const frdpSessionResourcePolicy* policy, uint64_t* tasks_max,
-                              uint64_t* memory_max)
+                              uint64_t* memory_max, uint64_t* cpu_quota_per_sec_usec)
 {
 	const uint64_t mb = 1024ULL * 1024ULL;
+	const uint64_t percent_usec = 10000ULL;
 
-	if (!policy || !tasks_max || !memory_max)
+	if (!policy || !tasks_max || !memory_max || !cpu_quota_per_sec_usec)
 		return -1;
 	*tasks_max = policy->max_processes;
 	*memory_max = (uint64_t)policy->memory_max_mb * mb;
+	*cpu_quota_per_sec_usec = (uint64_t)policy->cpu_quota_percent * percent_usec;
 	if ((*memory_max / mb) != policy->memory_max_mb)
+		return -1;
+	if ((*cpu_quota_per_sec_usec / percent_usec) != policy->cpu_quota_percent)
 		return -1;
 	return 0;
 }
@@ -277,11 +281,13 @@ int frdp_sesmand_scope_start(frdpSesmandScopeManager* manager, const char* sessi
 	sd_bus_message* reply = NULL;
 	uint64_t tasks_max = 0;
 	uint64_t memory_max = 0;
+	uint64_t cpu_quota_per_sec_usec = 0;
 	int rc = -1;
 
 	if (!manager || (pid <= 0) || ((uint64_t)pid > UINT32_MAX) ||
 	    (frdp_sesmand_scope_name(session_id, name, name_size) != 0) ||
-	    (frdp_sesmand_scope_limits(policy, &tasks_max, &memory_max) != 0) ||
+	    (frdp_sesmand_scope_limits(policy, &tasks_max, &memory_max, &cpu_quota_per_sec_usec) !=
+	     0) ||
 	    (frdp_sesmand_scope_manager_init(manager) != 0))
 		return -1;
 	rc = sd_bus_message_new_method_call((sd_bus*)manager->bus, &message, "org.freedesktop.systemd1",
@@ -303,6 +309,9 @@ int frdp_sesmand_scope_start(frdpSesmandScopeManager* manager, const char* sessi
 	if ((tasks_max > 0U) && ((rc = append_uint64_property(message, "TasksMax", tasks_max)) < 0))
 		goto cleanup;
 	if ((memory_max > 0U) && ((rc = append_uint64_property(message, "MemoryMax", memory_max)) < 0))
+		goto cleanup;
+	if ((cpu_quota_per_sec_usec > 0U) &&
+	    ((rc = append_uint64_property(message, "CPUQuotaPerSecUSec", cpu_quota_per_sec_usec)) < 0))
 		goto cleanup;
 	if ((rc = sd_bus_message_close_container(message)) < 0 ||
 	    (rc = sd_bus_message_open_container(message, SD_BUS_TYPE_ARRAY, "(sa(sv))")) < 0 ||

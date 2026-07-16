@@ -11,6 +11,7 @@
 #define FRDP_CLIPBOARD_MAX_TEXT_BYTES_LIMIT 1048576U
 #define FRDP_SESSION_MAX_PROCESSES_LIMIT 1048576U
 #define FRDP_SESSION_MEMORY_MAX_MB_LIMIT 1048576U
+#define FRDP_SESSION_CPU_QUOTA_PERCENT_LIMIT 10000U
 
 static int copy_string(char *dst, size_t dst_size, const char *src)
 {
@@ -384,6 +385,11 @@ static int validate_session_resource_policy(const frdpConfig *config)
         return -1;
     if (config->session_resources.memory_max_mb > FRDP_SESSION_MEMORY_MAX_MB_LIMIT)
         return -1;
+    if (config->session_resources.cpu_quota_percent > FRDP_SESSION_CPU_QUOTA_PERCENT_LIMIT)
+        return -1;
+    if ((config->session_resources.cpu_quota_percent > 0) &&
+        !config->session_resources.systemd_scope)
+        return -1;
     return 0;
 }
 
@@ -455,6 +461,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_session_max_sessions = 0;
     int seen_session_max_processes = 0;
     int seen_session_memory_max_mb = 0;
+    int seen_session_cpu_quota_percent = 0;
     int seen_session_systemd_scope = 0;
     int seen_session_heartbeat_interval_ms = 0;
     int seen_session_heartbeat_timeout_ms = 0;
@@ -594,6 +601,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
                                      ((strcmp(key, "max_processes") == 0) ||
                                        (strcmp(key, "max_sessions") == 0) ||
                                        (strcmp(key, "memory_max_mb") == 0) ||
+                                       (strcmp(key, "cpu_quota_percent") == 0) ||
                                        (strcmp(key, "systemd_scope") == 0) ||
                                        (strcmp(key, "agent_heartbeat_interval_ms") == 0) ||
                                        (strcmp(key, "agent_heartbeat_timeout_ms") == 0) ||
@@ -837,6 +845,18 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 }
                 seen_session_memory_max_mb = 1;
                 if (parse_uint32_limit(val, &config->session_resources.memory_max_mb) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "cpu_quota_percent") == 0)
+            {
+                if (seen_session_cpu_quota_percent) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_session_cpu_quota_percent = 1;
+                if (parse_uint32_limit(val, &config->session_resources.cpu_quota_percent) != 0) {
                     fclose(f);
                     return -1;
                 }

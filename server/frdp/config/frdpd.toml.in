@@ -42,6 +42,9 @@ display_backend = "xvfb"
 # Place each new desktop agent and its descendants in a fail-closed transient
 # systemd scope before exec. Keep false without a usable system manager/bus.
 # systemd_scope = false
+# Optional CPU capacity for that scope as a percentage. 100 is one CPU and
+# values above 100 permit multiple CPUs. Requires systemd_scope=true.
+# cpu_quota_percent = 100
 # agent_heartbeat_interval_ms = 5000
 # agent_heartbeat_timeout_ms = 500
 # agent_heartbeat_failures = 3

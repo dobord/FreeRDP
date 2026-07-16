@@ -352,6 +352,7 @@ static int test_session_scope(void)
 	frdpSessionResourcePolicy policy = {
 		.max_processes = 17,
 		.memory_max_mb = 64,
+		.cpu_quota_percent = 25,
 		.systemd_scope = 1,
 	};
 	uuid_t session_uuid = { 0 };
@@ -388,6 +389,7 @@ static int test_session_scope(void)
 		                  "--property=ControlGroup",
 		                  "--property=TasksMax",
 		                  "--property=MemoryMax",
+		                  "--property=CPUQuotaPerSecUSec",
 		                  scope_name,
 		                  NULL };
 	char* stopped_argv[] = { (char*)FRDP_SYSTEMCTL_BINARY,
@@ -456,6 +458,7 @@ static int test_session_scope(void)
 	    !output_has_line(properties, expected_cgroup) ||
 	    !output_has_line(properties, "TasksMax=17") ||
 	    !output_has_line(properties, "MemoryMax=67108864") ||
+	    !output_has_line(properties, "CPUQuotaPerSecUSec=250ms") ||
 	    !process_is_in_scope(child, scope_name))
 		goto cleanup;
 	stage = "detached descendant";

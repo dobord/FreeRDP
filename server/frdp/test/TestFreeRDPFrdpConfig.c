@@ -66,6 +66,8 @@ static int test_default_blocklist(void)
 		return -1;
 	if (config.session_resources.memory_max_mb != 0)
 		return -1;
+	if (config.session_resources.cpu_quota_percent != 0)
+		return -1;
 	if (config.session_resources.systemd_scope != 0)
 		return -1;
 	if (config.session_heartbeat.interval_ms != FRDP_SESSION_HEARTBEAT_DEFAULT_INTERVAL_MS)
@@ -189,6 +191,7 @@ static int test_server_auth_session_fields(void)
 	                   "max_sessions = 32\n"
 	                   "max_processes = 128\n"
 	                   "memory_max_mb = 2048\n"
+	                   "cpu_quota_percent = 250\n"
 	                   "systemd_scope = true\n";
 
 	if (load_config_body("frdp-server-auth-session.toml", body, &config) != 0)
@@ -227,6 +230,8 @@ static int test_server_auth_session_fields(void)
 		return -1;
 	if (config.session_resources.memory_max_mb != 2048)
 		return -1;
+	if (config.session_resources.cpu_quota_percent != 250)
+		return -1;
 	if (config.session_resources.systemd_scope != 1)
 		return -1;
 	return 0;
@@ -248,14 +253,16 @@ static int test_session_resource_policy(void)
 		return -1;
 	if (config.session_resources.systemd_scope != 0)
 		return -1;
-	if (load_config_body("frdp-session-systemd-scope.toml", "[session]\nsystemd_scope = true\n",
+	if (load_config_body("frdp-session-systemd-scope.toml",
+	                     "[session]\nsystemd_scope = true\ncpu_quota_percent = 250\n",
 	                     &config) != 0)
 		return -1;
-	if (config.session_resources.systemd_scope != 1)
+	if ((config.session_resources.systemd_scope != 1) ||
+	    (config.session_resources.cpu_quota_percent != 250))
 		return -1;
 	if (load_config_body("frdp-session-resource-unlimited.toml",
 	                     "[session]\nmax_sessions = 0\nmax_processes = 0\nmemory_max_mb = 0\n"
-	                     "systemd_scope = false\n",
+	                     "cpu_quota_percent = 0\nsystemd_scope = false\n",
 	                     &config) != 0)
 		return -1;
 	if (config.session_resources.max_sessions != 0)
@@ -263,6 +270,8 @@ static int test_session_resource_policy(void)
 	if (config.session_resources.max_processes != 0)
 		return -1;
 	if (config.session_resources.memory_max_mb != 0)
+		return -1;
+	if (config.session_resources.cpu_quota_percent != 0)
 		return -1;
 	if (config.session_resources.systemd_scope != 0)
 		return -1;
@@ -905,6 +914,22 @@ static int test_invalid_channel_config(void)
 		return -1;
 	if (expect_load_failure("frdp-too-large-session-memory-max.toml",
 	                        "[session]\nmemory_max_mb = 1048577\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-session-cpu-quota.toml",
+	                        "[session]\ncpu_quota_percent = 100\ncpu_quota_percent = 200\n"
+	                        "systemd_scope = true\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-negative-session-cpu-quota.toml",
+	                        "[session]\ncpu_quota_percent = -1\nsystemd_scope = true\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-quoted-session-cpu-quota.toml",
+	                        "[session]\ncpu_quota_percent = \"100\"\nsystemd_scope = true\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-too-large-session-cpu-quota.toml",
+	                        "[session]\ncpu_quota_percent = 10001\nsystemd_scope = true\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-session-cpu-quota-without-scope.toml",
+	                        "[session]\ncpu_quota_percent = 100\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-duplicate-session-systemd-scope.toml",
 	                        "[session]\nsystemd_scope = true\nsystemd_scope = false\n") != 0)
