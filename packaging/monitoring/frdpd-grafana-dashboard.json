@@ -268,8 +268,8 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "frdp_sessions_active",
-          "legendFormat": "{{socket}} active",
+          "expr": "frdp_sessions_managed",
+          "legendFormat": "{{socket}} managed",
           "refId": "A"
         },
         {
@@ -554,7 +554,7 @@
           "refId": "A"
         }
       ],
-      "title": "Active Session Details",
+      "title": "Managed Session Details",
       "type": "table"
     }
   ],

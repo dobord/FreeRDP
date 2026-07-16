@@ -86,7 +86,7 @@ set(success_socket "/tmp/frdp-\"quoted\"-socket")
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env "PATH=${fake_bin_dir}:$ENV{PATH}" FRDP_FAKE_MODE=detail
           "${BASH_EXECUTABLE}" "${FRDP_MONITORING_SCRIPT}" --socket "${success_socket}"
-          --output "${output_file}" --max-connections 10
+          --output "${output_file}" --max-sessions 10
   RESULT_VARIABLE result
   OUTPUT_VARIABLE stdout
   ERROR_VARIABLE stderr)
@@ -100,7 +100,8 @@ foreach(expected
         "frdp_sesmand_reachable{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 1"
         "frdp_exporter_scrape_success{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 1"
         "frdp_exporter_last_scrape_timestamp_seconds{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"}"
-        "frdp_sessions_active{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 2"
+	        "frdp_sessions_active{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 2"
+	        "frdp_sessions_managed{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 2"
         "frdp_sessions_detail_scrape_success{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 1"
         "frdp_sessions_info{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\",session_id=\"session-1\",user=\"alice\",display=\":20\",state=\"active\",agent_pid=\"1001\"} 1"
         "frdp_sessions_info{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\",session_id=\"session-2\",user=\"bob\",display=\":21\",state=\"disconnected\",agent_pid=\"1002\"} 1"
@@ -132,7 +133,8 @@ foreach(expected
         "frdp_sesmand_reachable{socket=\"/tmp/frdp-error\"} 0"
         "frdp_exporter_scrape_success{socket=\"/tmp/frdp-error\"} 0"
         "frdp_exporter_last_scrape_timestamp_seconds{socket=\"/tmp/frdp-error\"}"
-        "frdp_sessions_active{socket=\"/tmp/frdp-error\"} 0"
+	        "frdp_sessions_active{socket=\"/tmp/frdp-error\"} 0"
+	        "frdp_sessions_managed{socket=\"/tmp/frdp-error\"} 0"
         "frdp_sessions_detail_scrape_success{socket=\"/tmp/frdp-error\"} 0"
         "frdp_exporter_last_error{socket=\"/tmp/frdp-error\"} 1")
   expect_contains("${metrics}" "${expected}" "failed scrape metrics")
@@ -147,7 +149,7 @@ set(malformed_socket "/tmp/frdp-malformed")
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env "PATH=${fake_bin_dir}:$ENV{PATH}" FRDP_FAKE_MODE=missing-count
           "${BASH_EXECUTABLE}" "${FRDP_MONITORING_SCRIPT}" --socket "${malformed_socket}"
-          --output "${output_file}" --max-connections 10
+          --output "${output_file}" --max-sessions 10
   RESULT_VARIABLE result
   OUTPUT_VARIABLE stdout
   ERROR_VARIABLE stderr)
@@ -161,7 +163,8 @@ foreach(expected
         "frdp_sesmand_reachable{socket=\"/tmp/frdp-malformed\"} 1"
         "frdp_exporter_scrape_success{socket=\"/tmp/frdp-malformed\"} 0"
         "frdp_exporter_last_scrape_timestamp_seconds{socket=\"/tmp/frdp-malformed\"}"
-        "frdp_sessions_active{socket=\"/tmp/frdp-malformed\"} 0"
+	        "frdp_sessions_active{socket=\"/tmp/frdp-malformed\"} 0"
+	        "frdp_sessions_managed{socket=\"/tmp/frdp-malformed\"} 0"
         "frdp_sessions_detail_scrape_success{socket=\"/tmp/frdp-malformed\"} 0"
         "frdp_sessions_max{socket=\"/tmp/frdp-malformed\"} 10"
         "frdp_exporter_last_error{socket=\"/tmp/frdp-malformed\"} 1")
@@ -179,7 +182,7 @@ set(detail_error_socket "/tmp/frdp-detail-error")
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env "PATH=${fake_bin_dir}:$ENV{PATH}" FRDP_FAKE_MODE=detail-error
           "${BASH_EXECUTABLE}" "${FRDP_MONITORING_SCRIPT}" --socket "${detail_error_socket}"
-          --output "${output_file}" --max-connections 10
+          --output "${output_file}" --max-sessions 10
   RESULT_VARIABLE result
   OUTPUT_VARIABLE stdout
   ERROR_VARIABLE stderr)
@@ -192,7 +195,8 @@ file(READ "${output_file}" metrics)
 foreach(expected
         "frdp_sesmand_reachable{socket=\"/tmp/frdp-detail-error\"} 1"
         "frdp_exporter_scrape_success{socket=\"/tmp/frdp-detail-error\"} 1"
-        "frdp_sessions_active{socket=\"/tmp/frdp-detail-error\"} 2"
+	        "frdp_sessions_active{socket=\"/tmp/frdp-detail-error\"} 2"
+	        "frdp_sessions_managed{socket=\"/tmp/frdp-detail-error\"} 2"
         "frdp_sessions_detail_scrape_success{socket=\"/tmp/frdp-detail-error\"} 0"
         "frdp_sessions_utilization_ratio{socket=\"/tmp/frdp-detail-error\"} 0.200000"
         "frdp_exporter_last_error{socket=\"/tmp/frdp-detail-error\"} 1")
@@ -206,17 +210,47 @@ expect_not_contains("${metrics}" "frdp_sessions_info{socket=\"/tmp/frdp-detail-e
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env "PATH=${fake_bin_dir}:$ENV{PATH}"
           "${BASH_EXECUTABLE}" "${FRDP_MONITORING_SCRIPT}" --socket "${success_socket}"
-          --output "${output_file}" --max-connections 0
+          --output "${output_file}" --max-sessions 65
   RESULT_VARIABLE result
   OUTPUT_VARIABLE stdout
   ERROR_VARIABLE stderr)
 
 if(NOT result EQUAL 2)
-  message(FATAL_ERROR "invalid max-connections returned ${result}, expected 2")
+	message(FATAL_ERROR "invalid max-sessions returned ${result}, expected 2")
 endif()
-if(NOT stderr MATCHES "max connections must be a positive integer")
-  message(FATAL_ERROR "invalid max-connections did not report the expected error: ${stderr}")
+if(NOT stderr MATCHES "max sessions must be an integer in the range 0..64")
+	message(FATAL_ERROR "invalid max-sessions did not report the expected error: ${stderr}")
 endif()
+
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env "PATH=${fake_bin_dir}:$ENV{PATH}"
+          "${BASH_EXECUTABLE}" "${FRDP_MONITORING_SCRIPT}" --socket "${success_socket}"
+          --output "${output_file}" --max-sessions ""
+  RESULT_VARIABLE result
+  OUTPUT_VARIABLE stdout
+  ERROR_VARIABLE stderr)
+if(NOT result EQUAL 2)
+  message(FATAL_ERROR "empty max-sessions returned ${result}, expected 2")
+endif()
+if(NOT stderr MATCHES "max sessions must be an integer in the range 0..64")
+  message(FATAL_ERROR "empty max-sessions did not report the expected error: ${stderr}")
+endif()
+
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env "PATH=${fake_bin_dir}:$ENV{PATH}" FRDP_FAKE_MODE=detail
+          FRDP_MAX_SESSIONS=0 "${BASH_EXECUTABLE}" "${FRDP_MONITORING_SCRIPT}"
+          --socket "${success_socket}" --output "${output_file}"
+  RESULT_VARIABLE result
+  OUTPUT_VARIABLE stdout
+  ERROR_VARIABLE stderr)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "unlimited max-sessions case failed: ${stderr}\n${stdout}")
+endif()
+file(READ "${output_file}" metrics)
+expect_contains("${metrics}" "frdp_sessions_max{socket=\"/tmp/frdp-\\\"quoted\\\"-socket\"} 0"
+                "unlimited max-sessions metrics")
+expect_not_contains("${metrics}" "frdp_sessions_utilization_ratio"
+                    "unlimited max-sessions metrics")
 
 file(READ "${FRDP_PROMETHEUS_ALERTS}" alerts)
 foreach(expected
@@ -228,8 +262,9 @@ foreach(expected
         "expr: frdp_sessions_detail_scrape_success == 0"
         "alert: FRDPTextfileCollectorStale"
         "expr: time() - frdp_exporter_last_scrape_timestamp_seconds > 300"
-        "alert: FRDPSessionCapacityHigh"
-        "expr: frdp_sessions_utilization_ratio > 0.9"
+	        "alert: FRDPSessionCapacityHigh"
+	        "expr: frdp_sessions_utilization_ratio > 0.9"
+	        "Managed FRDP sessions are above 90% of the configured session.max_sessions admission limit"
         "alert: FRDPSessionCleanupStuck"
         "expr: frdp_sessions_state{state=~\"stopping|dead\"} > 0")
   expect_contains("${alerts}" "${expected}" "Prometheus alerts")
@@ -242,14 +277,15 @@ foreach(expected
         "\"expr\": \"frdp_sesmand_reachable\""
         "\"expr\": \"frdp_exporter_scrape_success\""
         "\"expr\": \"time() - frdp_exporter_last_scrape_timestamp_seconds\""
-        "\"expr\": \"frdp_sessions_active\""
+	        "\"expr\": \"frdp_sessions_managed\""
+	        "\"legendFormat\": \"{{socket}} managed\""
         "\"expr\": \"frdp_sessions_max\""
         "\"expr\": \"frdp_sessions_utilization_ratio\""
         "\"expr\": \"frdp_sessions_detail_scrape_success\""
         "\"expr\": \"frdp_sessions_info\""
         "\"expr\": \"frdp_sessions_state\""
         "\"title\": \"Session States\""
-        "\"title\": \"Active Session Details\""
+	        "\"title\": \"Managed Session Details\""
         "\"type\": \"prometheus\"")
   expect_contains("${dashboard}" "${expected}" "Grafana dashboard")
 endforeach()

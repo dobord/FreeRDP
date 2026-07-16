@@ -44,7 +44,7 @@ groups:
           severity: warning
         annotations:
           summary: "FRDP session capacity is high"
-          description: "Active FRDP sessions are above 90% of the configured max_connections value for {{ $labels.socket }}."
+          description: "Managed FRDP sessions are above 90% of the configured session.max_sessions admission limit for {{ $labels.socket }}."
 
       - alert: FRDPSessionCleanupStuck
         expr: frdp_sessions_state{state=~"stopping|dead"} > 0

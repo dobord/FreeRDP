@@ -75,16 +75,17 @@ The package installs starter monitoring examples under
 
 - `frdpd-node-exporter-textfile.sh` calls `frdpctl status` and writes
   Prometheus node_exporter textfile metrics for session-manager reachability,
-  scrape success, collector freshness and active sessions. Set
-  `FRDP_MAX_CONNECTIONS` or pass `--max-connections` to emit the optional
-  capacity and utilization metrics used by the alert rules.
+  scrape success, collector freshness and managed sessions. Set
+  `FRDP_MAX_SESSIONS` or pass `--max-sessions` with the configured
+  `[session].max_sessions` value to emit capacity metrics. `0` records an
+  unlimited admission policy and intentionally omits the utilization ratio.
 - `frdpd-prometheus-alerts.yml` contains starter alerts for an unreachable
   session manager, failed or stale textfile scrapes and high session capacity.
 
 Example cron or systemd timer command:
 
 ```bash
-FRDP_MAX_CONNECTIONS=64 \
+FRDP_MAX_SESSIONS=64 \
   /usr/share/frdpd/monitoring/frdpd-node-exporter-textfile.sh \
     --socket /run/frdp-sesmand/sesmand.sock \
     --output /var/lib/node_exporter/textfile_collector/frdpd.prom
@@ -92,10 +93,11 @@ FRDP_MAX_CONNECTIONS=64 \
 
 These examples currently export:
 
-- Number of active sessions from `frdpctl status`.
-- Configured peer-worker limit and active-session-to-worker utilization ratio
-  when `max_connections` is supplied to the collector. The collector does not
-  yet export `[session].max_sessions`.
+- Number of sessions managed by `frdp-sesmand`, including disconnected
+  reconnect targets. The historical `frdp_sessions_active` metric is retained
+  for compatibility; new dashboards use `frdp_sessions_managed`.
+- Configured `[session].max_sessions` admission limit and managed-session
+  utilization ratio when a nonzero limit is supplied to the collector.
 - Session-manager control-socket reachability.
 - Textfile scrape freshness, success or the last scrape error.
 

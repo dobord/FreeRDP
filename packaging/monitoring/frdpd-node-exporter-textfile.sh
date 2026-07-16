@@ -3,21 +3,27 @@ set -Eeuo pipefail
 
 socket=/run/frdp-sesmand/sesmand.sock
 output=/var/lib/node_exporter/textfile_collector/frdpd.prom
-max_connections=${FRDP_MAX_CONNECTIONS:-}
+max_sessions=
+max_sessions_set=0
+if [[ ${FRDP_MAX_SESSIONS+x} ]]; then
+	max_sessions=$FRDP_MAX_SESSIONS
+	max_sessions_set=1
+fi
 
 usage()
 {
 	cat >&2 <<EOF
-Usage: $0 [--socket <path>] [--output <path>] [--max-connections <count>]
+Usage: $0 [--socket <path>] [--output <path>] [--max-sessions <count>]
 
 Scrape frdp-sesmand through frdpctl and write Prometheus node_exporter
 textfile metrics atomically.
 EOF
 }
 
-positive_integer()
+valid_session_limit()
 {
-	[[ $1 =~ ^[1-9][0-9]*$ ]]
+	[[ $1 =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+	[[ ${#1} -le 2 ]] && ((10#$1 <= 64))
 }
 
 escape_label()
@@ -45,7 +51,7 @@ record_session_state()
 
 	for index in "${!session_states[@]}"; do
 		if [[ ${session_states[$index]} == "$state" ]]; then
-			session_state_counts[$index]=$((session_state_counts[$index] + 1))
+			session_state_counts[index]=$((session_state_counts[index] + 1))
 			return
 		fi
 	done
@@ -65,9 +71,10 @@ while [[ $# -gt 0 ]]; do
 			output=$2
 			shift 2
 			;;
-		--max-connections)
+		--max-sessions)
 			[[ $# -ge 2 ]] || { usage; exit 2; }
-			max_connections=$2
+			max_sessions=$2
+			max_sessions_set=1
 			shift 2
 			;;
 		-h|--help)
@@ -81,8 +88,8 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-if [[ -n $max_connections ]] && ! positive_integer "$max_connections"; then
-	echo "max connections must be a positive integer" >&2
+if [[ $max_sessions_set -eq 1 ]] && ! valid_session_limit "$max_sessions"; then
+	echo "max sessions must be an integer in the range 0..64" >&2
 	exit 2
 fi
 
@@ -101,7 +108,7 @@ status_output=$(frdpctl status --socket "$socket" 2>&1) || status=$?
 reachable=0
 scrape_success=0
 detail_scrape_success=0
-active_sessions=0
+managed_sessions=0
 session_details=()
 session_states=()
 session_state_counts=()
@@ -110,7 +117,7 @@ error=""
 if [[ $status -eq 0 ]]; then
 	reachable=1
 	if [[ $status_output =~ Active[[:space:]]sessions:[[:space:]]([0-9]+) ]]; then
-		active_sessions=${BASH_REMATCH[1]}
+		managed_sessions=${BASH_REMATCH[1]}
 		scrape_success=1
 		detail_status=0
 		detail_output=$(frdpctl list-sessions --socket "$socket" 2>&1) || detail_status=$?
@@ -149,9 +156,12 @@ fi
 	printf '# TYPE frdp_exporter_last_scrape_timestamp_seconds gauge\n'
 	printf 'frdp_exporter_last_scrape_timestamp_seconds{socket="%s"} %d\n' \
 		"$(escape_label "$socket")" "$scrape_timestamp"
-	printf '# HELP frdp_sessions_active Active sessions reported by frdp-sesmand.\n'
+	printf '# HELP frdp_sessions_active Managed sessions reported by the historical frdpctl Active sessions field.\n'
 	printf '# TYPE frdp_sessions_active gauge\n'
-	printf 'frdp_sessions_active{socket="%s"} %d\n' "$(escape_label "$socket")" "$active_sessions"
+	printf 'frdp_sessions_active{socket="%s"} %d\n' "$(escape_label "$socket")" "$managed_sessions"
+	printf '# HELP frdp_sessions_managed Sessions currently retained by frdp-sesmand, including disconnected reconnect targets.\n'
+	printf '# TYPE frdp_sessions_managed gauge\n'
+	printf 'frdp_sessions_managed{socket="%s"} %d\n' "$(escape_label "$socket")" "$managed_sessions"
 	printf '# HELP frdp_sessions_detail_scrape_success Whether per-session detail scraping completed and parsed successfully.\n'
 	printf '# TYPE frdp_sessions_detail_scrape_success gauge\n'
 	printf 'frdp_sessions_detail_scrape_success{socket="%s"} %d\n' \
@@ -175,14 +185,14 @@ fi
 				"${session_state_counts[$index]}"
 		done
 	fi
-	if [[ -n $max_connections ]]; then
-		printf '# HELP frdp_sessions_max Configured maximum concurrent frdpd sessions.\n'
+	if [[ $max_sessions_set -eq 1 ]]; then
+		printf '# HELP frdp_sessions_max Configured frdp-sesmand admission limit; 0 means unlimited.\n'
 		printf '# TYPE frdp_sessions_max gauge\n'
-		printf 'frdp_sessions_max{socket="%s"} %d\n' "$(escape_label "$socket")" "$max_connections"
-		if [[ $scrape_success -eq 1 ]]; then
-			utilization=$(awk -v active="$active_sessions" -v max="$max_connections" \
-				'BEGIN { printf "%.6f", active / max }')
-			printf '# HELP frdp_sessions_utilization_ratio Active sessions divided by configured maximum sessions.\n'
+		printf 'frdp_sessions_max{socket="%s"} %d\n' "$(escape_label "$socket")" "$max_sessions"
+		if [[ $scrape_success -eq 1 && $max_sessions -gt 0 ]]; then
+			utilization=$(awk -v managed="$managed_sessions" -v max="$max_sessions" \
+				'BEGIN { printf "%.6f", managed / max }')
+			printf '# HELP frdp_sessions_utilization_ratio Managed sessions divided by the configured admission limit.\n'
 			printf '# TYPE frdp_sessions_utilization_ratio gauge\n'
 			printf 'frdp_sessions_utilization_ratio{socket="%s"} %s\n' \
 				"$(escape_label "$socket")" "$utilization"
