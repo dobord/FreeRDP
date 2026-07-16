@@ -473,10 +473,12 @@ foreach(expected
         "process_is_running"
         "run_graphical_load"
         "graphical-load-result.txt"
-        "unique_session_ids=pass"
-        "unique_displays=pass"
-        "unique_agent_pids=pass"
-        "concurrent graphical load passed"
+	        "unique_session_ids=pass"
+	        "unique_displays=pass"
+	        "unique_agent_pids=pass"
+	        "reconnect_at_limit=pass"
+	        "limit_rejection=pass"
+	        "concurrent graphical load passed"
         "managed RDP session reattached with stable id/display/PID"
         "wait_display_geometry"
         "xdotool windowsize --sync \"$window_id\" 800 600"
@@ -500,7 +502,8 @@ endforeach()
 
 file(READ "${FRDP_E2E_DIR}/frdpd.toml" frdp_e2e_config)
 foreach(expected
-        "display_backend = \"xorg-dummy\""
+	        "max_sessions = 2"
+	        "display_backend = \"xorg-dummy\""
         "xorg_path = \"/usr/lib/xorg/Xorg\""
         "xorg_config = \"/usr/share/frdpd/xorg-dummy.conf\"")
   expect_contains("${frdp_e2e_config}" "${expected}" "E2E FRDP configuration")

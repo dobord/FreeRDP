@@ -378,6 +378,8 @@ static int validate_session_resource_policy(const frdpConfig *config)
 {
     if (!config)
         return -1;
+    if (config->session_resources.max_sessions > FRDP_CONFIG_MAX_SESSIONS)
+        return -1;
     if (config->session_resources.max_processes > FRDP_SESSION_MAX_PROCESSES_LIMIT)
         return -1;
     if (config->session_resources.memory_max_mb > FRDP_SESSION_MEMORY_MAX_MB_LIMIT)
@@ -450,6 +452,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_keytab = 0;
     int seen_accepted_spn = 0;
     int seen_session_socket = 0;
+    int seen_session_max_sessions = 0;
     int seen_session_max_processes = 0;
     int seen_session_memory_max_mb = 0;
     int seen_session_heartbeat_interval_ms = 0;
@@ -587,7 +590,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
                                      ((strcmp(current_section, "clipboard") == 0) &&
                                       (strcmp(key, "max_text_bytes") == 0)) ||
                                      ((strcmp(current_section, "session") == 0) &&
-                                      ((strcmp(key, "max_processes") == 0) ||
+                                     ((strcmp(key, "max_processes") == 0) ||
+                                       (strcmp(key, "max_sessions") == 0) ||
                                        (strcmp(key, "memory_max_mb") == 0) ||
                                        (strcmp(key, "agent_heartbeat_interval_ms") == 0) ||
                                        (strcmp(key, "agent_heartbeat_timeout_ms") == 0) ||
@@ -795,6 +799,18 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 seen_session_socket = 1;
                 if (!is_absolute_path(val) ||
                     copy_string(config->session_socket, sizeof(config->session_socket), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "max_sessions") == 0)
+            {
+                if (seen_session_max_sessions) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_session_max_sessions = 1;
+                if (parse_uint32_limit(val, &config->session_resources.max_sessions) != 0) {
                     fclose(f);
                     return -1;
                 }

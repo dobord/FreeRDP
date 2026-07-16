@@ -4,6 +4,7 @@
 
 #define FRDP_CONFIG_MAX_CHANNELS 31
 #define FRDP_CONFIG_CHANNEL_NAME_SIZE 9
+#define FRDP_CONFIG_MAX_SESSIONS 64U
 #define FRDP_SESSION_HEARTBEAT_DEFAULT_INTERVAL_MS 5000U
 #define FRDP_SESSION_HEARTBEAT_DEFAULT_TIMEOUT_MS 500U
 #define FRDP_SESSION_HEARTBEAT_DEFAULT_FAILURES 3U
@@ -51,6 +52,7 @@ typedef struct {
 } frdpClipboardPolicy;
 
 typedef struct {
+    uint32_t max_sessions;
     uint32_t max_processes;
     uint32_t memory_max_mb;
 } frdpSessionResourcePolicy;

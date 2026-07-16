@@ -328,13 +328,19 @@ run_graphical_load()
 	local current_list="$FRDP_ARTIFACT_DIR/graphical-load-current.txt"
 	local detached_list="$FRDP_ARTIFACT_DIR/graphical-load-detached.txt"
 	local cleanup_list="$FRDP_ARTIFACT_DIR/graphical-load-cleanup.txt"
+	local capacity_list="$FRDP_ARTIFACT_DIR/graphical-load-at-capacity.txt"
+	local reconnect_detached_list="$FRDP_ARTIFACT_DIR/graphical-load-reconnect-detached.txt"
+	local reconnect_list="$FRDP_ARTIFACT_DIR/graphical-load-reconnected.txt"
+	local reconnect_log="$FRDP_ARTIFACT_DIR/graphical-load-reconnect.log"
+	local rejected_log="$FRDP_ARTIFACT_DIR/graphical-load-limit-rejected.log"
 	local runtime_log="$FRDP_ARTIFACT_DIR/graphical-load-runtime.txt"
-	local attempt socket_dir socket_name session_id pid worker
+	local attempt socket_dir socket_name session_id pid worker rejected_status=0
 	local -a session_ids=()
 
 	((concurrency > 0)) || return 0
-	rm -f "$active_list" "$current_list" "$detached_list" "$cleanup_list" "$runtime_log" \
-		"$FRDP_ARTIFACT_DIR/graphical-load-result.txt"
+	rm -f "$active_list" "$current_list" "$detached_list" "$cleanup_list" "$capacity_list" \
+		"$reconnect_detached_list" "$reconnect_list" "$reconnect_log" "$rejected_log" \
+		"$runtime_log" "$FRDP_ARTIFACT_DIR/graphical-load-result.txt"
 	build_args "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"
 	load_pids=()
 	for ((worker = 1; worker <= concurrency; worker++)); do
@@ -366,6 +372,79 @@ run_graphical_load()
 	[[ -s $active_list ]] || fail "graphical load did not activate $concurrency unique sessions"
 	mapfile -t session_ids < <(awk 'NR > 1 { print $1 }' "$active_list")
 	[[ ${#session_ids[@]} -eq $concurrency ]] || fail "graphical load session count changed"
+
+	stop_process "${load_pids[0]}"
+	for ((attempt = 0; attempt < FRDP_E2E_TIMEOUT * 10; attempt++)); do
+		frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$reconnect_detached_list" 2>&1 || true
+		if awk -v expected="$concurrency" -v user="$FRDP_TEST_USER" '
+			NR > 1 {
+				total++
+				if ($2 != user || ($4 != "active" && $4 != "disconnected")) bad = 1
+				if ($4 == "disconnected") disconnected++
+			}
+			END { exit (total == expected && disconnected == 1 && !bad) ? 0 : 1 }
+		' "$reconnect_detached_list"; then
+			break
+		fi
+		sleep 0.1
+	done
+	awk -v expected="$concurrency" -v user="$FRDP_TEST_USER" '
+		NR > 1 {
+			total++
+			if ($2 != user || ($4 != "active" && $4 != "disconnected")) bad = 1
+			if ($4 == "disconnected") disconnected++
+		}
+		END { exit (total == expected && disconnected == 1 && !bad) ? 0 : 1 }
+	' "$reconnect_detached_list" || fail "graphical load client did not detach at capacity"
+	stdbuf -oL -eL "$XFREERDP" "${RDP_ARGS[@]}" >"$reconnect_log" 2>&1 &
+	load_pids[0]=$!
+	for ((attempt = 0; attempt < FRDP_E2E_TIMEOUT * 10; attempt++)); do
+		for pid in "${load_pids[@]}"; do
+			process_is_running "$pid" || fail "graphical load client $pid exited during reconnect"
+		done
+		frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$reconnect_list" 2>&1 || true
+		if awk -v expected="$concurrency" -v user="$FRDP_TEST_USER" '
+			NR > 1 {
+				total++
+				if ($1 == "" || $2 != user || $3 !~ /^:[0-9]+$/ || $4 != "active" ||
+				    $5 !~ /^[1-9][0-9]*$/ || seen_id[$1]++ || seen_display[$3]++ || seen_pid[$5]++)
+					bad = 1
+			}
+			END { exit (total == expected && !bad) ? 0 : 1 }
+		' "$reconnect_list" &&
+			cmp -s <(awk 'NR > 1 { print $1, $2, $3, $5 }' "$active_list" | sort) \
+				<(awk 'NR > 1 { print $1, $2, $3, $5 }' "$reconnect_list" | sort); then
+			break
+		fi
+		sleep 0.1
+	done
+	[[ $(grep -c 'Authentication complete' "$reconnect_log" || true) -eq 1 ]] ||
+		fail "graphical load reconnect did not complete exactly one authentication"
+	cmp -s <(awk 'NR > 1 { print $1, $2, $3, $5 }' "$active_list" | sort) \
+		<(awk 'NR > 1 && $4 == "active" { print $1, $2, $3, $5 }' "$reconnect_list" | sort) ||
+		fail "graphical load reconnect at capacity changed managed session identity"
+
+	set +e
+	timeout "${FRDP_AUTH_TIMEOUT}s" "$XFREERDP" "${RDP_ARGS[@]}" >"$rejected_log" 2>&1
+	rejected_status=$?
+	set -e
+	[[ $rejected_status -ne 124 ]] || fail "graphical load capacity probe timed out"
+	[[ $(grep -c 'Authentication complete' "$rejected_log" || true) -eq 1 ]] ||
+		fail "graphical load capacity probe did not complete exactly one authentication"
+	for pid in "${load_pids[@]}"; do
+		process_is_running "$pid" || fail "graphical load client $pid exited during capacity rejection"
+	done
+	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$capacity_list" 2>&1 ||
+		fail "failed to list graphical sessions after capacity rejection"
+	awk -v expected="$concurrency" -v user="$FRDP_TEST_USER" '
+		NR > 1 {
+			total++
+			if ($1 == "" || $2 != user || $3 !~ /^:[0-9]+$/ || $4 != "active" ||
+			    $5 !~ /^[1-9][0-9]*$/ || seen_id[$1]++ || seen_display[$3]++ || seen_pid[$5]++)
+				bad = 1
+		}
+		END { exit (total == expected && !bad) ? 0 : 1 }
+	' "$capacity_list" || fail "capacity rejection changed the held graphical sessions"
 
 	for pid in "${load_pids[@]}"; do
 		stop_process "$pid"
@@ -402,9 +481,9 @@ run_graphical_load()
 	find "$socket_dir" -mindepth 1 -maxdepth 1 ! -name "$socket_name" -printf '%f\n' \
 		>"$runtime_log"
 	[[ ! -s $runtime_log ]] || fail "graphical load left managed session runtime artifacts"
-	printf 'concurrency=%s\nunique_session_ids=pass\nunique_displays=pass\nunique_agent_pids=pass\ncleanup=pass\n' \
+	printf 'concurrency=%s\nunique_session_ids=pass\nunique_displays=pass\nunique_agent_pids=pass\nreconnect_at_limit=pass\nlimit_rejection=pass\ncleanup=pass\n' \
 		"$concurrency" >"$FRDP_ARTIFACT_DIR/graphical-load-result.txt"
-	log "concurrent graphical load passed for $concurrency unique managed sessions"
+	log "concurrent graphical load passed with admission limit for $concurrency managed sessions"
 }
 
 positive_integer "$FRDP_E2E_TIMEOUT" || fail "FRDP_E2E_TIMEOUT must be positive"

@@ -22,6 +22,16 @@ static int apply_session_rlimit(frdpSesmandSetRlimitFn setrlimit_fn, void* conte
 	return setrlimit_fn(resource, &limit, context);
 }
 
+int frdp_sesmand_session_capacity_available(const frdpSessionResourcePolicy* policy,
+                                            uint32_t current_sessions)
+{
+	if (!policy)
+		return 0;
+	if (current_sessions >= FRDP_CONFIG_MAX_SESSIONS)
+		return 0;
+	return (policy->max_sessions == 0) || (current_sessions < policy->max_sessions);
+}
+
 int frdp_sesmand_apply_session_resource_policy_ex(const frdpSessionResourcePolicy* policy,
                                                   frdpSesmandSetRlimitFn setrlimit_fn,
                                                   void* context)

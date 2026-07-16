@@ -60,6 +60,8 @@ static int test_default_blocklist(void)
 		return -1;
 	if (config.max_connections != 0)
 		return -1;
+	if (config.session_resources.max_sessions != 0)
+		return -1;
 	if (config.session_resources.max_processes != 0)
 		return -1;
 	if (config.session_resources.memory_max_mb != 0)
@@ -182,6 +184,7 @@ static int test_server_auth_session_fields(void)
 	                   "auth_socket = \"/run/frdp-authd/authd.sock\"\n"
 	                   "[session]\n"
 	                   "session_socket = \"/run/frdp-sesmand/sesmand.sock\"\n"
+	                   "max_sessions = 32\n"
 	                   "max_processes = 128\n"
 	                   "memory_max_mb = 2048\n";
 
@@ -215,6 +218,8 @@ static int test_server_auth_session_fields(void)
 		return -1;
 	if (strcmp(config.session_socket, "/run/frdp-sesmand/sesmand.sock") != 0)
 		return -1;
+	if (config.session_resources.max_sessions != 32)
+		return -1;
 	if (config.session_resources.max_processes != 128)
 		return -1;
 	if (config.session_resources.memory_max_mb != 2048)
@@ -227,14 +232,20 @@ static int test_session_resource_policy(void)
 	frdpConfig config = { 0 };
 
 	if (load_config_body("frdp-session-resource-limits.toml",
-	                     "[session]\nmax_processes = 64\nmemory_max_mb = 1024\n", &config) != 0)
+	                     "[session]\nmax_sessions = 16\nmax_processes = 64\nmemory_max_mb = 1024\n",
+	                     &config) != 0)
+		return -1;
+	if (config.session_resources.max_sessions != 16)
 		return -1;
 	if (config.session_resources.max_processes != 64)
 		return -1;
 	if (config.session_resources.memory_max_mb != 1024)
 		return -1;
 	if (load_config_body("frdp-session-resource-unlimited.toml",
-	                     "[session]\nmax_processes = 0\nmemory_max_mb = 0\n", &config) != 0)
+	                     "[session]\nmax_sessions = 0\nmax_processes = 0\nmemory_max_mb = 0\n",
+	                     &config) != 0)
+		return -1;
+	if (config.session_resources.max_sessions != 0)
 		return -1;
 	if (config.session_resources.max_processes != 0)
 		return -1;
@@ -846,6 +857,18 @@ static int test_invalid_channel_config(void)
 		return -1;
 	if (expect_load_failure("frdp-duplicate-session-max-processes.toml",
 	                        "[session]\nmax_processes = 8\nmax_processes = 9\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-session-max-sessions.toml",
+	                        "[session]\nmax_sessions = 8\nmax_sessions = 9\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-negative-session-max-sessions.toml",
+	                        "[session]\nmax_sessions = -1\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-quoted-session-max-sessions.toml",
+	                        "[session]\nmax_sessions = \"8\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-too-large-session-max-sessions.toml",
+	                        "[session]\nmax_sessions = 65\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-duplicate-session-memory-max.toml",
 	                        "[session]\nmemory_max_mb = 512\nmemory_max_mb = 1024\n") != 0)

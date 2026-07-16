@@ -128,6 +128,25 @@ static int test_invalid_resource_policy_arguments(void)
 	return 0;
 }
 
+static int test_session_capacity_policy(void)
+{
+	frdpSessionResourcePolicy policy = { 0 };
+
+	if (!frdp_sesmand_session_capacity_available(&policy, 0) ||
+	    !frdp_sesmand_session_capacity_available(&policy, FRDP_CONFIG_MAX_SESSIONS - 1U) ||
+	    frdp_sesmand_session_capacity_available(&policy, FRDP_CONFIG_MAX_SESSIONS) ||
+	    frdp_sesmand_session_capacity_available(&policy, UINT32_MAX))
+		return -1;
+	policy.max_sessions = 2;
+	if (!frdp_sesmand_session_capacity_available(&policy, 0) ||
+	    !frdp_sesmand_session_capacity_available(&policy, 1) ||
+	    frdp_sesmand_session_capacity_available(&policy, 2) ||
+	    frdp_sesmand_session_capacity_available(&policy, 3) ||
+	    frdp_sesmand_session_capacity_available(NULL, 0))
+		return -1;
+	return 0;
+}
+
 int TestFreeRDPFrdpSessionResources(int argc, char* argv[])
 {
 	(void)argc;
@@ -161,6 +180,11 @@ int TestFreeRDPFrdpSessionResources(int argc, char* argv[])
 	if (test_invalid_resource_policy_arguments() != 0)
 	{
 		fprintf(stderr, "invalid resource policy argument test failed\n");
+		return -1;
+	}
+	if (test_session_capacity_policy() != 0)
+	{
+		fprintf(stderr, "session capacity policy test failed\n");
 		return -1;
 	}
 	return 0;

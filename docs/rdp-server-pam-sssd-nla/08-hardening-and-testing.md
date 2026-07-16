@@ -93,7 +93,9 @@ Create a harness that spawns multiple RDP clients concurrently to measure CPU, m
 
 The deterministic local-PAM Compose gate currently opens two graphical
 `xfreerdp` clients concurrently and proves unique session ids, displays and
-agent PIDs plus complete detach/cleanup. The separate retained-client load
+agent PIDs. With `max_sessions = 2`, a third fully authenticated client is
+denied before PAM session open while the two held sessions remain unchanged;
+the gate then proves complete detach/cleanup. The separate retained-client load
 script covers configurable parallel auth-only iterations. Neither gate yet
 records CPU, RSS, network throughput, long-soak stability or memory growth.
 

@@ -93,8 +93,9 @@ FRDP_MAX_CONNECTIONS=64 \
 These examples currently export:
 
 - Number of active sessions from `frdpctl status`.
-- Configured session limit and active-session utilization ratio when
-  `max_connections` is supplied to the collector.
+- Configured peer-worker limit and active-session-to-worker utilization ratio
+  when `max_connections` is supplied to the collector. The collector does not
+  yet export `[session].max_sessions`.
 - Session-manager control-socket reachability.
 - Textfile scrape freshness, success or the last scrape error.
 

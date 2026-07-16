@@ -24,6 +24,8 @@ auth_socket = "/run/frdp-authd/authd.sock"
 
 [session]
 session_socket = "/run/frdp-sesmand/sesmand.sock"
+# Cap active plus reconnect-retained sessions; 0 or omission means unlimited.
+# max_sessions = 64
 # Optional POSIX guards for new session-agent children; 0 or omission means unlimited.
 # max_processes = 256
 # memory_max_mb = 4096

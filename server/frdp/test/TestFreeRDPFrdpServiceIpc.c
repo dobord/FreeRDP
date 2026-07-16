@@ -1968,8 +1968,8 @@ cleanup:
 	return test_sesmand_list_empty(socket_path);
 }
 
-static int write_sesmand_config(const char* path, const char* pam_service, uint32_t max_processes,
-                                uint32_t memory_max_mb)
+static int write_sesmand_config(const char* path, const char* pam_service, uint32_t max_sessions,
+                                uint32_t max_processes, uint32_t memory_max_mb)
 {
 	FILE* fp = NULL;
 
@@ -1979,8 +1979,9 @@ static int write_sesmand_config(const char* path, const char* pam_service, uint3
 	if (!fp)
 		return -1;
 	if (fprintf(fp, "[auth]\npam_service = \"%s\"\n"
-	                "[session]\nmax_processes = %" PRIu32 "\nmemory_max_mb = %" PRIu32 "\n",
-	            pam_service, max_processes, memory_max_mb) < 0)
+	                "[session]\nmax_sessions = %" PRIu32 "\nmax_processes = %" PRIu32
+	                "\nmemory_max_mb = %" PRIu32 "\n",
+	            pam_service, max_sessions, max_processes, memory_max_mb) < 0)
 	{
 		fclose(fp);
 		return -1;
@@ -2830,7 +2831,7 @@ static int test_sesmand_live_reconnect_lifecycle(void)
 	                                 &saved_path) != 0))
 		goto cleanup;
 	stage = "config";
-	if (write_sesmand_config(config_path, pam_service, 0, 0) != 0)
+	if (write_sesmand_config(config_path, pam_service, 0, 0, 0) != 0)
 		goto cleanup;
 	stage = "identity";
 	if (lookup_current_user(user, sizeof(user), &uid, &gid, groups, &group_count) != 0)
@@ -2963,7 +2964,7 @@ static int test_sesmand_crash_restart_reconciliation(void)
 	                                 &saved_path) != 0))
 		goto cleanup;
 	stage = "config";
-	if (write_sesmand_config(config_path, pam_service, 0, 0) != 0)
+	if (write_sesmand_config(config_path, pam_service, 0, 0, 0) != 0)
 		goto cleanup;
 	stage = "identity";
 	if (lookup_current_user(user, sizeof(user), &uid, &gid, groups, &group_count) != 0)
@@ -3212,25 +3213,27 @@ static int test_sesmand_reload_config(void)
 	if (snprintf(config_path, sizeof(config_path), "%s/frdpd.toml", config_dir) >=
 	    (int)sizeof(config_path))
 		goto cleanup_dir;
-	if (write_sesmand_config(config_path, "frdpd", 0, 0) != 0)
+	if (write_sesmand_config(config_path, "frdpd", 0, 0, 0) != 0)
 		goto cleanup_dir;
 	if (start_helper_with_config(FRDP_SESMAND_BINARY, "frdp-sesmand-reload", config_path,
 	                             &helper) != 0)
 		goto cleanup_dir;
 	if (test_sesmand_reload(
 	        helper.socket_path, 1,
-	        "pam_service=frdpd;max_processes=0;memory_max_mb=0;display_backend=xvfb", NULL) != 0)
+		        "pam_service=frdpd;max_sessions=0;max_processes=0;memory_max_mb=0;"
+		        "display_backend=xvfb", NULL) != 0)
 		goto cleanup;
 	if (write_sesmand_config(config_path,
 	                         "frdpd_reload_abcdefghijklmnopqrstuvwxyz_0123456789_ABCDEFGHIJKL",
-	                         77, 1536) != 0)
+		                         23, 77, 1536) != 0)
 		goto cleanup;
 	if (test_sesmand_reload(helper.socket_path, 1,
 	                        "pam_service=frdpd_reload_abcdefghijklmnopqrstuvwxyz_"
-	                        "0123456789_ABCDEFGHIJKL;max_processes=77;memory_max_mb=1536",
+		                        "0123456789_ABCDEFGHIJKL;max_sessions=23;max_processes=77;"
+		                        "memory_max_mb=1536",
 	                        NULL) != 0)
 		goto cleanup;
-	if (write_sesmand_config(config_path, "bad/service", 1, 1) != 0)
+	if (write_sesmand_config(config_path, "bad/service", 1, 1, 1) != 0)
 		goto cleanup;
 	if (test_sesmand_reload(helper.socket_path, 0, NULL, "config reload failed") != 0)
 		goto cleanup;
@@ -3241,7 +3244,8 @@ static int test_sesmand_reload_config(void)
 		goto cleanup;
 	if (test_sesmand_reload(
 	        helper.socket_path, 1,
-	        "pam_service=frdpd;max_processes=0;memory_max_mb=0;display_backend=xvfb", NULL) != 0)
+		        "pam_service=frdpd;max_sessions=0;max_processes=0;memory_max_mb=0;"
+		        "display_backend=xvfb", NULL) != 0)
 		goto cleanup;
 	if (write_sesmand_config_body(config_path,
 	                              "[auth]\npam_service = \"frdpd\"\n"
@@ -3263,6 +3267,146 @@ cleanup_dir:
 	unlink(config_path);
 	rmdir(config_dir);
 	return rc;
+}
+
+static int test_sesmand_reload_session_limit(void)
+{
+#ifndef FRDP_XVFB_EXECUTABLE
+	printf("frdp-sesmand reload session-limit test skipped: Xvfb unavailable\n");
+	return 0;
+#else
+	static const char pam_service[] = "common-session-noninteractive";
+	static const char rhost[] = "127.0.0.1";
+	frdpTestHelper helper = { .pid = -1 };
+	frdpSessionResponse first = { 0 };
+	frdpSessionResponse second = { 0 };
+	frdpSessionResponse rejected = { 0 };
+	frdpSessionResponse replacement = { 0 };
+	frdpSessionResponse closed = { 0 };
+	frdpSessionListResponse list = { 0 };
+	char dir[1024] = { 0 };
+	char config_path[1024] = { 0 };
+	char key_path[1024] = { 0 };
+	char user[64] = { 0 };
+	uint64_t uid = 0;
+	uint64_t gid = 0;
+	uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+	uint32_t group_count = 0;
+	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
+	char* saved_path = NULL;
+	int helper_started = 0;
+	int rc = -1;
+	const char* stage = "prerequisites";
+
+	if (previous_key_path && !saved_key_path)
+		return -1;
+	if ((access("/etc/pam.d/common-session-noninteractive", R_OK) != 0) ||
+	    (access(FRDP_XVFB_EXECUTABLE, X_OK) != 0))
+	{
+		printf("frdp-sesmand reload session-limit test skipped: PAM/Xvfb prerequisite unavailable\n");
+		rc = 0;
+		goto cleanup;
+	}
+	if (make_runtime_dir(dir, sizeof(dir), "frdp-sesmand-reload-limit") != 0)
+		goto cleanup;
+	if ((snprintf(config_path, sizeof(config_path), "%s/frdpd.toml", dir) >=
+	     (int)sizeof(config_path)) ||
+	    (snprintf(key_path, sizeof(key_path), "%s/auth-token.key", dir) >= (int)sizeof(key_path)))
+		goto cleanup;
+	stage = "environment";
+	if ((setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0) ||
+	    (prepend_binary_dirs_to_path(FRDP_SESSION_AGENT_BINARY, FRDP_XVFB_EXECUTABLE,
+	                                 &saved_path) != 0))
+		goto cleanup;
+	stage = "config";
+	if (write_sesmand_config(config_path, pam_service, 2, 0, 0) != 0)
+		goto cleanup;
+	stage = "identity";
+	if (lookup_current_user(user, sizeof(user), &uid, &gid, groups, &group_count) != 0)
+		goto cleanup;
+	stage = "helper-start";
+	if (start_helper_with_config(FRDP_SESMAND_BINARY, "frdp-sesmand-reload-limit", config_path,
+	                             &helper) != 0)
+		goto cleanup;
+	helper_started = 1;
+	restore_path(saved_path);
+	saved_path = NULL;
+	stage = "open-at-initial-limit";
+	if ((request_live_session(helper.socket_path, user, rhost, "reload-limit-first", NULL, uid,
+	                          gid, groups, group_count, &first, NULL) != 0) ||
+	    (request_live_session(helper.socket_path, user, rhost, "reload-limit-second", NULL, uid,
+	                          gid, groups, group_count, &second, NULL) != 0) ||
+	    (strcmp(first.session_id, second.session_id) == 0) ||
+	    (receive_sesmand_list(helper.socket_path, &list) != 0) || (list.count != 2))
+		goto cleanup;
+	stage = "lower-limit";
+	if ((write_sesmand_config(config_path, pam_service, 1, 0, 0) != 0) ||
+	    (test_sesmand_reload(helper.socket_path, 1,
+	                         "pam_service=common-session-noninteractive;max_sessions=1;"
+	                         "max_processes=0;memory_max_mb=0;display_backend=xvfb",
+	                         NULL) != 0) ||
+	    (receive_sesmand_list(helper.socket_path, &list) != 0) || (list.count != 2))
+		goto cleanup;
+	stage = "reject-above-lowered-limit";
+	if ((request_live_session(helper.socket_path, user, rhost, "reload-limit-reject-two", NULL,
+	                          uid, gid, groups, group_count, &rejected,
+	                          "session limit reached") != 0) ||
+	    (receive_sesmand_list(helper.socket_path, &list) != 0) || (list.count != 2))
+		goto cleanup;
+	stage = "close-first";
+	if ((request_session_control(helper.socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST,
+	                             "reload-limit-close-first", first.session_id, user, &closed) != 0) ||
+	    (receive_sesmand_list(helper.socket_path, &list) != 0) || (list.count != 1))
+		goto cleanup;
+	stage = "reject-at-lowered-limit";
+	if ((request_live_session(helper.socket_path, user, rhost, "reload-limit-reject-one", NULL,
+	                          uid, gid, groups, group_count, &rejected,
+	                          "session limit reached") != 0) ||
+	    (receive_sesmand_list(helper.socket_path, &list) != 0) || (list.count != 1))
+		goto cleanup;
+	stage = "below-lowered-limit";
+	if ((request_session_control(helper.socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST,
+	                             "reload-limit-close-second", second.session_id, user, &closed) !=
+	     0) ||
+	    (receive_sesmand_list(helper.socket_path, &list) != 0) || (list.count != 0) ||
+	    (request_live_session(helper.socket_path, user, rhost, "reload-limit-replacement", NULL,
+	                          uid, gid, groups, group_count, &replacement, NULL) != 0) ||
+	    (receive_sesmand_list(helper.socket_path, &list) != 0) || (list.count != 1))
+		goto cleanup;
+	stage = "final-cleanup";
+	if ((request_session_control(helper.socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST,
+	                             "reload-limit-close-replacement", replacement.session_id, user,
+	                             &closed) != 0) ||
+	    (receive_sesmand_list(helper.socket_path, &list) != 0) || (list.count != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (rc != 0)
+		fprintf(stderr, "reload session-limit test failed at stage: %s\n", stage);
+	if (saved_path)
+		restore_path(saved_path);
+	if (helper_started && (stop_helper(&helper) != 0))
+		rc = -1;
+	if (saved_key_path)
+	{
+		(void)setenv(FRDP_AUTH_TOKEN_KEY_ENV, saved_key_path, 1);
+		free(saved_key_path);
+	}
+	else
+		unsetenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	unlink(key_path);
+	unlink(config_path);
+	if (dir[0] != '\0')
+		rmdir(dir);
+	SecureZeroMemory(&first, sizeof(first));
+	SecureZeroMemory(&second, sizeof(second));
+	SecureZeroMemory(&rejected, sizeof(rejected));
+	SecureZeroMemory(&replacement, sizeof(replacement));
+	SecureZeroMemory(&closed, sizeof(closed));
+	return rc;
+#endif
 }
 
 static int test_sesmand_component(void)
@@ -3756,6 +3900,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_sesmand_reload_config() != 0)
 	{
 		printf("frdp-sesmand reload config test failed\n");
+		return -1;
+	}
+	if (test_sesmand_reload_session_limit() != 0)
+	{
+		printf("frdp-sesmand reload session-limit test failed\n");
 		return -1;
 	}
 	if (test_frdpd_live_helper_topology() != 0)

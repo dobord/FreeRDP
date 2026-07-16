@@ -180,7 +180,7 @@ validate_rdp_auth_artifacts()
 	local ntlm_proof_rejected wrong_password_rejected denied_user_rejected
 	local policy_reload_failed policy_channel_rejected
 	local keytab_rollover old_kvno new_kvno
-	local graphical_concurrency graphical_result
+	local graphical_concurrency graphical_result session_limit_reached
 	local expected_accepted=5
 	local provider_result=
 
@@ -223,12 +223,17 @@ validate_rdp_auth_artifacts()
 	policy_reload_failed=$(grep -Fc 'failed to reload channel and clipboard policy from' \
 		"$server_log" || true)
 	policy_channel_rejected=$(grep -c 'rejected static virtual channel' "$server_log" || true)
+	session_limit_reached=$(grep -c 'session manager rejected login.*: session limit reached' \
+		"$server_log" || true)
 	rejected=$((wrong_password_rejected + denied_user_rejected))
 	total_rejected=$(grep -c 'PAM rejected RDP login.*: denied ' "$server_log" || true)
 	if [[ $profile == samba || $profile == freeipa ]]; then
 		expected_accepted=6
 	fi
 	expected_accepted=$((expected_accepted + graphical_concurrency))
+	if [[ $graphical_concurrency -gt 0 ]]; then
+		expected_accepted=$((expected_accepted + 2))
+	fi
 	if [[ $accepted -ne $expected_accepted || $total_accepted -ne $expected_accepted ||
 		$rejected -ne 1 ||
 		$total_rejected -ne 1 ]]; then
@@ -260,12 +265,19 @@ validate_rdp_auth_artifacts()
 		return 1
 	fi
 	if [[ $graphical_concurrency -gt 0 ]]; then
+		if [[ $session_limit_reached -ne 1 ]]; then
+			printf 'profile %s expected one managed-session admission rejection, got %s\n' \
+				"$profile" "$session_limit_reached" >&2
+			return 1
+		fi
 		graphical_result="$artifacts/$profile/graphical-load-result.txt"
 		for evidence in \
 			"concurrency=$graphical_concurrency" \
 			'unique_session_ids=pass' \
 			'unique_displays=pass' \
 			'unique_agent_pids=pass' \
+			'reconnect_at_limit=pass' \
+			'limit_rejection=pass' \
 			'cleanup=pass'; do
 			if ! grep -Fxq "$evidence" "$graphical_result"; then
 				printf 'profile %s is missing graphical load evidence: %s\n' \

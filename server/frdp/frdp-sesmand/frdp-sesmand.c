@@ -85,9 +85,8 @@ typedef struct {
     int heartbeat_fd;
 } session;
 
-#define MAX_SESSIONS 64
 #define FRDP_AGENT_READY_MARKER 'R'
-static session sessions[MAX_SESSIONS];
+static session sessions[FRDP_CONFIG_MAX_SESSIONS];
 static int session_count = 0;
 static int next_display = FRDP_SESMAND_DISPLAY_MIN;
 static char g_pam_service[64] = "frdpd";
@@ -689,7 +688,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     int display_reservation_fd = -1;
     gid_t native_groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
 
-    if (session_count >= MAX_SESSIONS)
+    if ((uint32_t)session_count >= FRDP_CONFIG_MAX_SESSIONS)
         return -1;
     if (copy_groups_to_native(groups, group_count, native_groups,
                               sizeof(native_groups) / sizeof(native_groups[0])) != 0)
@@ -1248,7 +1247,9 @@ static int format_reload_message(char* message, size_t message_size)
 	if (!message || message_size == 0 || !backend)
 		return -1;
 	rc = snprintf(message, message_size,
-	              "pam_service=%s;max_processes=%" PRIu32 ";memory_max_mb=%" PRIu32, g_pam_service,
+	              "pam_service=%s;max_sessions=%" PRIu32 ";max_processes=%" PRIu32
+	              ";memory_max_mb=%" PRIu32,
+	              g_pam_service, g_session_resource_policy.max_sessions,
 	              g_session_resource_policy.max_processes, g_session_resource_policy.memory_max_mb);
 	if (rc < 0 || (size_t)rc >= message_size)
 		return -1;
@@ -1421,8 +1422,8 @@ static int reconnect_existing_session(int fd, const char *correlation_id,
                                       const char *requested_session_id, const char *user,
                                       uid_t uid)
 {
-    frdpSesmandReconnectCandidate candidates[MAX_SESSIONS];
-    char candidate_ids[MAX_SESSIONS][64];
+    frdpSesmandReconnectCandidate candidates[FRDP_CONFIG_MAX_SESSIONS];
+    char candidate_ids[FRDP_CONFIG_MAX_SESSIONS][64];
     size_t selected = 0;
     session *s = NULL;
     char response_session_id[64] = {0};
@@ -1704,6 +1705,22 @@ static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payl
         rc = reconnect_existing_session(fd, correlation_id, NULL, user, uid);
         if (rc != FRDP_SESMAND_RECONNECT_NOT_FOUND)
             goto cleanup;
+        if (!frdp_sesmand_session_capacity_available(&g_session_resource_policy,
+                                                      (uint32_t)session_count)) {
+            char escaped_correlation_id[256] = {0};
+            char escaped_user[256] = {0};
+
+            escape_log_field(correlation_id[0] ? correlation_id : "unknown", escaped_correlation_id,
+                             sizeof(escaped_correlation_id));
+            escape_log_field(user, escaped_user, sizeof(escaped_user));
+            syslog(LOG_WARNING,
+                   "correlation_id=%s session limit reached for %s current_sessions=%d "
+                   "max_sessions=%" PRIu32 " hard_max_sessions=%u",
+                   escaped_correlation_id, escaped_user, session_count,
+                   g_session_resource_policy.max_sessions, FRDP_CONFIG_MAX_SESSIONS);
+            rc = send_session_response(fd, 0, NULL, NULL, NULL, "session limit reached");
+            goto cleanup;
+        }
         if (open_session(user, uid, gid, req_v3.groups, req_v3.group_count, rhost,
                          correlation_id, req.desktop_width, req.desktop_height, req.color_depth,
                          response_session_id, sizeof(response_session_id), display,
