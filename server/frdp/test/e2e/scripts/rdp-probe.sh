@@ -198,6 +198,27 @@ run_policy_denied_connection()
 	log "policy-denied connection '$label' completed with client status $status"
 }
 
+run_peer_limit_denied_connection()
+{
+	local label=$1
+	local logfile="$FRDP_ARTIFACT_DIR/peer-limit-denied-${label}.log"
+	local status=0
+
+	build_args "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"
+	set +e
+	timeout "${FRDP_AUTH_TIMEOUT}s" xvfb-run -a "$XFREERDP" "${RDP_ARGS[@]}" \
+		>"$logfile" 2>&1
+	status=$?
+	set -e
+	[[ $status -ne 124 ]] || fail "peer-limit denied connection timed out"
+	[[ $(grep -c 'Authentication complete' "$logfile" || true) -eq 0 ]] ||
+		fail "peer-limit denied connection reached authentication"
+	if grep -q "Caught signal 'Segmentation fault'" "$logfile"; then
+		fail "peer-limit denied connection crashed"
+	fi
+	log "peer-limit denied connection '$label' completed before authentication with client status $status"
+}
+
 request_policy_reload()
 {
 	local mode=$1
@@ -633,6 +654,16 @@ done
 	fail "server-to-client Unicode clipboard transfer failed"
 log "server-to-client Unicode clipboard transfer passed"
 if [[ $FRDP_E2E_POLICY_RELOAD == 1 ]]; then
+	request_policy_reload capacity
+	run_peer_limit_denied_connection config-reload
+	process_is_running "$client_pid" || fail "active peer was disconnected by admission reload"
+	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
+		>"$FRDP_ARTIFACT_DIR/session-list-after-admission-reload.txt" 2>&1 ||
+		fail "failed to list the active session after admission reload"
+	session_identity_is_exclusively_active \
+		"$FRDP_ARTIFACT_DIR/session-list-after-admission-reload.txt" "$session_id" \
+		"$FRDP_TEST_USER" "$open_display" "$open_pid" ||
+		fail "admission reload changed or duplicated the active managed session"
 	request_policy_reload deny
 	run_policy_denied_connection reload-denied
 	process_is_running "$client_pid" || fail "active peer was disconnected by policy reload"
@@ -768,6 +799,19 @@ frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
 session_identity_is_exclusively_active "$FRDP_ARTIFACT_DIR/session-list-reconnected-held.txt" \
 	"$session_id" "$FRDP_TEST_USER" "$open_display" "$open_pid" ||
 	fail "reconnected session $session_id did not remain exclusively active"
+if [[ $FRDP_E2E_POLICY_RELOAD == 1 ]]; then
+	request_policy_reload cli
+	run_peer_limit_denied_connection cli-override
+	process_is_running "$client_pid" || fail "CLI admission override reload disconnected the active peer"
+	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
+		>"$FRDP_ARTIFACT_DIR/session-list-after-cli-admission-reload.txt" 2>&1 ||
+		fail "failed to list the active session after CLI admission override reload"
+	session_identity_is_exclusively_active \
+		"$FRDP_ARTIFACT_DIR/session-list-after-cli-admission-reload.txt" "$session_id" \
+		"$FRDP_TEST_USER" "$open_display" "$open_pid" ||
+		fail "CLI admission override reload changed or duplicated the active managed session"
+	log "explicit CLI admission limit remained authoritative after config reload"
+fi
 stop_process "$client_pid"
 client_pid=
 

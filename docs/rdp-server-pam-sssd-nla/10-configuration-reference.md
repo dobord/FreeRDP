@@ -7,7 +7,7 @@ This document describes the configuration options available in `frdpd.toml`. CMa
 - `listen` (string): IP address and port to bind. Default `0.0.0.0:3389`.
 - `security` (string): Acceptable security layer. Currently implemented value: `nla` (CredSSP/Kerberos). Default `nla`. TLS fallback remains a separate compatibility path and must not be treated as the production default.
 - `tls_cert`, `tls_key` (path): Paths to the TLS certificate and private key.
-- `max_connections` (integer): Optional cap on concurrently accepted peer workers, in the range `0..2147483647`. `0` or omission means unlimited. The CLI override is `--max-connections=<n>`. When the cap is reached, `frdpd` rejects new peers before authentication, channel checks, or managed-session creation.
+- `max_connections` (integer): Optional cap on concurrently accepted peer workers, in the range `0..2147483647`. `0` or omission means unlimited. The CLI override is `--max-connections=<n>`. When the cap is reached, `frdpd` rejects new peers before authentication, channel checks, or managed-session creation. A config-sourced limit is reloadable on `SIGHUP`; lowering it below the current worker count preserves existing peers and rejects new peers until the count falls below the new limit. An explicit CLI override remains fixed across reloads.
 
 ## [auth]
 
@@ -47,7 +47,7 @@ After successful PAM authentication and account management, `frdp-authd` reads t
 - `dynamic_deny` (string): Optional comma-separated exact dynamic virtual channel names to reject in `blocklist` mode, for example `"rdpgfx,disp"`. Default empty. The key is rejected unless `dynamic_mode = "blocklist"`, even when the value is empty.
 - `dynamic_allow` (string): Optional comma-separated exact dynamic virtual channel names to allow in `allowlist` mode, for example `"rdpgfx,disp"`. Default empty. The key is rejected unless `dynamic_mode = "allowlist"`, even when the value is empty.
 - Allowing a name only permits negotiation/filter passage; runtime gates still deny arbitrary static channels and named handlers that are not implemented yet, including `rdpsnd` audio output and `rdpdr` device redirection.
-- A running `frdpd --config <path>` rereads `[channels]` on `SIGHUP`. The complete file must still parse and pass the daemon's startup-level file checks; otherwise the daemon logs the failure and retains the last applied policy. New peers receive the reloaded policy, while existing peers retain the immutable snapshot taken when they connected.
+- A running `frdpd --config <path>` rereads `[server].max_connections` and `[channels]` on `SIGHUP`. The complete file must still parse and pass static startup validation, including build-feature compatibility, TLS-path existence, helper-topology shape, and NTLM SAM validation; otherwise the daemon logs the failure and retains the last applied policy. The admission limit is published atomically with channel and clipboard policy. New peers receive the reloaded policy, while existing peers retain the immutable channel snapshot taken when they connected and are not disconnected by a lower limit.
 
 ## [clipboard]
 
@@ -58,7 +58,7 @@ After successful PAM authentication and account management, `frdp-authd` reads t
 - File clipboard, paths, images, and arbitrary formats remain unsupported and must stay denied until separate policy and runtime tests exist.
 - A running `frdpd --config <path>` rereads `[clipboard]` together with `[channels]` on `SIGHUP`. New peers receive the reloaded policy; existing clipboard/channel instances retain their connection-time snapshot. `SIGHUP` without `--config` is ignored with a warning. `frdpctl reload` remains the separate `frdp-sesmand` operation.
 
-`frdpd` deliberately ignores changes to listener address/port, TLS material, authentication/PAM/SSSD/NTLM settings, helper sockets, session policy, and audit settings during `SIGHUP`; restart the affected daemon to apply those fields. In particular, replacing `ntlm_sam_file` does not replace the inode pinned at startup.
+`frdpd` deliberately ignores changes to listener address/port, TLS material, authentication/PAM/SSSD/NTLM settings, helper sockets, session policy, and audit settings during `SIGHUP`; restart the affected daemon to apply those fields. `server.max_connections` is the only reloaded server field. In particular, replacing `ntlm_sam_file` does not replace the inode pinned at startup.
 
 ## [audit]
 

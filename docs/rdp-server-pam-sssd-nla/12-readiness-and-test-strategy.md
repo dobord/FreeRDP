@@ -247,8 +247,14 @@ probe and a full post-recovery session/reconnect cycle through SSSD. Every
 profile requires one wrong-password NTLM MIC rejection before PAM, one named
 denied-user PAM/SSSD outcome from that probe's connection path, and no NTLM
 proof/delegated-identity mismatch. It then checks a full connection, appearance
-in `frdpctl list-sessions`, reconnect identity, and final cleanup; the local
-profile performs the disconnect through a graceful `frdpd` restart. The Samba and
+in `frdpctl list-sessions`, reconnect identity, and final cleanup. The local
+profile also atomically lowers `server.max_connections` to the held-peer count,
+requires a new client to be rejected before PAM while that peer remains active,
+and restores the cap before its channel-policy reload sequence; it later performs
+the disconnect through a graceful `frdpd` restart. The replacement daemon starts
+with an explicit CLI cap of one, reloads a config cap of two after stable reattach,
+and must still reject another peer before PAM without changing the session, proving
+CLI priority across reload. The Samba and
 FreeIPA profiles are intentionally separate because
 they represent different identity and policy behavior, not interchangeable
 LDAP fixtures.

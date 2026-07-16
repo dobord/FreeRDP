@@ -82,9 +82,12 @@ typedef struct
 {
 	frdpdServerConfig server;
 	frdpConfig file_config;
+	int argc;
+	char** argv;
 	char config_bind_address[64];
 	const char* config_path;
 	BOOL domain_mode_set;
+	BOOL max_connections_set;
 	BOOL show_help;
 	BOOL pam_auth_test;
 	const char* test_user;
@@ -101,6 +104,22 @@ static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
                                        const MONITOR_DEF* monitors);
 static BOOL frdpd_process_pending_display_control(frdpdPeerContext* context);
 static BOOL frdpd_apply_file_config(frdpdOptions* options);
+static BOOL frdpd_parse_args(int argc, char* argv[], frdpdOptions* options);
+static BOOL frdpd_validate_static_startup_config(frdpdOptions* options);
+
+static void frdpd_init_options(frdpdOptions* options)
+{
+	WINPR_ASSERT(options);
+	ZeroMemory(options, sizeof(*options));
+	options->server.port = 3389;
+	options->server.cert_path = "server.crt";
+	options->server.key_path = "server.key";
+	options->server.pam_service = "frdpd";
+	options->server.allow_tls_fallback = FALSE;
+	options->server.ntlm_fallback = FALSE;
+	options->server.ntlm_sam_fd = -1;
+	options->server.domain_mode = FRDPD_DOMAIN_PLAIN;
+}
 
 #ifdef WITH_FRDPD_NTLM
 static BOOL frdpd_prepare_ntlm_sam_file(frdpdServerConfig* config)
@@ -1531,32 +1550,37 @@ static BOOL frdpd_peer_init(freerdp_peer* client)
 
 static BOOL frdpd_reserve_connection(frdpdServerConfig* config, const char* hostname)
 {
-	const LONG max_connections = config ? (LONG)config->max_connections : 0;
+	LONG active = 0;
+	LONG max_connections = 0;
 	char log_hostname[FRDPD_LOG_STRING_SIZE] = { 0 };
 
 	if (!config)
 		return FALSE;
 
-	for (;;)
+	EnterCriticalSection(&g_frdpd_policy_lock);
+	active = InterlockedCompareExchange(&config->active_connections, 0, 0);
+	max_connections = config->max_connections;
+	if ((max_connections == 0) || (active < max_connections))
 	{
-		const LONG active = InterlockedCompareExchange(&config->active_connections, 0, 0);
-
-		if ((max_connections > 0) && (active >= max_connections))
-		{
-			WLog_WARN(TAG, "rejecting client %s: max_connections=%ld active=%ld",
-			          frdpd_log_value(hostname, log_hostname, sizeof(log_hostname), "unknown"),
-			          (long)max_connections, (long)active);
-			return FALSE;
-		}
-		if (InterlockedCompareExchange(&config->active_connections, active + 1, active) == active)
-			return TRUE;
+		(void)InterlockedIncrement(&config->active_connections);
+		LeaveCriticalSection(&g_frdpd_policy_lock);
+		return TRUE;
 	}
+	LeaveCriticalSection(&g_frdpd_policy_lock);
+	WLog_WARN(TAG, "rejecting client %s: max_connections=%ld active=%ld",
+	          frdpd_log_value(hostname, log_hostname, sizeof(log_hostname), "unknown"),
+	          (long)max_connections, (long)active);
+	return FALSE;
 }
 
 static void frdpd_release_connection(frdpdServerConfig* config)
 {
 	if (config)
+	{
+		EnterCriticalSection(&g_frdpd_policy_lock);
 		(void)InterlockedDecrement(&config->active_connections);
+		LeaveCriticalSection(&g_frdpd_policy_lock);
+	}
 }
 
 static BOOL frdpd_wait_for_peer_drain(frdpdServerConfig* config)
@@ -2278,7 +2302,8 @@ static BOOL frdpd_peer_accepted(freerdp_listener* instance, freerdp_peer* client
 static void frdpd_reload_peer_policy(frdpdOptions* options)
 {
 	frdpConfig config = { 0 };
-	frdpdOptions candidate = { 0 };
+	frdpdOptions candidate;
+	LONG max_connections = 0;
 
 	WINPR_ASSERT(options);
 	g_frdpd_reload_requested = 0;
@@ -2289,30 +2314,39 @@ static void frdpd_reload_peer_policy(frdpdOptions* options)
 	}
 	if (frdp_config_load(options->config_path, &config) != 0)
 	{
-		WLog_ERR(TAG,
-		         "failed to reload channel and clipboard policy from %s; retaining previous "
-		         "policy",
+		WLog_ERR(TAG, "failed to reload peer policy from %s; retaining previous policy",
 		         options->config_path);
 		return;
 	}
+	frdpd_init_options(&candidate);
+	candidate.argc = options->argc;
+	candidate.argv = options->argv;
 	candidate.file_config = config;
-	if (!frdpd_apply_file_config(&candidate))
+	if (!frdpd_apply_file_config(&candidate) ||
+	    !frdpd_parse_args(candidate.argc, candidate.argv, &candidate) ||
+	    !frdpd_validate_static_startup_config(&candidate))
 	{
-		WLog_ERR(TAG,
-		         "configuration from %s is not supported by frdpd; retaining previous channel "
-		         "and clipboard policy",
+		if (candidate.server.ntlm_sam_fd >= 0)
+			(void)close(candidate.server.ntlm_sam_fd);
+		WLog_ERR(TAG, "configuration from %s is not supported by frdpd; retaining previous peer "
+		              "policy",
 		         options->config_path);
 		return;
 	}
+	if (candidate.server.ntlm_sam_fd >= 0)
+		(void)close(candidate.server.ntlm_sam_fd);
 
 	EnterCriticalSection(&g_frdpd_policy_lock);
 	options->server.channels = config.channels;
 	options->server.clipboard = config.clipboard;
+	if (!options->max_connections_set)
+		options->server.max_connections = candidate.server.max_connections;
+	max_connections = options->server.max_connections;
 	LeaveCriticalSection(&g_frdpd_policy_lock);
 	WLog_INFO(TAG,
-	          "reloaded channel and clipboard policy from %s for new connections; existing "
-	          "connections retain their policy snapshot",
-	          options->config_path);
+	          "reloaded peer policy from %s: max_connections=%ld; the admission limit applies "
+	          "to new peers and existing peers retain their channel/clipboard snapshot",
+	          options->config_path, (long)max_connections);
 }
 
 static void frdpd_server_mainloop(freerdp_listener* instance, frdpdOptions* options)
@@ -2420,7 +2454,7 @@ static BOOL frdpd_parse_port(const char* value, UINT16* port)
 	return TRUE;
 }
 
-static BOOL frdpd_parse_max_connections(const char* value, UINT32* max_connections)
+static BOOL frdpd_parse_max_connections(const char* value, LONG* max_connections)
 {
 	char* end = NULL;
 	unsigned long tmp = 0;
@@ -2434,7 +2468,7 @@ static BOOL frdpd_parse_max_connections(const char* value, UINT32* max_connectio
 	if ((errno != 0) || !end || (end[0] != '\0') || (tmp > INT_MAX))
 		return FALSE;
 
-	*max_connections = (UINT32)tmp;
+	*max_connections = (LONG)tmp;
 	return TRUE;
 }
 
@@ -2491,7 +2525,7 @@ static BOOL frdpd_apply_file_config(frdpdOptions* options)
 
 	if (!frdpd_apply_listen_config(options, config->listen))
 		return FALSE;
-	options->server.max_connections = config->max_connections;
+	options->server.max_connections = (LONG)config->max_connections;
 	if (_stricmp(config->auth_mode, "pam-sssd") != 0)
 		return FALSE;
 	if (config->kerberos)
@@ -2618,6 +2652,7 @@ static BOOL frdpd_parse_args(int argc, char* argv[], frdpdOptions* options)
 		{
 			if (!frdpd_parse_max_connections(&arg[18], &options->server.max_connections))
 				return FALSE;
+			options->max_connections_set = TRUE;
 		}
 		else if (strncmp(arg, "--cert=", 7) == 0)
 			options->server.cert_path = &arg[7];
@@ -2752,6 +2787,25 @@ static BOOL frdpd_validate_build_features(const frdpdServerConfig* config)
 	return TRUE;
 }
 
+static BOOL frdpd_validate_static_startup_config(frdpdOptions* options)
+{
+	frdpdServerConfig* config = NULL;
+
+	WINPR_ASSERT(options);
+	config = &options->server;
+	if (!frdpd_validate_build_features(config))
+		return FALSE;
+	if (!frdpd_validate_runtime_topology(options))
+		return FALSE;
+	if (!winpr_PathFileExists(config->cert_path) || !winpr_PathFileExists(config->key_path))
+	{
+		WLog_ERR(TAG, "Certificate or key file not found: cert=%s key=%s", config->cert_path,
+		         config->key_path);
+		return FALSE;
+	}
+	return frdpd_validate_ntlm_config(config);
+}
+
 static BOOL frdpd_probe_helper(const char* socket_path, const char* expected_role)
 {
 	frdpControlResponse response = { 0 };
@@ -2797,17 +2851,7 @@ static int frdpd_run_server(frdpdOptions* options)
 	freerdp_listener* listener = NULL;
 	frdpdServerConfig* config = &options->server;
 
-	if (!frdpd_validate_build_features(config))
-		return -1;
-	if (!frdpd_validate_runtime_topology(options))
-		return -1;
-	if (!winpr_PathFileExists(config->cert_path) || !winpr_PathFileExists(config->key_path))
-	{
-		WLog_ERR(TAG, "Certificate or key file not found: cert=%s key=%s", config->cert_path,
-		         config->key_path);
-		return -1;
-	}
-	if (!frdpd_validate_ntlm_config(config))
+	if (!frdpd_validate_static_startup_config(options))
 		return -1;
 	if (!frdpd_wait_for_helper(config->auth_socket, "frdp-authd") ||
 	    !frdpd_wait_for_helper(config->session_socket, "frdp-sesmand"))
@@ -2866,20 +2910,15 @@ fail:
 
 int main(int argc, char* argv[])
 {
-	frdpdOptions options = { 0 };
+	frdpdOptions options;
 	int rc = 0;
 
 	if (!frdpd_disable_core_dumps())
 		return 1;
 
-	options.server.port = 3389;
-	options.server.cert_path = "server.crt";
-	options.server.key_path = "server.key";
-	options.server.pam_service = "frdpd";
-	options.server.allow_tls_fallback = FALSE;
-	options.server.ntlm_fallback = FALSE;
-	options.server.ntlm_sam_fd = -1;
-	options.server.domain_mode = FRDPD_DOMAIN_PLAIN;
+	frdpd_init_options(&options);
+	options.argc = argc;
+	options.argv = argv;
 	if (frdpd_args_have_help(argc, argv))
 	{
 		frdpd_print_usage(argv[0]);

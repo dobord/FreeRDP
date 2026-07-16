@@ -40,7 +40,7 @@ extern "C"
 		char ntlm_sam_fd_path[64];
 		const char* session_socket;
 		UINT16 port;
-		UINT32 max_connections;
+		LONG max_connections;
 		volatile LONG active_connections;
 		BOOL allow_tls_fallback;
 		BOOL ntlm_fallback;

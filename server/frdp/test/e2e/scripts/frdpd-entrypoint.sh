@@ -506,10 +506,21 @@ run_frdpd_supervisor()
 	local generation=0
 	local pid=
 	local status=0
+	local -a frdpd_args=()
 
 	trap '[[ -z ${pid:-} ]] || kill -TERM "$pid" 2>/dev/null || true; [[ -z ${pid:-} ]] || wait "$pid" 2>/dev/null || true; exit 143' TERM INT
 	while ((generation < 2)); do
-		stdbuf -oL -eL frdpd --config "$FRDP_CONFIG" --domain-mode=plain &
+		frdpd_args=(--config "$FRDP_CONFIG" --domain-mode=plain)
+		if ((generation == 1)); then
+			frdpd_args+=(
+				--max-connections=1
+				--cert=/etc/frdpd/tls.crt
+				--key=/etc/frdpd/tls.key
+				--auth-socket="$FRDP_AUTH_SOCKET"
+				--session-socket="$FRDP_SESSION_SOCKET"
+			)
+		fi
+		stdbuf -oL -eL frdpd "${frdpd_args[@]}" &
 		pid=$!
 		publish_frdpd_state "$pid" "$generation"
 
@@ -556,7 +567,8 @@ wait_initial_frdpd()
 
 run_policy_reload_supervisor()
 {
-	local frdpd_pid=$1
+	local frdpd_pid=
+	local generation=
 	local mode=
 	local next="${FRDP_CONFIG}.next"
 	local original="${FRDP_CONFIG}.e2e-original"
@@ -566,13 +578,26 @@ run_policy_reload_supervisor()
 
 	cp -p "$FRDP_CONFIG" "$original"
 	trap 'exit 0' TERM INT
-	while kill -0 "$frdpd_pid" 2>/dev/null; do
-		for mode in deny malformed restore; do
+	while :; do
+		for mode in capacity deny malformed restore cli; do
 			request="$FRDP_E2E_CONTROL_DIR/policy-reload-${mode}-request"
 			[[ -f $request ]] || continue
+			frdpd_pid=$(sed -n 's/^pid=//p' "$FRDP_E2E_CONTROL_DIR/frdpd-state")
+			generation=$(sed -n 's/^generation=//p' "$FRDP_E2E_CONTROL_DIR/frdpd-state")
+			[[ $frdpd_pid =~ ^[1-9][0-9]*$ && $generation =~ ^[01]$ ]]
+			kill -0 "$frdpd_pid"
 			ready="$FRDP_E2E_CONTROL_DIR/policy-reload-${mode}-ready"
 			temporary="$FRDP_E2E_CONTROL_DIR/.policy-reload-${mode}-ready.$$"
 			case "$mode" in
+				capacity)
+					awk '
+						$0 == "max_connections = 8" {
+							print "max_connections = 1"; next
+						}
+						{ print }
+					' "$original" >"$next"
+					grep -Fxq 'max_connections = 1' "$next"
+					;;
 				deny)
 					awk '
 						$0 == "static_mode = \"blocklist\"" {
@@ -592,24 +617,31 @@ run_policy_reload_supervisor()
 				restore)
 					cp "$original" "$next"
 					;;
+				cli)
+					[[ $generation == 1 ]]
+					awk '
+						$0 == "max_connections = 8" {
+							print "max_connections = 2"; next
+						}
+						$1 == "tls_cert" || $1 == "tls_key" ||
+						$1 == "auth_socket" || $1 == "session_socket" { next }
+						{ print }
+					' "$original" >"$next"
+					grep -Fxq 'max_connections = 2' "$next"
+					! grep -Eq '^(tls_cert|tls_key|auth_socket|session_socket)[[:space:]]*=' "$next"
+					;;
 			esac
 			chmod 0600 "$next"
 			mv -f "$next" "$FRDP_CONFIG"
 			kill -HUP "$frdpd_pid"
 			sleep 1
 			kill -0 "$frdpd_pid"
-			printf 'mode=%s\nresult=pass\n' "$mode" >"$temporary"
+			printf 'mode=%s\ngeneration=%s\nresult=pass\n' "$mode" "$generation" >"$temporary"
 			mv -f "$temporary" "$ready"
 			rm -f "$request"
 		done
 		sleep 0.1
 	done
-	if [[ $FRDP_E2E_FRDPD_RESTART == 1 ]]; then
-		while :; do
-			sleep 1
-		done
-	fi
-	return 1
 }
 
 run_xauthority_export_supervisor()
@@ -839,7 +871,7 @@ run_xauthority_export_supervisor "$frdpd_pid" &
 children+=("$!")
 
 if [[ $FRDP_E2E_POLICY_RELOAD == 1 ]]; then
-	run_policy_reload_supervisor "$frdpd_pid" &
+	run_policy_reload_supervisor &
 	children+=("$!")
 fi
 

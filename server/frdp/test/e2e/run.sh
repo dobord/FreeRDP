@@ -178,7 +178,7 @@ validate_rdp_auth_artifacts()
 	local dc_id dc_log
 	local total_accepted total_rejected
 	local ntlm_proof_rejected wrong_password_rejected denied_user_rejected
-	local policy_reload_failed policy_channel_rejected
+	local policy_reload_failed policy_channel_rejected peer_limit_rejected peer_limit_reloaded
 	local keytab_rollover old_kvno new_kvno
 	local graphical_concurrency graphical_result session_limit_reached
 	local expected_accepted=5
@@ -220,9 +220,14 @@ validate_rdp_auth_artifacts()
 	)
 	ntlm_proof_rejected=$(grep -Fc 'Message Integrity Check (MIC) verification failed!' \
 		"$server_log" || true)
-	policy_reload_failed=$(grep -Fc 'failed to reload channel and clipboard policy from' \
+	policy_reload_failed=$(grep -Fc 'failed to reload peer policy from' \
 		"$server_log" || true)
 	policy_channel_rejected=$(grep -c 'rejected static virtual channel' "$server_log" || true)
+	peer_limit_rejected=$(
+		grep 'rejecting client.*max_connections=1 active=1' "$server_log" |
+			grep -Evc 'rejecting client (127\.0\.0\.1|::1|localhost):' || true
+	)
+	peer_limit_reloaded=$(grep -c 'reloaded peer policy.*max_connections=1' "$server_log" || true)
 	session_limit_reached=$(grep -c 'session manager rejected login.*: session limit reached' \
 		"$server_log" || true)
 	rejected=$((wrong_password_rejected + denied_user_rejected))
@@ -259,9 +264,11 @@ validate_rdp_auth_artifacts()
 		return 1
 	fi
 	if [[ $profile == local ]] &&
-		[[ $policy_reload_failed -ne 1 || $policy_channel_rejected -ne 2 ]]; then
-		printf 'profile local expected 1 rejected policy reload and 2 channel denials; got %s and %s\n' \
-			"$policy_reload_failed" "$policy_channel_rejected" >&2
+		[[ $policy_reload_failed -ne 1 || $policy_channel_rejected -ne 2 ||
+			$peer_limit_rejected -ne 2 || $peer_limit_reloaded -ne 2 ]]; then
+		printf 'profile local expected 1 rejected reload, 2 channel denials, 2 peer-limit rejections and 2 peer-limit reloads; got %s, %s, %s and %s\n' \
+			"$policy_reload_failed" "$policy_channel_rejected" "$peer_limit_rejected" \
+			"$peer_limit_reloaded" >&2
 		return 1
 	fi
 	if [[ $graphical_concurrency -gt 0 ]]; then
