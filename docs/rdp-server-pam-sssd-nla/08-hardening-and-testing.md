@@ -95,7 +95,7 @@ Create a harness that spawns multiple RDP clients concurrently to measure CPU, m
 
 Write mandatory access control profiles to confine the RDP daemons:
 
-- Define a minimal policy allowing network listening on port 3389, access to `/etc/frdpd` for keys and configuration, execution of `/usr/bin/Xvfb` and reading user home directories.
+- Define a minimal policy allowing network listening on port 3389, access to `/etc/frdpd` for keys and configuration, execution of `/usr/bin/Xvfb` and the distro raw Xorg server, read access to `/usr/share/frdpd/xorg-dummy.conf`, and only the required user-session resources. Keep the Xorg path aligned with the root-owned path configured in `frdpd.toml`.
 - Deny access to arbitrary files and prevent the daemon from loading untrusted modules.
 - Distribute example policies for both SELinux (`frdpd.te` and `frdpd.fc`) and AppArmor (`frdpd` profile) in `packaging/selinux` and `packaging/apparmor`; the SELinux policy is compiled/packaged in CTest when `checkmodule` and `semodule_package` are available, and the AppArmor profile is parser-validated when `apparmor_parser` is available, while activation and production confinement review remain open.
 

@@ -402,6 +402,23 @@ static int validate_session_heartbeat_policy(const frdpConfig *config)
     return 0;
 }
 
+static int validate_session_display_policy(const frdpConfig* config)
+{
+    if (!config)
+        return -1;
+    if (config->session_display.backend == FRDP_SESSION_DISPLAY_XVFB)
+        return (config->session_display.xorg_path[0] == '\0' &&
+                config->session_display.xorg_config[0] == '\0')
+                   ? 0
+                   : -1;
+    if (config->session_display.backend != FRDP_SESSION_DISPLAY_XORG_DUMMY)
+        return -1;
+    return (is_absolute_path(config->session_display.xorg_path) &&
+            is_absolute_path(config->session_display.xorg_config))
+               ? 0
+               : -1;
+}
+
 /* Load key/value pairs from a small fail-closed TOML subset. */
 int frdp_config_load(const char *path, frdpConfig *config)
 {
@@ -438,6 +455,9 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_session_heartbeat_interval_ms = 0;
     int seen_session_heartbeat_timeout_ms = 0;
     int seen_session_heartbeat_failures = 0;
+    int seen_session_display_backend = 0;
+    int seen_session_xorg_path = 0;
+    int seen_session_xorg_config = 0;
     int seen_channel_static_mode = 0;
     int seen_channel_static_allow = 0;
     int seen_channel_static_deny = 0;
@@ -839,6 +859,42 @@ int frdp_config_load(const char *path, frdpConfig *config)
                     return -1;
                 }
             }
+            else if (strcmp(key, "display_backend") == 0)
+            {
+                if (seen_session_display_backend) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_session_display_backend = 1;
+                if (strcmp(val, "xvfb") == 0)
+                    config->session_display.backend = FRDP_SESSION_DISPLAY_XVFB;
+                else if (strcmp(val, "xorg-dummy") == 0)
+                    config->session_display.backend = FRDP_SESSION_DISPLAY_XORG_DUMMY;
+                else {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "xorg_path") == 0)
+            {
+                if (seen_session_xorg_path || !is_absolute_path(val) ||
+                    copy_string(config->session_display.xorg_path,
+                                sizeof(config->session_display.xorg_path), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_session_xorg_path = 1;
+            }
+            else if (strcmp(key, "xorg_config") == 0)
+            {
+                if (seen_session_xorg_config || !is_absolute_path(val) ||
+                    copy_string(config->session_display.xorg_config,
+                                sizeof(config->session_display.xorg_config), val) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_session_xorg_config = 1;
+            }
             else {
                 fclose(f);
                 return -1;
@@ -986,6 +1042,8 @@ int frdp_config_load(const char *path, frdpConfig *config)
     if (validate_session_resource_policy(config) != 0)
         return -1;
     if (validate_session_heartbeat_policy(config) != 0)
+        return -1;
+    if (validate_session_display_policy(config) != 0)
         return -1;
     if (validate_audit_policy(config) != 0)
         return -1;

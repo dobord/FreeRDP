@@ -180,7 +180,7 @@ validate_rdp_auth_artifacts()
 	local ntlm_proof_rejected wrong_password_rejected denied_user_rejected
 	local policy_reload_failed policy_channel_rejected
 	local keytab_rollover old_kvno new_kvno
-	local expected_accepted=4
+	local expected_accepted=5
 	local provider_result=
 
 	server_id=$("${compose[@]}" --profile "$profile" ps -a -q "$server_service" 2>/dev/null || true)
@@ -235,6 +235,12 @@ validate_rdp_auth_artifacts()
 	if grep -q 'proof identity does not match the delegated credentials' "$server_log"; then
 		printf 'profile %s encountered an NTLM proof/delegated identity mismatch\n' \
 			"$profile" >&2
+		return 1
+	fi
+	if ! grep -Fq \
+		'managed Xorg dummy display completed 800x600 -> 1024x768 -> 800x600 resize churn' \
+		"$artifacts/$profile/probe.log"; then
+		printf 'profile %s did not record a successful managed-display resize\n' "$profile" >&2
 		return 1
 	fi
 	if [[ $profile == local ]] &&

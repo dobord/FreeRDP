@@ -543,6 +543,44 @@ run_policy_reload_supervisor()
 	return 1
 }
 
+run_xauthority_export_supervisor()
+{
+	local frdpd_pid=$1
+	local request=
+	local agent_pid=
+	local authority_fd=
+	local output=
+	local temporary=
+	local target=
+
+	trap 'exit 0' TERM INT
+	while kill -0 "$frdpd_pid" 2>/dev/null; do
+		for request in "$FRDP_E2E_CONTROL_DIR"/xauthority-*-request; do
+			[[ -f $request ]] || continue
+			agent_pid=${request##*/xauthority-}
+			agent_pid=${agent_pid%-request}
+			[[ $agent_pid =~ ^[1-9][0-9]*$ ]] || { rm -f "$request"; continue; }
+			authority_fd=
+			for candidate in /proc/"$agent_pid"/fd/*; do
+				[[ -L $candidate ]] || continue
+				target=$(readlink "$candidate" 2>/dev/null || true)
+				if [[ $target == */.frdp-xauthority-*\ \(deleted\) ]]; then
+					authority_fd=$candidate
+					break
+				fi
+			done
+			[[ -n $authority_fd ]] || continue
+			output="$FRDP_E2E_CONTROL_DIR/xauthority-$agent_pid"
+			temporary="$FRDP_E2E_CONTROL_DIR/.xauthority-$agent_pid.$$"
+			cp --dereference "$authority_fd" "$temporary"
+			chmod 0400 "$temporary"
+			mv -f "$temporary" "$output"
+			rm -f "$request"
+		done
+		sleep 0.1
+	done
+}
+
 inject_sesmand_crash()
 {
 	local agent_pid=
@@ -681,11 +719,8 @@ fi
 if [[ $FRDP_E2E_POLICY_RELOAD == 1 && $FRDP_IDENTITY_PROVIDER != local ]]; then
 	fail "frdpd policy reload injection requires the local provider profile"
 fi
-if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 || $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER == 1 ||
-	$FRDP_E2E_POLICY_RELOAD == 1 ]]; then
-	mkdir -p "$FRDP_E2E_CONTROL_DIR"
-	rm -f "$FRDP_E2E_CONTROL_DIR"/*
-fi
+mkdir -p "$FRDP_E2E_CONTROL_DIR"
+rm -f "$FRDP_E2E_CONTROL_DIR"/*
 if [[ $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER == 1 ]]; then
 	mkdir -p "$FRDP_E2E_KEYTAB_DIR"
 	chmod 0700 "$FRDP_E2E_KEYTAB_DIR"
@@ -713,6 +748,9 @@ wait_socket "$FRDP_SESSION_SOCKET" || fail "frdp-sesmand socket was not created"
 frdpd --config "$FRDP_CONFIG" --domain-mode=plain &
 frdpd_pid=$!
 children+=("$frdpd_pid")
+
+run_xauthority_export_supervisor "$frdpd_pid" &
+children+=("$!")
 
 if [[ $FRDP_E2E_POLICY_RELOAD == 1 ]]; then
 	run_policy_reload_supervisor "$frdpd_pid" &

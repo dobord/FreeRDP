@@ -58,6 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xauth \
         xclip \
         xdotool \
+        xserver-xorg-video-dummy \
         xvfb \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -119,6 +120,8 @@ RUN cmake -S /src -B /opt/freerdp-build -GNinja \
 COPY server/frdp/test/e2e /opt/frdp-e2e
 RUN chmod 0755 /opt/frdp-e2e/scripts/*.sh \
     && mkdir -p /artifacts /etc/frdpd /run/frdp-authd /run/frdp-sesmand /var/log/sssd \
+    && install -Dm0644 /src/server/frdp/config/xorg-dummy.conf \
+        /usr/share/frdpd/xorg-dummy.conf \
     && chmod 0700 /run/frdp-authd /run/frdp-sesmand
 
 ARG WITH_FREEIPA_CLIENT=OFF

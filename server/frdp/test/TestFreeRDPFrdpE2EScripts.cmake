@@ -263,6 +263,7 @@ expect_not_contains("${freeipa_client_service}" "freeipa-keytab"
 file(READ "${FRDP_E2E_DIR}/Dockerfile" frdp_dockerfile)
 foreach(expected
         "ARG WITH_FREEIPA_CLIENT=OFF"
+        "xserver-xorg-video-dummy"
         "if [ \"$WITH_FREEIPA_CLIENT\" = ON ]; then"
         "apt-get install -y --no-install-recommends freeipa-client")
   expect_contains("${frdp_dockerfile}" "${expected}" "FRDP E2E image")
@@ -405,6 +406,7 @@ foreach(expected
         "expected %s PAM accepts and 2 PAM denials"
         "one NTLM proof rejection and two denied-user PAM denials"
         "proof identity does not match the delegated credentials"
+        "managed Xorg dummy display completed 800x600 -> 1024x768 -> 800x600 resize churn"
         "provider-recovery.txt"
         "freeipa-keytab-rollover.txt"
         "post_rollover_pam_sssd_rdp=pass"
@@ -431,6 +433,7 @@ foreach(expected
         "command -v timeout"
         "command -v xvfb-run"
         "command -v Xvfb"
+        "command -v xdotool"
         "command -v xwd"
         "command -v xclip"
         "command -v ps"
@@ -453,15 +456,29 @@ foreach(expected
         "session_identity_is_exclusively_active"
         "process_is_running"
         "managed RDP session reattached with stable id/display/PID"
+        "wait_display_geometry"
+        "xdotool windowsize --sync \"$window_id\" 800 600"
+        "xdotool windowsize --sync \"$window_id\" 1024 768"
+        "managed Xorg dummy display completed 800x600 -> 1024x768 -> 800x600 resize churn"
+        "request_session_xauthority"
+        "export XAUTHORITY"
         "client-to-server Unicode clipboard transfer passed"
         "server-to-client Unicode clipboard transfer passed"
         "request_policy_reload deny"
-        "run_policy_denied_auth_only"
+	        "run_policy_denied_connection"
         "reload-malformed-retained-deny"
         "active peer retained its channel and clipboard policy snapshot"
         "request_policy_reload restore"
         "session-list-after-reconnect.txt")
   expect_contains("${rdp_probe}" "${expected}" "E2E RDP probe script")
+endforeach()
+
+file(READ "${FRDP_E2E_DIR}/frdpd.toml" frdp_e2e_config)
+foreach(expected
+        "display_backend = \"xorg-dummy\""
+        "xorg_path = \"/usr/lib/xorg/Xorg\""
+        "xorg_config = \"/usr/share/frdpd/xorg-dummy.conf\"")
+  expect_contains("${frdp_e2e_config}" "${expected}" "E2E FRDP configuration")
 endforeach()
 
 file(READ "${FRDP_E2E_DIR}/scripts/rdp-load-probe.sh" load_probe)

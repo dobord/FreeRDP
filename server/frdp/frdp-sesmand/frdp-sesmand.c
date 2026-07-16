@@ -39,6 +39,7 @@
 #include <winpr/platform.h>
 
 #include "../config/frdp-config.h"
+#include "../config/trusted-path.h"
 #include "../ipc/frdp-auth-token.h"
 #include "../ipc/frdp-ipc.h"
 #include "display_policy.h"
@@ -96,6 +97,9 @@ static frdpSessionHeartbeatPolicy g_session_heartbeat_policy = {
     .timeout_ms = FRDP_SESSION_HEARTBEAT_DEFAULT_TIMEOUT_MS,
     .failure_threshold = FRDP_SESSION_HEARTBEAT_DEFAULT_FAILURES
 };
+static frdpSessionDisplayPolicy g_session_display_policy = {
+	.backend = FRDP_SESSION_DISPLAY_XVFB,
+};
 static int g_heartbeat_cursor = 0;
 static char g_config_path[1024] = {0};
 static char g_agent_socket_dir[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
@@ -121,6 +125,7 @@ static consumedAuthToken consumed_auth_tokens[MAX_CONSUMED_AUTH_TOKENS];
 
 static int create_agent_socket(const char *socket_path);
 static void destroy_agent_socket(int *fd, const char *socket_path);
+static int configure_agent_display_environment(const frdpSessionDisplayPolicy* policy);
 static void cleanup_session(int idx);
 
 static void sesmand_signal_handler(int signum)
@@ -800,7 +805,9 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
         setenv("DISPLAY", display_str, 1);
         setenv("FRDP_DISPLAY", display_str, 1);
         setenv("FRDP_GEOMETRY", geometry_str, 1);
-        setenv("FRDP_SESSION_ID", new_session_id, 1);
+		if (configure_agent_display_environment(&g_session_display_policy) != 0)
+			child_exec_failed(exec_pipe[1]);
+		setenv("FRDP_SESSION_ID", new_session_id, 1);
         snprintf(ready_fd_str, sizeof(ready_fd_str), "%d", exec_pipe[1]);
         setenv("FRDP_AGENT_READY_FD", ready_fd_str, 1);
         snprintf(agent_fd_str, sizeof(agent_fd_str), "%d", heartbeat_pair[1]);
@@ -1186,6 +1193,75 @@ static int set_pam_service_name(const char *service)
     return (rc >= 0 && (size_t)rc < sizeof(g_pam_service)) ? 0 : -1;
 }
 
+static const char* session_display_backend_name(frdpSessionDisplayBackend backend)
+{
+	switch (backend)
+	{
+		case FRDP_SESSION_DISPLAY_XVFB:
+			return "xvfb";
+		case FRDP_SESSION_DISPLAY_XORG_DUMMY:
+			return "xorg-dummy";
+		default:
+			return NULL;
+	}
+}
+
+static int session_display_policy_is_usable(const frdpSessionDisplayPolicy* policy)
+{
+	if (!policy)
+		return 0;
+	if (policy->backend == FRDP_SESSION_DISPLAY_XVFB)
+		return 1;
+	if (policy->backend != FRDP_SESSION_DISPLAY_XORG_DUMMY)
+		return 0;
+	return frdp_trusted_root_file(policy->xorg_path, 1) &&
+	       frdp_trusted_root_file(policy->xorg_config, 0);
+}
+
+static int configure_agent_display_environment(const frdpSessionDisplayPolicy* policy)
+{
+	const char* backend = NULL;
+
+	if (!policy || !(backend = session_display_backend_name(policy->backend)))
+		return -1;
+	if (setenv("FRDP_DISPLAY_BACKEND", backend, 1) != 0)
+		return -1;
+	if (policy->backend == FRDP_SESSION_DISPLAY_XVFB)
+	{
+		if (unsetenv("FRDP_XORG_PATH") != 0 || unsetenv("FRDP_XORG_CONFIG") != 0)
+			return -1;
+		return 0;
+	}
+	if (policy->xorg_path[0] == '\0' || policy->xorg_config[0] == '\0')
+		return -1;
+	if (setenv("FRDP_XORG_PATH", policy->xorg_path, 1) != 0 ||
+	    setenv("FRDP_XORG_CONFIG", policy->xorg_config, 1) != 0)
+		return -1;
+	return 0;
+}
+
+static int format_reload_message(char* message, size_t message_size)
+{
+	const char* backend = session_display_backend_name(g_session_display_policy.backend);
+	int rc = 0;
+
+	if (!message || message_size == 0 || !backend)
+		return -1;
+	rc = snprintf(message, message_size,
+	              "pam_service=%s;max_processes=%" PRIu32 ";memory_max_mb=%" PRIu32, g_pam_service,
+	              g_session_resource_policy.max_processes, g_session_resource_policy.memory_max_mb);
+	if (rc < 0 || (size_t)rc >= message_size)
+		return -1;
+
+	const size_t used = (size_t)rc;
+	rc = snprintf(message + used, message_size - used, ";display_backend=%s", backend);
+	if (rc < 0)
+		return -1;
+	if ((size_t)rc >= message_size - used)
+		message[used] = '\0';
+	return 0;
+}
+
 static int copy_config_path(const char *path)
 {
     int rc = 0;
@@ -1196,16 +1272,18 @@ static int copy_config_path(const char *path)
     return (rc >= 0 && (size_t)rc < sizeof(g_config_path)) ? 0 : -1;
 }
 
-static int load_configured_sesmand_policy(const char *config_path, char *service,
+static int load_configured_sesmand_policy(const char* config_path, char* service,
                                           size_t service_size,
-                                          frdpSessionResourcePolicy *resource_policy,
-                                          frdpSessionHeartbeatPolicy *heartbeat_policy)
+                                          frdpSessionResourcePolicy* resource_policy,
+                                          frdpSessionHeartbeatPolicy* heartbeat_policy,
+                                          frdpSessionDisplayPolicy* display_policy)
 {
     frdpConfig config;
     int rc = 0;
 
-    if (!config_path || !service || service_size == 0 || !resource_policy || !heartbeat_policy)
-        return -1;
+	if (!config_path || !service || service_size == 0 || !resource_policy || !heartbeat_policy ||
+	    !display_policy)
+		return -1;
     if (frdp_config_load(config_path, &config) != 0)
         return -1;
     if (config.kerberos)
@@ -1217,22 +1295,29 @@ static int load_configured_sesmand_policy(const char *config_path, char *service
         return -1;
     *resource_policy = config.session_resources;
     *heartbeat_policy = config.session_heartbeat;
-    return 0;
+	*display_policy = config.session_display;
+	if (!session_display_policy_is_usable(display_policy))
+		return -1;
+	return 0;
 }
 
-static int apply_sesmand_policy(const char *pam_service,
-                                const frdpSessionResourcePolicy *resource_policy,
-                                const frdpSessionHeartbeatPolicy *heartbeat_policy)
+static int apply_sesmand_policy(const char* pam_service,
+                                const frdpSessionResourcePolicy* resource_policy,
+                                const frdpSessionHeartbeatPolicy* heartbeat_policy,
+                                const frdpSessionDisplayPolicy* display_policy)
 {
     const uint64_t now = monotonic_time_ms();
 
-    if (!resource_policy || !heartbeat_policy)
-        return -1;
+	if (!resource_policy || !heartbeat_policy || !display_policy ||
+	    !session_display_backend_name(display_policy->backend) ||
+	    !session_display_policy_is_usable(display_policy))
+		return -1;
     if (set_pam_service_name(pam_service) != 0)
         return -1;
     g_session_resource_policy = *resource_policy;
     g_session_heartbeat_policy = *heartbeat_policy;
-    for (int idx = 0; idx < session_count; idx++) {
+	g_session_display_policy = *display_policy;
+	for (int idx = 0; idx < session_count; idx++) {
         sessions[idx].heartbeat_failures = 0;
         sessions[idx].heartbeat_next_ms = now + g_session_heartbeat_policy.interval_ms;
     }
@@ -1244,24 +1329,28 @@ static int reload_configured_sesmand_policy(char *error, size_t error_size)
     char pam_service[sizeof(g_pam_service)] = {0};
     frdpSessionResourcePolicy resource_policy = {0};
     frdpSessionHeartbeatPolicy heartbeat_policy = {0};
+	frdpSessionDisplayPolicy display_policy = { 0 };
 
-    if (g_config_path[0] == '\0') {
+	if (g_config_path[0] == '\0') {
         if (error && error_size > 0)
             snprintf(error, error_size, "%s", "no config path configured");
         return -1;
     }
-    if (load_configured_sesmand_policy(g_config_path, pam_service, sizeof(pam_service),
-                                       &resource_policy, &heartbeat_policy) != 0) {
-        if (error && error_size > 0)
+	if (load_configured_sesmand_policy(g_config_path, pam_service, sizeof(pam_service),
+	                                   &resource_policy, &heartbeat_policy, &display_policy) != 0)
+	{
+		if (error && error_size > 0)
             snprintf(error, error_size, "%s", "config reload failed");
         return -1;
-    }
-    if (apply_sesmand_policy(pam_service, &resource_policy, &heartbeat_policy) != 0) {
-        if (error && error_size > 0)
+	}
+	if (apply_sesmand_policy(pam_service, &resource_policy, &heartbeat_policy, &display_policy) !=
+	    0)
+	{
+		if (error && error_size > 0)
             snprintf(error, error_size, "%s", "invalid session policy");
         return -1;
-    }
-    return 0;
+	}
+	return 0;
 }
 
 static int set_cloexec(int fd)
@@ -1738,16 +1827,19 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
         char configured_service[sizeof(g_pam_service)] = {0};
         frdpSessionResourcePolicy resource_policy = {0};
         frdpSessionHeartbeatPolicy heartbeat_policy = {0};
+		frdpSessionDisplayPolicy display_policy = { 0 };
 
-        if (copy_config_path(config_path) != 0 ||
-            load_configured_sesmand_policy(config_path, configured_service,
-                                           sizeof(configured_service), &resource_policy,
-                                           &heartbeat_policy) != 0 ||
-            apply_sesmand_policy(configured_service, &resource_policy, &heartbeat_policy) != 0) {
-            fprintf(stderr, "failed to load frdp-sesmand config\n");
+		if (copy_config_path(config_path) != 0 ||
+		    load_configured_sesmand_policy(config_path, configured_service,
+		                                   sizeof(configured_service), &resource_policy,
+		                                   &heartbeat_policy, &display_policy) != 0 ||
+		    apply_sesmand_policy(configured_service, &resource_policy, &heartbeat_policy,
+		                         &display_policy) != 0)
+		{
+			fprintf(stderr, "failed to load frdp-sesmand config\n");
             return -1;
-        }
-    } else {
+		}
+	} else {
         if (set_pam_service_name(pam_service) != 0) {
             fprintf(stderr, "invalid PAM service name\n");
             return -1;
@@ -1897,12 +1989,11 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
                 char message[sizeof(((frdpControlResponse *)0)->message)] = {0};
 
                 if (reload_configured_sesmand_policy(error, sizeof(error)) == 0) {
-                    snprintf(message, sizeof(message),
-                             "pam_service=%s;max_processes=%" PRIu32 ";memory_max_mb=%" PRIu32,
-                             g_pam_service, g_session_resource_policy.max_processes,
-                             g_session_resource_policy.memory_max_mb);
-                    (void)send_reload_response(cfd, 1, message, NULL);
-                } else
+					if (format_reload_message(message, sizeof(message)) == 0)
+						(void)send_reload_response(cfd, 1, message, NULL);
+					else
+						(void)send_reload_response(cfd, 0, NULL, "reload response failed");
+				} else
                     (void)send_reload_response(cfd, 0, NULL, error);
             } else {
                 (void)send_reload_response(cfd, 1, "accepted", NULL);

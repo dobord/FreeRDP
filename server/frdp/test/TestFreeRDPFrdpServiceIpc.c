@@ -3217,8 +3217,9 @@ static int test_sesmand_reload_config(void)
 	if (start_helper_with_config(FRDP_SESMAND_BINARY, "frdp-sesmand-reload", config_path,
 	                             &helper) != 0)
 		goto cleanup_dir;
-	if (test_sesmand_reload(helper.socket_path, 1,
-	                        "pam_service=frdpd;max_processes=0;memory_max_mb=0", NULL) != 0)
+	if (test_sesmand_reload(
+	        helper.socket_path, 1,
+	        "pam_service=frdpd;max_processes=0;memory_max_mb=0;display_backend=xvfb", NULL) != 0)
 		goto cleanup;
 	if (write_sesmand_config(config_path,
 	                         "frdpd_reload_abcdefghijklmnopqrstuvwxyz_0123456789_ABCDEFGHIJKL",
@@ -3238,8 +3239,9 @@ static int test_sesmand_reload_config(void)
 	                              "[clipboard]\nmode = \"text\"\n"
 	                              "direction = \"bidirectional\"\n") != 0)
 		goto cleanup;
-	if (test_sesmand_reload(helper.socket_path, 1,
-	                        "pam_service=frdpd;max_processes=0;memory_max_mb=0", NULL) != 0)
+	if (test_sesmand_reload(
+	        helper.socket_path, 1,
+	        "pam_service=frdpd;max_processes=0;memory_max_mb=0;display_backend=xvfb", NULL) != 0)
 		goto cleanup;
 	if (write_sesmand_config_body(config_path,
 	                              "[auth]\npam_service = \"frdpd\"\n"

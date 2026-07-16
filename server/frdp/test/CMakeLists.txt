@@ -14,6 +14,7 @@ set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFree
                          TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpInputPolicy.c
                          TestFreeRDPFrdpDisplayControl.c TestFreeRDPFrdpClipboard.c
                          TestFreeRDPFrdpDisplayPolicy.c TestFreeRDPFrdpProcessIdentity.c
+                         TestFreeRDPFrdpTrustedPath.c
                          TestFreeRDPFrdpSessionState.c
                          TestFreeRDPFrdpSessionCleanup.c TestFreeRDPFrdpSessionDisconnect.c
                          TestFreeRDPFrdpSessionIdentity.c TestFreeRDPFrdpSessionReconnect.c
@@ -24,11 +25,22 @@ if(SYSTEMD_RUN_EXECUTABLE AND SYSTEMCTL_EXECUTABLE)
   list(APPEND ${MODULE_PREFIX}_TESTS TestFreeRDPFrdpSystemdRecovery.c)
 endif()
 find_program(XVFB_EXECUTABLE Xvfb)
+find_program(FRDP_XORG_SERVER_EXECUTABLE NAMES Xorg
+             HINTS /usr/lib/xorg /usr/libexec NO_DEFAULT_PATH)
 find_package(pam_wrapper CONFIG QUIET)
 if(XVFB_EXECUTABLE)
   list(APPEND ${MODULE_PREFIX}_TESTS TestFreeRDPFrdpAgentStop.c)
+  add_executable(frdp-session-agent-test EXCLUDE_FROM_ALL ${FRDP_SESSION_AGENT_SOURCES})
+  target_compile_definitions(frdp-session-agent-test PRIVATE FRDP_AGENT_TESTING)
+  target_include_directories(frdp-session-agent-test SYSTEM PRIVATE
+      ${X11_INCLUDE_DIR} ${X11_XTest_INCLUDE_PATH} ${X11_Xdamage_INCLUDE_PATH}
+      ${X11_Xrandr_INCLUDE_PATH})
+  target_link_libraries(frdp-session-agent-test PRIVATE winpr Threads::Threads
+      ${X11_LIBRARIES} ${X11_XTest_LIB} ${X11_Xdamage_LIB} ${X11_Xrandr_LIB}
+      ${UUID_LIBRARY})
+  frdp_apply_strict_warnings(frdp-session-agent-test)
+  set_property(TARGET frdp-session-agent-test PROPERTY FOLDER "Server/frdp/Test")
 endif()
-
 create_test_sourcelist(${MODULE_PREFIX}_SRCS ${${MODULE_PREFIX}_DRIVER} ${${MODULE_PREFIX}_TESTS})
 
 add_executable(frdp-authd-test-deny EXCLUDE_FROM_ALL
@@ -50,6 +62,8 @@ add_executable(${MODULE_NAME}
     ${${MODULE_PREFIX}_SRCS}
     ../config/frdp-config.c
     ../config/frdp-config.h
+    ../config/trusted-path.c
+    ../config/trusted-path.h
     ../ipc/frdp-auth-token.c
     ../ipc/frdp-auth-token.h
     ../ipc/frdp-ipc.c
@@ -96,6 +110,9 @@ add_executable(${MODULE_NAME}
     ../frdp-sesmand/session_state.h)
 add_dependencies(${MODULE_NAME} frdpd frdpctl frdp-authd frdp-authd-test-deny frdp-sesmand
                  frdp-session-agent)
+if(TARGET frdp-session-agent-test)
+  add_dependencies(${MODULE_NAME} frdp-session-agent-test)
+endif()
 set(FRDP_NTLM_PROVISIONING_AVAILABLE FALSE)
 if(WITH_FRDPD_NTLM AND TARGET winpr-hash)
   add_dependencies(${MODULE_NAME} winpr-hash)
@@ -119,6 +136,10 @@ target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CM
                                                    FRDP_AUTHD_TEST_DENY_BINARY="$<TARGET_FILE:frdp-authd-test-deny>"
                                                    FRDP_SESMAND_BINARY="$<TARGET_FILE:frdp-sesmand>"
                                                    FRDP_SESSION_AGENT_BINARY="$<TARGET_FILE:frdp-session-agent>")
+if(TARGET frdp-session-agent-test)
+  target_compile_definitions(${MODULE_NAME} PRIVATE
+      FRDP_SESSION_AGENT_FAULT_BINARY="$<TARGET_FILE:frdp-session-agent-test>")
+endif()
 if(SYSTEMD_RUN_EXECUTABLE AND SYSTEMCTL_EXECUTABLE)
   target_compile_definitions(${MODULE_NAME} PRIVATE
       FRDP_SYSTEMD_RUN_BINARY="${SYSTEMD_RUN_EXECUTABLE}"
@@ -182,6 +203,11 @@ if(XVFB_EXECUTABLE)
   target_include_directories(${MODULE_NAME} SYSTEM PRIVATE ${X11_INCLUDE_DIR})
   target_link_libraries(${MODULE_NAME} PRIVATE ${X11_LIBRARIES})
 endif()
+if(FRDP_XORG_SERVER_EXECUTABLE)
+  target_compile_definitions(${MODULE_NAME} PRIVATE
+      FRDP_XORG_SERVER_EXECUTABLE="${FRDP_XORG_SERVER_EXECUTABLE}"
+      FRDP_XORG_DUMMY_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/../config/xorg-dummy.conf")
+endif()
 
 set_target_properties(${MODULE_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${TESTING_OUTPUT_DIRECTORY}")
 
@@ -217,6 +243,8 @@ add_test(NAME TestFreeRDPFrdpInstall
                  -DFRDP_BUILD_DIR=${CMAKE_BINARY_DIR}
                  -DFRDP_INSTALL_BINDIR=${CMAKE_INSTALL_BINDIR}
                  -DFRDP_INSTALL_MANDIR=${CMAKE_INSTALL_MANDIR}
+                 -DFRDP_INSTALL_DATADIR=${CMAKE_INSTALL_DATADIR}
+                 -DFRDP_XORG_DUMMY_CONFIG_DIR=${FRDP_XORG_DUMMY_CONFIG_DIR}
                  -DFRDP_VERSION_FULL=${FREERDP_VERSION_FULL}
                  -DFRDP_NTLM_PROVISIONING_AVAILABLE=${FRDP_NTLM_PROVISIONING_AVAILABLE}
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/TestFreeRDPFrdpInstall.cmake)

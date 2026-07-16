@@ -70,6 +70,11 @@ static int test_default_blocklist(void)
 		return -1;
 	if (config.session_heartbeat.failure_threshold != FRDP_SESSION_HEARTBEAT_DEFAULT_FAILURES)
 		return -1;
+	if (config.session_display.backend != FRDP_SESSION_DISPLAY_XVFB)
+		return -1;
+	if (config.session_display.xorg_path[0] != '\0' ||
+	    config.session_display.xorg_config[0] != '\0')
+		return -1;
 	if (config.channels.static_mode != FRDP_CHANNEL_FILTER_BLOCKLIST)
 		return -1;
 	if (config.channels.dynamic_mode != FRDP_CHANNEL_FILTER_BLOCKLIST)
@@ -255,6 +260,29 @@ static int test_session_heartbeat_policy(void)
 	return 0;
 }
 
+static int test_session_display_policy(void)
+{
+	frdpConfig config = { 0 };
+
+	if (load_config_body("frdp-session-display-xvfb.toml",
+	                     "[session]\ndisplay_backend = \"xvfb\"\n", &config) != 0)
+		return -1;
+	if (config.session_display.backend != FRDP_SESSION_DISPLAY_XVFB)
+		return -1;
+	if (load_config_body("frdp-session-display-xorg.toml",
+	                     "[session]\ndisplay_backend = \"xorg-dummy\"\n"
+	                     "xorg_path = \"/usr/lib/xorg/Xorg\"\n"
+	                     "xorg_config = \"/usr/share/frdpd/xorg-dummy.conf\"\n",
+	                     &config) != 0)
+		return -1;
+	if (config.session_display.backend != FRDP_SESSION_DISPLAY_XORG_DUMMY)
+		return -1;
+	if (strcmp(config.session_display.xorg_path, "/usr/lib/xorg/Xorg") != 0 ||
+	    strcmp(config.session_display.xorg_config, "/usr/share/frdpd/xorg-dummy.conf") != 0)
+		return -1;
+	return 0;
+}
+
 static int test_sample_config(void)
 {
 	frdpConfig config = { 0 };
@@ -276,6 +304,8 @@ static int test_sample_config(void)
 	if (strcmp(config.auth_socket, "/run/frdp-authd/authd.sock") != 0)
 		return -1;
 	if (strcmp(config.session_socket, "/run/frdp-sesmand/sesmand.sock") != 0)
+		return -1;
+	if (config.session_display.backend != FRDP_SESSION_DISPLAY_XVFB)
 		return -1;
 #if FRDPD_NTLM_ENABLED
 	if ((config.ntlm_fallback != 1) || (strcmp(config.ntlm_sam_file, "/etc/frdpd/ntlm.sam") != 0))
@@ -747,6 +777,35 @@ static int test_invalid_channel_config(void)
 	if (expect_load_failure("frdp-control-session-socket.toml",
 	                        "[session]\nsession_socket = \"/tmp/frdp-\001-session.sock\"\n") != 0)
 		return -1;
+	if (expect_load_failure("frdp-unknown-display-backend.toml",
+	                        "[session]\ndisplay_backend = \"wayland\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-display-backend.toml",
+	                        "[session]\ndisplay_backend = \"xvfb\"\n"
+	                        "display_backend = \"xorg-dummy\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-xorg-missing-path.toml",
+	                        "[session]\ndisplay_backend = \"xorg-dummy\"\n"
+	                        "xorg_config = \"/usr/share/frdpd/xorg-dummy.conf\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-xorg-missing-config.toml",
+	                        "[session]\ndisplay_backend = \"xorg-dummy\"\n"
+	                        "xorg_path = \"/usr/lib/xorg/Xorg\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-xorg-path-with-xvfb.toml",
+	                        "[session]\ndisplay_backend = \"xvfb\"\n"
+	                        "xorg_path = \"/usr/lib/xorg/Xorg\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-relative-xorg-path.toml",
+	                        "[session]\ndisplay_backend = \"xorg-dummy\"\n"
+	                        "xorg_path = \"Xorg\"\n"
+	                        "xorg_config = \"/usr/share/frdpd/xorg-dummy.conf\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-relative-xorg-config.toml",
+	                        "[session]\ndisplay_backend = \"xorg-dummy\"\n"
+	                        "xorg_path = \"/usr/lib/xorg/Xorg\"\n"
+	                        "xorg_config = \"xorg-dummy.conf\"\n") != 0)
+		return -1;
 	if (expect_load_failure("frdp-duplicate-ntlm-fallback.toml",
 	                        "[auth]\nntlm_fallback = false\nntlm_fallback = true\n") != 0)
 		return -1;
@@ -1038,6 +1097,8 @@ int TestFreeRDPFrdpConfig(int argc, char* argv[])
 	if (test_session_resource_policy() != 0)
 		return -1;
 	if (test_session_heartbeat_policy() != 0)
+		return -1;
+	if (test_session_display_policy() != 0)
 		return -1;
 	if (test_sample_config() != 0)
 		return -1;

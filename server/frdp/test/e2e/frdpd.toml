@@ -14,6 +14,9 @@ ntlm_sam_file = "/etc/frdpd/ntlm.sam"
 
 [session]
 session_socket = "/run/frdp-sesmand/sesmand.sock"
+display_backend = "xorg-dummy"
+xorg_path = "/usr/lib/xorg/Xorg"
+xorg_config = "/usr/share/frdpd/xorg-dummy.conf"
 
 [channels]
 static_mode = "blocklist"

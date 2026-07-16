@@ -11,6 +11,9 @@ file(REMOVE_RECURSE "${test_dir}")
 file(MAKE_DIRECTORY "${test_dir}")
 set(missing_config "${test_dir}/missing.toml")
 set(socket_path "${test_dir}/frdp-sesmand-test.sock")
+set(unusable_xorg_config "${test_dir}/unusable-xorg.toml")
+file(WRITE "${unusable_xorg_config}"
+     "[session]\ndisplay_backend = \"xorg-dummy\"\nxorg_path = \"/missing/Xorg\"\nxorg_config = \"/missing/xorg-dummy.conf\"\n")
 
 function(expect_sesmand_result name expected_code expected_stderr)
   execute_process(
@@ -44,6 +47,10 @@ expect_sesmand_result("frdp-sesmand --config with pam-service" 2 "${expected_usa
 expect_sesmand_result("frdp-sesmand missing config" 1
                       "failed to load frdp-sesmand config\n" --config "${missing_config}" --socket
                       "${socket_path}")
+
+expect_sesmand_result("frdp-sesmand unusable xorg backend" 1
+                      "failed to load frdp-sesmand config\n" --config
+                      "${unusable_xorg_config}" --socket "${socket_path}")
 
 expect_sesmand_result("frdp-sesmand invalid pam-service" 1 "invalid PAM service name\n"
                       --pam-service bad/service --socket "${socket_path}")

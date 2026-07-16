@@ -17,7 +17,7 @@ BuildRequires: libjpeg-turbo-devel, libpng-devel
 BuildRequires: libX11-devel, libXv-devel, libXtst-devel, libXdamage-devel, libXrandr-devel, sssd-client, libuuid-devel, systemd-rpm-macros
 
 # Runtime dependencies
-Requires: pam, sssd, xorg-x11-server-Xvfb
+Requires: pam, sssd, xorg-x11-drv-dummy, xorg-x11-server-Xorg, xorg-x11-server-Xvfb
 %{?systemd_requires}
 
 %description
@@ -104,6 +104,7 @@ a non-installed prototype in the current package.
 %{_unitdir}/frdp-sesmand.service
 %{_tmpfilesdir}/frdpd.conf
 %dir %{_datadir}/frdpd
+%{_datadir}/frdpd/xorg-dummy.conf
 %dir %{_datadir}/frdpd/security
 %dir %{_datadir}/frdpd/security/selinux
 %dir %{_datadir}/frdpd/security/apparmor

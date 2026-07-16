@@ -7,7 +7,7 @@ xfreerdp
   -> TLS + NLA/CredSSP
       -> frdpd
           -> frdp-authd -> PAM -> local identity or SSSD
-          -> frdp-sesmand -> PAM session -> frdp-session-agent -> Xvfb
+          -> frdp-sesmand -> PAM session -> frdp-session-agent -> Xorg dummy
 ```
 
 ## Profiles
@@ -15,7 +15,7 @@ xfreerdp
 | Profile | What is real | Assertions |
 |---|---|---|
 | `component` | Built FRDP binaries and focused CTest suite | Config/channel policy, IPC primitives, `frdpctl`, helper stop handling, malformed requests against real `frdp-authd` and `frdp-sesmand` processes |
-| `local` | TLS, NLA/CredSSP, local `pam_unix`, helper IPC, managed Xvfb session | Valid authentication succeeds; wrong password and locked account fail; a full RDP client exchanges Unicode clipboard text, retains its connection-time policy across `frdpd` `SIGHUP`, new peers observe deny/invalid/restore reload behavior, then the client detaches, reconnects to, and removes one stable session |
+| `local` | TLS, NLA/CredSSP, local `pam_unix`, helper IPC, managed Xorg dummy session | Valid authentication succeeds; wrong password and locked account fail; a full RDP client exchanges Unicode clipboard text, proves actual `800x600 -> 1024x768 -> 800x600` server-display churn, retains its connection-time policy across `frdpd` `SIGHUP`, then detaches, reconnects with geometry synchronization, and removes one stable session |
 | `samba` | Provisioned Samba AD DC, DNS/Kerberos/LDAP, `adcli` machine join, `sssd-ad`, enforcing GPO, PAM, RDP | GPO-allowed domain user success, wrong password failure, enabled AD user denied by GPO, NSS user lookup plus supplementary AD-group membership, managed RDP disconnect/reconnect lifecycle, active-session `frdp-sesmand` crash cleanup and fresh post-recovery login/reconnect |
 | `freeipa` | Official FreeIPA server, host enrollment/keytab, `sssd-ipa`, HBAC, PAM, RDP | Allowed IPA user success, wrong password failure, valid user denied by HBAC, host-keytab validation and rollover, NSS lookup, managed RDP disconnect/reconnect lifecycle, active-session `frdp-sesmand` crash cleanup and fresh post-recovery login/reconnect |
 
@@ -38,6 +38,11 @@ enforcing security GPO whose remote-interactive right allows that group and
 whose deny right names a second enabled account. SSSD maps the `frdpd` PAM
 service to remote-interactive logon, runs in enforcing mode, and must allow the
 group member and deny the policy-test account before the RDP probe starts.
+
+The server containers receive `SYS_PTRACE` only so the test harness can copy
+the running agent's otherwise unlinked Xauthority into the isolated control
+volume for external geometry and clipboard assertions. Production services do
+not receive this capability or expose an authority pathname.
 
 ## Running
 
@@ -99,11 +104,11 @@ HBAC rule that allows only the primary account before the FRDP client starts.
 2. The managed session created by the successful probe is explicitly cleaned.
 3. `/auth-only` fails for an incorrect password and leaves no managed session or durable session runtime artifact.
 4. `/auth-only` fails for a locked, disabled, or provider-policy-denied account and leaves no managed session or durable session runtime artifact.
-5. A normal graphical connection under client-side Xvfb remains connected, appears as `active`, and transfers supplementary-plane Unicode clipboard text in both directions under the configured policy.
+5. A normal graphical connection under client-side Xvfb remains connected, appears as `active`, transfers supplementary-plane Unicode clipboard text in both directions, and drives the managed Xorg dummy root through `800x600 -> 1024x768 -> 800x600` while each geometry is checked over X11.
 6. In the local profile, `SIGHUP` publishes a deny-all static-channel policy to new peers without disconnecting the held session or changing its clipboard policy snapshot. A malformed reload retains that deny policy, and restoring the original file makes the later reconnect possible.
-7. The connection becomes `disconnected` after client termination, and a second graphical client reattaches to the only matching session with the same session id, display and agent PID; its disconnect and explicit `kill-session` leave an empty registry.
+7. The connection becomes `disconnected` after client termination, and a second graphical client reattaches to the only matching session with the same session id, display and agent PID. Post-connect resynchronizes the retained `800x600` display to the new client's `1024x768` request before framebuffer pumping; its disconnect and explicit `kill-session` leave an empty registry.
 
-The client mounts the session-manager socket volume. This allows it to observe the real manager registry and durable socket, metadata and display-reservation artifacts without inspecting server process memory. The local profile also mounts a control volume used only to request atomic test-config replacement plus `SIGHUP`; its authoritative server log must contain one retained-policy parse failure and two new-peer channel denials, while the session registry proves neither denied peer allocated a managed session. The Samba and FreeIPA profiles mount separate isolated control volumes: after the baseline probe, the client atomically identifies an active SSSD-backed session, the server-side test supervisor kills that exact manager, and both sides require a replacement PID/socket inode, old-agent and runtime cleanup, client disconnect, and a fresh full login/reconnect cycle. Before each run, the harness clears `artifacts/<profile>/` so stale output cannot satisfy a check; `FRDP_E2E_ARTIFACTS` must resolve to a dedicated non-root directory named `artifacts`. Logs, session listings and an XWD capture of the client display are written there. A successful local profile requires exactly four server-side PAM accepts, including the two channel-policy denials after successful PAM; Samba and FreeIPA require six because their crash and post-recovery sessions also authenticate through SSSD. All require one NTLM MIC rejection for the wrong password before PAM, two named PAM/SSSD denials produced by the denied-user probe's connection path, and no NTLM proof/delegated-identity mismatch. Samba additionally requires the linked GPO fixture plus enforcing SSSD allow/deny evidence; FreeIPA requires explicit joined-host/keytab, increasing-KVNO rollover, old/new key rejection/acceptance, post-rollover RDP, and HBAC allow/deny evidence. Automatic client reconnect is explicitly disabled. The harness additionally preserves the rendered Compose model, timestamped aggregate logs, per-container logs, per-container inspect JSON and the component profile CTest `LastTest.log` when available.
+The client mounts the session-manager socket volume. This allows it to observe the real manager registry and durable socket, metadata and display-reservation artifacts without inspecting server process memory. The local profile also mounts a control volume used only to request atomic test-config replacement plus `SIGHUP`; its authoritative server log must contain one retained-policy parse failure and two new-peer channel denials, while the session registry proves neither denied peer allocated a managed session. The Samba and FreeIPA profiles mount separate isolated control volumes: after the baseline probe, the client atomically identifies an active SSSD-backed session, the server-side test supervisor kills that exact manager, and both sides require a replacement PID/socket inode, old-agent and runtime cleanup, client disconnect, and a fresh full login/reconnect cycle. Before each run, the harness clears `artifacts/<profile>/` so stale output cannot satisfy a check; `FRDP_E2E_ARTIFACTS` must resolve to a dedicated non-root directory named `artifacts`. Logs, session listings and an XWD capture of the client display are written there. A successful local profile requires exactly five server-side PAM accepts: the baseline authentication probe, initial graphical session, two single-attempt channel-policy denials after successful PAM, and reconnect. Samba and FreeIPA require six because their crash and post-recovery sessions also authenticate through SSSD. All require one NTLM MIC rejection for the wrong password before PAM, two named PAM/SSSD denials produced by the denied-user probe's connection path, and no NTLM proof/delegated-identity mismatch. Samba additionally requires the linked GPO fixture plus enforcing SSSD allow/deny evidence; FreeIPA requires explicit joined-host/keytab, increasing-KVNO rollover, old/new key rejection/acceptance, post-rollover RDP, and HBAC allow/deny evidence. Automatic client reconnect is explicitly disabled. The harness additionally preserves the rendered Compose model, timestamped aggregate logs, per-container logs, per-container inspect JSON and the component profile CTest `LastTest.log` when available.
 
 ## Useful direct commands
 

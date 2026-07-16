@@ -96,6 +96,8 @@ installwithrpath(TARGETS frdp-authd DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONEN
 set_property(TARGET frdp-authd PROPERTY FOLDER "Server/frdp")
 
 add_executable(frdp-sesmand
+    config/trusted-path.c
+    config/trusted-path.h
     frdp-sesmand/frdp-sesmand.c
     frdp-sesmand/display_policy.c
     frdp-sesmand/display_policy.h
@@ -128,13 +130,16 @@ frdp_apply_strict_warnings(frdp-sesmand)
 installwithrpath(TARGETS frdp-sesmand DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)
 set_property(TARGET frdp-sesmand PROPERTY FOLDER "Server/frdp")
 
-add_executable(frdp-session-agent
-    frdp-session-agent/clipboard_x11.c
-    frdp-session-agent/clipboard_x11.h
-    frdp-session-agent/input_policy.c
-    frdp-session-agent/input_policy.h
-    frdp-session-agent/frdp-session-agent.c
+set(FRDP_SESSION_AGENT_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/trusted-path.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/trusted-path.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/frdp-session-agent/clipboard_x11.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/frdp-session-agent/clipboard_x11.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/frdp-session-agent/input_policy.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/frdp-session-agent/input_policy.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/frdp-session-agent/frdp-session-agent.c
     $<TARGET_OBJECTS:frdp-ipc>)
+add_executable(frdp-session-agent ${FRDP_SESSION_AGENT_SOURCES})
 target_include_directories(frdp-session-agent SYSTEM PRIVATE ${X11_INCLUDE_DIR} ${X11_XTest_INCLUDE_PATH} ${X11_Xdamage_INCLUDE_PATH} ${X11_Xrandr_INCLUDE_PATH})
 target_link_libraries(frdp-session-agent PRIVATE winpr Threads::Threads ${X11_LIBRARIES} ${X11_XTest_LIB} ${X11_Xdamage_LIB} ${X11_Xrandr_LIB} ${UUID_LIBRARY})
 frdp_apply_strict_warnings(frdp-session-agent)
@@ -173,6 +178,7 @@ set(FRDP_SYSTEMD_SYSTEM_UNIT_DIR "lib/systemd/system" CACHE PATH "systemd system
 set(FRDP_TMPFILES_DIR "lib/tmpfiles.d" CACHE PATH "systemd tmpfiles install directory")
 set(FRDP_SECURITY_POLICY_DIR "${CMAKE_INSTALL_DATADIR}/frdpd/security" CACHE PATH "FRDP security policy example install directory")
 set(FRDP_MONITORING_DIR "${CMAKE_INSTALL_DATADIR}/frdpd/monitoring" CACHE PATH "FRDP monitoring example install directory")
+set(FRDP_XORG_DUMMY_CONFIG_DIR "${CMAKE_INSTALL_DATADIR}/frdpd" CACHE PATH "FRDP Xorg dummy configuration install directory")
 set(FRDP_SYSTEMD_UNITS
     frdpd.service
     frdp-authd.service
@@ -187,6 +193,7 @@ endforeach()
 
 install(FILES "${FRDP_CONFIG_FILE}" DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/frdpd COMPONENT server)
 install(FILES config/frdpd.env DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/frdpd COMPONENT server)
+install(FILES config/xorg-dummy.conf DESTINATION ${FRDP_XORG_DUMMY_CONFIG_DIR} COMPONENT server)
 install(FILES pam/frdpd DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/pam.d COMPONENT server)
 install(FILES ${FRDP_SYSTEMD_UNIT_FILES}
         DESTINATION ${FRDP_SYSTEMD_SYSTEM_UNIT_DIR}

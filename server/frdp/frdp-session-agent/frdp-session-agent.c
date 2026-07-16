@@ -30,6 +30,7 @@
 #include <errno.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/stat.h>
 
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
@@ -44,6 +45,7 @@
 #include <winpr/platform.h>
 
 #include "../ipc/frdp-ipc.h"
+#include "../config/trusted-path.h"
 #include "clipboard_x11.h"
 #include "input_policy.h"
 
@@ -52,6 +54,8 @@
 #define FRDP_AGENT_DAMAGE_EVENT_LIMIT 256U
 #define FRDP_AGENT_DISPLAY_SIZE_MAX 8192U
 #define FRDP_AGENT_CONTROL_STALL_MS 10000U
+#define FRDP_XAUTH_COOKIE_SIZE 16U
+#define FRDP_XAUTH_FAMILY_WILD 65535U
 
 typedef struct {
     Display *display;
@@ -72,10 +76,37 @@ typedef struct {
     char correlation_id[sizeof(((frdpAgentInputEvent *)0)->correlation_id)];
 } frdpAgentInputState;
 
+typedef enum
+{
+	FRDP_AGENT_BACKEND_XVFB = 0,
+	FRDP_AGENT_BACKEND_XORG_DUMMY = 1
+} frdpAgentDisplayBackend;
+
 static volatile int g_x11_resize_error = 0;
 static volatile int g_x11_keyboard_error = 0;
 static volatile sig_atomic_t g_stop_requested = 0;
 static _Atomic uint64_t g_control_progress_ms = 0;
+
+#if defined(FRDP_AGENT_TESTING)
+static int g_test_refresh_fault_consumed = 0;
+
+static int test_resize_fault_is(const char* name)
+{
+	const char* fault = getenv("FRDP_AGENT_TEST_RESIZE_FAULT");
+
+	return fault && strcmp(fault, name) == 0;
+}
+
+static int test_refresh_fault_once(void)
+{
+	if (!g_test_refresh_fault_consumed && test_resize_fault_is("refresh"))
+	{
+		g_test_refresh_fault_consumed = 1;
+		return 1;
+	}
+	return 0;
+}
+#endif
 
 static uint64_t agent_monotonic_ms(void)
 {
@@ -122,6 +153,162 @@ static int log_char_is_safe(unsigned char c)
     return ((c >= 'A') && (c <= 'Z')) || ((c >= 'a') && (c <= 'z')) ||
            ((c >= '0') && (c <= '9')) || (c == '.') || (c == '_') || (c == '-') ||
            (c == ':') || (c == '@') || (c == '/') || (c == '%') || (c == '+');
+}
+
+static int parse_backend_geometry(const char* geometry, uint32_t* width, uint32_t* height,
+                                  uint32_t* depth)
+{
+	unsigned int parsed_width = 0;
+	unsigned int parsed_height = 0;
+	unsigned int parsed_depth = 0;
+	char trailing = '\0';
+
+	if (!geometry || !width || !height || !depth ||
+	    sscanf(geometry, "%ux%ux%u%c", &parsed_width, &parsed_height, &parsed_depth, &trailing) !=
+	        3)
+		return -1;
+	if (parsed_width == 0U || parsed_height == 0U || parsed_width > FRDP_AGENT_DISPLAY_SIZE_MAX ||
+	    parsed_height > FRDP_AGENT_DISPLAY_SIZE_MAX || parsed_depth < 8U || parsed_depth > 32U)
+		return -1;
+	*width = parsed_width;
+	*height = parsed_height;
+	*depth = parsed_depth;
+	return 0;
+}
+
+static int load_display_backend(frdpAgentDisplayBackend* backend, const char** xorg_path,
+                                const char** xorg_config)
+{
+	const char* name = getenv("FRDP_DISPLAY_BACKEND");
+
+	if (!backend || !xorg_path || !xorg_config)
+		return -1;
+	*xorg_path = NULL;
+	*xorg_config = NULL;
+	if (!name || strcmp(name, "xvfb") == 0)
+	{
+		*backend = FRDP_AGENT_BACKEND_XVFB;
+		return 0;
+	}
+	if (strcmp(name, "xorg-dummy") != 0)
+		return -1;
+	*xorg_path = getenv("FRDP_XORG_PATH");
+	*xorg_config = getenv("FRDP_XORG_CONFIG");
+	if (!frdp_trusted_root_file(*xorg_path, 1) || !frdp_trusted_root_file(*xorg_config, 0))
+		return -1;
+	*backend = FRDP_AGENT_BACKEND_XORG_DUMMY;
+	return 0;
+}
+
+static int write_exact(int fd, const void* data, size_t size)
+{
+	const unsigned char* current = (const unsigned char*)data;
+
+	while (size > 0)
+	{
+		const ssize_t rc = write(fd, current, size);
+
+		if (rc < 0 && errno == EINTR)
+			continue;
+		if (rc <= 0)
+			return -1;
+		current += (size_t)rc;
+		size -= (size_t)rc;
+	}
+	return 0;
+}
+
+static int write_xauthority_field(int fd, const void* data, size_t size)
+{
+	const unsigned char length[2] = { (unsigned char)((size >> 8U) & 0xffU),
+	                                  (unsigned char)(size & 0xffU) };
+
+	if (size > UINT16_MAX || write_exact(fd, length, sizeof(length)) != 0)
+		return -1;
+	return size == 0 ? 0 : write_exact(fd, data, size);
+}
+
+static void erase_secret(void* data, size_t size)
+{
+	volatile unsigned char* current = (volatile unsigned char*)data;
+
+	while (size-- > 0)
+		*current++ = 0;
+}
+
+static int fill_random(void* data, size_t size)
+{
+	unsigned char* current = (unsigned char*)data;
+	int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+
+	if (fd < 0)
+		return -1;
+	while (size > 0)
+	{
+		const ssize_t rc = read(fd, current, size);
+
+		if (rc < 0 && errno == EINTR)
+			continue;
+		if (rc <= 0)
+		{
+			close(fd);
+			return -1;
+		}
+		current += (size_t)rc;
+		size -= (size_t)rc;
+	}
+	close(fd);
+	return 0;
+}
+
+static int create_xauthority(const char* display, char* authority_path, size_t authority_path_size)
+{
+	static const char auth_name[] = "MIT-MAGIC-COOKIE-1";
+	char template[] = "/tmp/.frdp-xauthority-XXXXXX";
+	unsigned char cookie[FRDP_XAUTH_COOKIE_SIZE] = { 0 };
+	const char* number = display ? strrchr(display, ':') : NULL;
+	const char* number_end = NULL;
+	const unsigned char family[2] = { 0xffU, 0xffU };
+	int fd = -1;
+	int flags = 0;
+	int ok = 0;
+	int path_length = 0;
+
+	if (!number || *(++number) == '\0' || !authority_path || authority_path_size == 0)
+		return -1;
+	number_end = number;
+	while (*number_end >= '0' && *number_end <= '9')
+		number_end++;
+	if (number_end == number || (*number_end != '\0' && *number_end != '.'))
+		return -1;
+
+	fd = mkstemp(template);
+	if (fd < 0)
+		return -1;
+	flags = fcntl(fd, F_GETFD);
+	if (fchmod(fd, S_IRUSR | S_IWUSR) != 0 || fill_random(cookie, sizeof(cookie)) != 0 ||
+	    write_exact(fd, family, sizeof(family)) != 0 || write_xauthority_field(fd, NULL, 0) != 0 ||
+	    write_xauthority_field(fd, number, (size_t)(number_end - number)) != 0 ||
+	    write_xauthority_field(fd, auth_name, sizeof(auth_name) - 1U) != 0 ||
+	    write_xauthority_field(fd, cookie, sizeof(cookie)) != 0 || fsync(fd) != 0 ||
+	    lseek(fd, 0, SEEK_SET) < 0 || flags < 0 || fcntl(fd, F_SETFD, flags & ~FD_CLOEXEC) != 0)
+		goto cleanup;
+	path_length = snprintf(authority_path, authority_path_size, "/proc/self/fd/%d", fd);
+	if (path_length < 0 || (size_t)path_length >= authority_path_size ||
+	    setenv("XAUTHORITY", authority_path, 1) != 0)
+		goto cleanup;
+	ok = 1;
+
+cleanup:
+	erase_secret(cookie, sizeof(cookie));
+	if (unlink(template) != 0)
+		ok = 0;
+	if (!ok)
+	{
+		close(fd);
+		return -1;
+	}
+	return fd;
 }
 
 static void escape_log_field(const char *src, char *dst, size_t dst_size)
@@ -523,6 +710,21 @@ static unsigned char extract_ximage_channel(unsigned long pixel, unsigned long m
     return (unsigned char)((value * 255UL) / ((1UL << bits) - 1UL));
 }
 
+static int root_window_size(Display* display, Window root, uint32_t* width, uint32_t* height)
+{
+	XWindowAttributes attributes;
+
+	if (!display || root == None || !width || !height)
+		return -1;
+	memset(&attributes, 0, sizeof(attributes));
+	if (!XGetWindowAttributes(display, root, &attributes) || attributes.width <= 0 ||
+	    attributes.height <= 0)
+		return -1;
+	*width = (uint32_t)attributes.width;
+	*height = (uint32_t)attributes.height;
+	return 0;
+}
+
 static void frame_state_set_dirty_rect(frdpAgentFrameState *state, int x, int y, uint32_t width,
                                        uint32_t height, unsigned char dirty)
 {
@@ -570,8 +772,8 @@ static void frame_state_set_dirty_rect(frdpAgentFrameState *state, int x, int y,
 static int frame_state_refresh_geometry(frdpAgentFrameState *state)
 {
     int screen = 0;
-    int width = 0;
-    int height = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
     uint32_t cols = 0;
     uint32_t rows = 0;
     size_t count = 0;
@@ -582,23 +784,21 @@ static int frame_state_refresh_geometry(frdpAgentFrameState *state)
 
     XLockDisplay(state->display);
     screen = DefaultScreen(state->display);
-    width = DisplayWidth(state->display, screen);
-    height = DisplayHeight(state->display, screen);
     state->root = RootWindow(state->display, screen);
+    const int geometry_status = root_window_size(state->display, state->root, &width, &height);
     XUnlockDisplay(state->display);
 
-    if (width <= 0 || height <= 0)
+    if (geometry_status != 0)
         return -1;
-    cols = ((uint32_t)width + FRDP_AGENT_FRAME_TILE_MAX - 1U) / FRDP_AGENT_FRAME_TILE_MAX;
-    rows = ((uint32_t)height + FRDP_AGENT_FRAME_TILE_MAX - 1U) / FRDP_AGENT_FRAME_TILE_MAX;
+    cols = (width + FRDP_AGENT_FRAME_TILE_MAX - 1U) / FRDP_AGENT_FRAME_TILE_MAX;
+    rows = (height + FRDP_AGENT_FRAME_TILE_MAX - 1U) / FRDP_AGENT_FRAME_TILE_MAX;
     if (cols == 0 || rows == 0 || cols > SIZE_MAX / rows)
         return -1;
     count = (size_t)cols * rows;
     if (count > SIZE_MAX / sizeof(*dirty_tiles))
         return -1;
-    if (state->dirty_tiles && state->screen == screen && state->screen_width == (uint32_t)width &&
-        state->screen_height == (uint32_t)height && state->dirty_cols == cols &&
-        state->dirty_rows == rows)
+    if (state->dirty_tiles && state->screen == screen && state->screen_width == width &&
+        state->screen_height == height && state->dirty_cols == cols && state->dirty_rows == rows)
         return 0;
 
     dirty_tiles = (unsigned char *)calloc(count, sizeof(*dirty_tiles));
@@ -608,8 +808,8 @@ static int frame_state_refresh_geometry(frdpAgentFrameState *state)
     free(state->dirty_tiles);
     state->dirty_tiles = dirty_tiles;
     state->screen = screen;
-    state->screen_width = (uint32_t)width;
-    state->screen_height = (uint32_t)height;
+    state->screen_width = width;
+    state->screen_height = height;
     state->dirty_cols = cols;
     state->dirty_rows = rows;
     return 0;
@@ -1073,6 +1273,39 @@ static int validate_agent_ids(const char *event_correlation_id, const char *even
     return 0;
 }
 
+static RRMode output_mode_for_size(const XRRScreenResources* resources, const XRROutputInfo* output,
+                                   uint32_t width, uint32_t height)
+{
+	if (!resources || !output)
+		return None;
+	for (int output_mode = 0; output_mode < output->nmode; output_mode++)
+	{
+		for (int mode = 0; mode < resources->nmode; mode++)
+		{
+			if (resources->modes[mode].id == output->modes[output_mode] &&
+			    resources->modes[mode].width == width && resources->modes[mode].height == height)
+				return resources->modes[mode].id;
+		}
+	}
+	return None;
+}
+
+static int resize_physical_mm(uint32_t pixels)
+{
+	const uint32_t millimeters = (pixels * 254U) / 960U;
+
+	return (millimeters > 0U) ? (int)millimeters : 1;
+}
+
+static int set_screen_size_checked(Display* display, Window root, uint32_t width, uint32_t height)
+{
+	g_x11_resize_error = 0;
+	XRRSetScreenSize(display, root, (int)width, (int)height, resize_physical_mm(width),
+	                 resize_physical_mm(height));
+	XSync(display, False);
+	return (g_x11_resize_error == 0) ? 0 : -1;
+}
+
 static int resize_backend_display(Display *display, const frdpAgentResizeRequest *request,
                                   frdpAgentResizeResponse *response)
 {
@@ -1082,11 +1315,28 @@ static int resize_backend_display(Display *display, const frdpAgentResizeRequest
     int error_base = 0;
     int major = 0;
     int minor = 0;
-    int mm_width = 0;
-    int mm_height = 0;
-    XErrorHandler previous_handler = NULL;
+	uint32_t old_width = 0;
+	uint32_t old_height = 0;
+	uint32_t staging_width = 0;
+	uint32_t staging_height = 0;
+	RROutput primary = None;
+	RROutput output = None;
+	RRMode mode = None;
+	XRRScreenResources* resources = NULL;
+	XRRScreenResources* rollback_resources = NULL;
+	XRRScreenResources* verify_resources = NULL;
+	XRROutputInfo* output_info = NULL;
+	XRRCrtcInfo* crtc_info = NULL;
+	XRRCrtcInfo* verify_crtc_info = NULL;
+	XErrorHandler previous_handler = NULL;
+	int handler_set = 0;
+	int crtc_changed = 0;
+	int rollback_failed = 0;
+	int staging_restore_status = 0;
+	int rc = -1;
+	Status crtc_status = Success;
 
-    if (!display || !request || !response || request->width == 0 || request->height == 0 ||
+	if (!display || !request || !response || request->width == 0 || request->height == 0 ||
         request->width > FRDP_AGENT_DISPLAY_SIZE_MAX ||
         request->height > FRDP_AGENT_DISPLAY_SIZE_MAX)
         return -1;
@@ -1099,35 +1349,157 @@ static int resize_backend_display(Display *display, const frdpAgentResizeRequest
         XUnlockDisplay(display);
         return -1;
     }
+	if (root_window_size(display, root, &old_width, &old_height) != 0)
+		goto out;
+	if (old_width == request->width && old_height == request->height)
+	{
+		response->success = 1;
+		response->width = request->width;
+		response->height = request->height;
+		XUnlockDisplay(display);
+		return 0;
+	}
 
-    mm_width = DisplayWidthMM(display, screen);
-    mm_height = DisplayHeightMM(display, screen);
-    if (mm_width <= 0)
-        mm_width = (int)((request->width * 254U) / 960U);
-    if (mm_height <= 0)
-        mm_height = (int)((request->height * 254U) / 960U);
-    if (mm_width <= 0)
-        mm_width = 1;
-    if (mm_height <= 0)
-        mm_height = 1;
+	resources = XRRGetScreenResourcesCurrent(display, root);
+	if (!resources)
+		goto out;
+	primary = XRRGetOutputPrimary(display, root);
+	for (int pass = 0; pass < 2 && output == None; pass++)
+	{
+		for (int index = 0; index < resources->noutput; index++)
+		{
+			const RROutput candidate = resources->outputs[index];
 
-    g_x11_resize_error = 0;
-    previous_handler = XSetErrorHandler(resize_error_handler);
-    XRRSetScreenSize(display, root, (int)request->width, (int)request->height, mm_width,
-                     mm_height);
-    XSync(display, False);
-    XSetErrorHandler(previous_handler);
-    if (g_x11_resize_error != 0 || DisplayWidth(display, screen) != (int)request->width ||
-        DisplayHeight(display, screen) != (int)request->height) {
-        XUnlockDisplay(display);
-        return -1;
-    }
+			if ((pass == 0 && (primary == None || candidate != primary)) ||
+			    (pass == 1 && candidate == primary))
+				continue;
+			XRROutputInfo* candidate_info = XRRGetOutputInfo(display, resources, candidate);
+			if (!candidate_info)
+				continue;
+			const RRMode candidate_mode =
+			    output_mode_for_size(resources, candidate_info, request->width, request->height);
+			if (candidate_info->connection == RR_Connected && candidate_info->crtc != None &&
+			    candidate_mode != None)
+			{
+				output = candidate;
+				output_info = candidate_info;
+				mode = candidate_mode;
+				break;
+			}
+			XRRFreeOutputInfo(candidate_info);
+		}
+	}
+	if (output == None || !output_info || mode == None)
+		goto out;
+	crtc_info = XRRGetCrtcInfo(display, resources, output_info->crtc);
+	if (!crtc_info || crtc_info->mode == None || crtc_info->noutput != 1 ||
+	    crtc_info->outputs[0] != output)
+		goto out;
 
-    response->success = 1;
+	staging_width = (old_width > request->width) ? old_width : request->width;
+	staging_height = (old_height > request->height) ? old_height : request->height;
+	previous_handler = XSetErrorHandler(resize_error_handler);
+	handler_set = 1;
+	if ((staging_width != old_width || staging_height != old_height) &&
+	    set_screen_size_checked(display, root, staging_width, staging_height) != 0)
+		goto rollback;
+	g_x11_resize_error = 0;
+	crtc_status =
+	    XRRSetCrtcConfig(display, resources, output_info->crtc, resources->configTimestamp, 0, 0,
+	                     mode, crtc_info->rotation, &output, 1);
+	if (crtc_status != Success)
+		goto rollback;
+	crtc_changed = 1;
+	XSync(display, False);
+#if defined(FRDP_AGENT_TESTING)
+	if (test_resize_fault_is("after-crtc") || test_resize_fault_is("rollback"))
+		goto rollback;
+#endif
+	if (g_x11_resize_error != 0 ||
+	    set_screen_size_checked(display, root, request->width, request->height) != 0)
+		goto rollback;
+	uint32_t applied_width = 0;
+	uint32_t applied_height = 0;
+	if (root_window_size(display, root, &applied_width, &applied_height) != 0 ||
+	    applied_width != request->width || applied_height != request->height)
+		goto rollback;
+
+	response->success = 1;
     response->width = request->width;
     response->height = request->height;
-    XUnlockDisplay(display);
-    return 0;
+	rc = 0;
+	goto out;
+
+rollback:
+	staging_restore_status = set_screen_size_checked(display, root, staging_width, staging_height);
+	if (staging_restore_status != 0 && crtc_changed)
+		rollback_failed = 1;
+	if (crtc_changed)
+	{
+		rollback_resources = XRRGetScreenResourcesCurrent(display, root);
+		if (rollback_resources)
+		{
+			g_x11_resize_error = 0;
+			crtc_status = XRRSetCrtcConfig(
+			    display, rollback_resources, output_info->crtc,
+			    rollback_resources->configTimestamp, crtc_info->x, crtc_info->y, crtc_info->mode,
+			    crtc_info->rotation, crtc_info->outputs, crtc_info->noutput);
+			XSync(display, False);
+			if (crtc_status != Success || g_x11_resize_error != 0)
+				rollback_failed = 1;
+		}
+		else
+			rollback_failed = 1;
+	}
+	verify_resources = XRRGetScreenResourcesCurrent(display, root);
+	if (crtc_changed && verify_resources)
+		verify_crtc_info =
+		    XRRGetCrtcInfo(display, verify_resources, output_info->crtc);
+	if (crtc_changed &&
+	    (!verify_resources || !verify_crtc_info || verify_crtc_info->x != crtc_info->x ||
+	     verify_crtc_info->y != crtc_info->y || verify_crtc_info->mode != crtc_info->mode ||
+	     verify_crtc_info->rotation != crtc_info->rotation ||
+	     verify_crtc_info->noutput != crtc_info->noutput))
+		rollback_failed = 1;
+	if (crtc_changed && verify_crtc_info && verify_crtc_info->noutput == crtc_info->noutput)
+	{
+		for (int index = 0; index < crtc_info->noutput; index++)
+		{
+			if (verify_crtc_info->outputs[index] != crtc_info->outputs[index])
+				rollback_failed = 1;
+		}
+	}
+	if (set_screen_size_checked(display, root, old_width, old_height) != 0)
+		rollback_failed = 1;
+	uint32_t restored_width = 0;
+	uint32_t restored_height = 0;
+	if (root_window_size(display, root, &restored_width, &restored_height) != 0 ||
+	    restored_width != old_width || restored_height != old_height)
+		rollback_failed = 1;
+#if defined(FRDP_AGENT_TESTING)
+	if (test_resize_fault_is("rollback"))
+		rollback_failed = 1;
+#endif
+	if (rollback_failed)
+		rc = -2;
+
+out:
+	if (handler_set)
+		XSetErrorHandler(previous_handler);
+	if (crtc_info)
+		XRRFreeCrtcInfo(crtc_info);
+	if (output_info)
+		XRRFreeOutputInfo(output_info);
+	if (resources)
+		XRRFreeScreenResources(resources);
+	if (rollback_resources)
+		XRRFreeScreenResources(rollback_resources);
+	if (verify_crtc_info)
+		XRRFreeCrtcInfo(verify_crtc_info);
+	if (verify_resources)
+		XRRFreeScreenResources(verify_resources);
+	XUnlockDisplay(display);
+	return rc;
 }
 
 static int handle_input_message(int fd, Display *display, frdpAgentInputState *input_state,
@@ -1200,15 +1572,23 @@ static int send_resize_response(int fd, const frdpAgentResizeResponse *response)
     return frdp_ipc_send_agent_resize_response(fd, response);
 }
 
-static int handle_resize_message(int fd, Display *display, uint32_t payload_len,
-                                 const char *correlation_id, const char *session_id)
+static int handle_resize_message(int fd, frdpAgentFrameState* frame_state, uint32_t payload_len,
+                                 const char* correlation_id, const char* session_id)
 {
     frdpAgentResizeRequest request;
-    frdpAgentResizeResponse response;
-    int rc = -1;
+	frdpAgentResizeResponse response;
+	frdpAgentResizeRequest rollback_request;
+	frdpAgentResizeResponse rollback_response;
+	int rc = -1;
+	int refresh_failed = 0;
+	int resize_status = -1;
+	uint32_t old_width = 0;
+	uint32_t old_height = 0;
 
-    memset(&request, 0, sizeof(request));
-    memset(&response, 0, sizeof(response));
+	memset(&request, 0, sizeof(request));
+	memset(&response, 0, sizeof(response));
+	memset(&rollback_request, 0, sizeof(rollback_request));
+	memset(&rollback_response, 0, sizeof(rollback_response));
 
     if (frdp_ipc_recv_agent_resize_request_payload(fd, &request, payload_len) != 0)
         return -1;
@@ -1228,20 +1608,59 @@ static int handle_resize_message(int fd, Display *display, uint32_t payload_len,
         syslog(LOG_WARNING, "correlation_id=%s session_id=%s rejected mismatched resize request",
                escaped_correlation_id, escaped_session_id);
         snprintf(response.error, sizeof(response.error), "%s", "mismatched ids");
-    } else if (resize_backend_display(display, &request, &response) != 0) {
-        snprintf(response.error, sizeof(response.error), "%s", "resize failed");
-    } else {
-        char escaped_correlation_id[256] = { 0 };
-        char escaped_session_id[256] = { 0 };
+	}
+	else if (!frame_state)
+	{
+		snprintf(response.error, sizeof(response.error), "%s", "resize failed");
+	}
+	else
+	{
+		old_width = frame_state->screen_width;
+		old_height = frame_state->screen_height;
+		resize_status = resize_backend_display(frame_state->display, &request, &response);
+		if (resize_status == 0)
+		{
+#if defined(FRDP_AGENT_TESTING)
+			refresh_failed = test_refresh_fault_once();
+#endif
+			if (!refresh_failed)
+				refresh_failed = frame_state_refresh_geometry(frame_state) != 0;
+			if (refresh_failed)
+			{
+				rollback_request.width = old_width;
+				rollback_request.height = old_height;
+				rollback_request.color_depth = request.color_depth;
+				if (resize_backend_display(frame_state->display, &rollback_request,
+				                           &rollback_response) != 0 ||
+				    frame_state_refresh_geometry(frame_state) != 0)
+					resize_status = -2;
+				else
+					resize_status = -1;
+			}
+		}
+		if (resize_status != 0)
+		{
+			response.success = 0;
+			response.width = 0;
+			response.height = 0;
+			snprintf(response.error, sizeof(response.error), "%s", "resize failed");
+			if (resize_status == -2)
+				g_stop_requested = 1;
+		}
+		else
+		{
+			char escaped_correlation_id[256] = { 0 };
+			char escaped_session_id[256] = { 0 };
 
-        escape_log_ids(correlation_id, session_id, escaped_correlation_id,
-                       sizeof(escaped_correlation_id), escaped_session_id,
-                       sizeof(escaped_session_id));
-        syslog(LOG_INFO, "correlation_id=%s session_id=%s resized display to %ux%u",
-               escaped_correlation_id, escaped_session_id, response.width, response.height);
-    }
+			escape_log_ids(correlation_id, session_id, escaped_correlation_id,
+			               sizeof(escaped_correlation_id), escaped_session_id,
+			               sizeof(escaped_session_id));
+			syslog(LOG_INFO, "correlation_id=%s session_id=%s resized display to %ux%u",
+			       escaped_correlation_id, escaped_session_id, response.width, response.height);
+		}
+	}
 
-    rc = send_resize_response(fd, &response);
+	rc = send_resize_response(fd, &response);
     return rc;
 }
 
@@ -1406,9 +1825,9 @@ static int handle_control_client(int fd, frdpAgentFrameState *frame_state,
         case FRDP_IPC_AGENT_FRAME_REQUEST:
             return handle_frame_message(fd, frame_state, header.payload_len, correlation_id, session_id);
         case FRDP_IPC_AGENT_RESIZE_REQUEST:
-            return handle_resize_message(fd, frame_state ? frame_state->display : NULL,
-                                         header.payload_len, correlation_id, session_id);
-        case FRDP_IPC_AGENT_CLIPBOARD_SET_REQUEST:
+			return handle_resize_message(fd, frame_state, header.payload_len, correlation_id,
+			                             session_id);
+		case FRDP_IPC_AGENT_CLIPBOARD_SET_REQUEST:
             return handle_clipboard_set_message(fd, clipboard, header.payload_len, correlation_id,
                                                 session_id);
         case FRDP_IPC_AGENT_CLIPBOARD_GET_REQUEST:
@@ -1633,16 +2052,56 @@ int main(int argc, char **argv)
     if (!geometry) {
         geometry = "1024x768x24";
     }
-    char escaped_display[256] = { 0 };
+	frdpAgentDisplayBackend backend = FRDP_AGENT_BACKEND_XVFB;
+	const char* xorg_path = NULL;
+	const char* xorg_config = NULL;
+	uint32_t initial_width = 0;
+	uint32_t initial_height = 0;
+	uint32_t initial_depth = 0;
+
+	if (load_display_backend(&backend, &xorg_path, &xorg_config) != 0 ||
+	    parse_backend_geometry(geometry, &initial_width, &initial_height, &initial_depth) != 0)
+	{
+		syslog(LOG_ERR, "correlation_id=%s session_id=%s invalid display backend configuration",
+		       escaped_correlation_id, escaped_session_id);
+		if (ready_fd >= 0)
+			close(ready_fd);
+		if (control_fd >= 0)
+			close(control_fd);
+		if (heartbeat_fd >= 0)
+			close(heartbeat_fd);
+		closelog();
+		return 1;
+	}
+	char escaped_display[256] = { 0 };
     char escaped_geometry[256] = { 0 };
 
     escape_log_field(display, escaped_display, sizeof(escaped_display));
     escape_log_field(geometry, escaped_geometry, sizeof(escaped_geometry));
 
-    syslog(LOG_INFO, "correlation_id=%s session_id=%s display=%s geometry=%s session agent starting",
-           escaped_correlation_id, escaped_session_id, escaped_display, escaped_geometry);
+	syslog(
+	    LOG_INFO,
+	    "correlation_id=%s session_id=%s display=%s geometry=%s backend=%s session agent starting",
+	    escaped_correlation_id, escaped_session_id, escaped_display, escaped_geometry,
+	    (backend == FRDP_AGENT_BACKEND_XORG_DUMMY) ? "xorg-dummy" : "xvfb");
+	char authority_path[64] = { 0 };
+	int authority_fd = create_xauthority(display, authority_path, sizeof(authority_path));
 
-    int exec_pipe[2] = {-1, -1};
+	if (authority_fd < 0)
+	{
+		syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to create Xauthority",
+		       escaped_correlation_id, escaped_session_id);
+		if (ready_fd >= 0)
+			close(ready_fd);
+		if (control_fd >= 0)
+			close(control_fd);
+		if (heartbeat_fd >= 0)
+			close(heartbeat_fd);
+		closelog();
+		return 1;
+	}
+
+	int exec_pipe[2] = {-1, -1};
     if (create_cloexec_pipe(exec_pipe) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to create backend exec pipe",
                escaped_correlation_id, escaped_session_id);
@@ -1652,6 +2111,7 @@ int main(int argc, char **argv)
             close(control_fd);
         if (heartbeat_fd >= 0)
             close(heartbeat_fd);
+		close(authority_fd);
         closelog();
         return 1;
     }
@@ -1667,6 +2127,7 @@ int main(int argc, char **argv)
             close(control_fd);
         if (heartbeat_fd >= 0)
             close(heartbeat_fd);
+		close(authority_fd);
         closelog();
         return 1;
     }
@@ -1678,11 +2139,18 @@ int main(int argc, char **argv)
             close(heartbeat_fd);
         if (ready_fd >= 0)
             close(ready_fd);
-        /* Child: execute Xvfb.  Provide display and geometry. */
-        execlp("Xvfb", "Xvfb", display, "-screen", "0", geometry, (char *)NULL);
-        /* If exec fails, log to stderr and exit. */
-        fprintf(stderr, "frdp-session-agent: failed to exec Xvfb\n");
-        backend_exec_failed(exec_pipe[1]);
+		if (backend == FRDP_AGENT_BACKEND_XORG_DUMMY)
+		{
+			execl(xorg_path, xorg_path, display, "-config", xorg_config, "-auth", authority_path,
+			      "-noreset", "-nolisten", "tcp", "-logfile", "/dev/null", (char*)NULL);
+		}
+		else
+		{
+			execlp("Xvfb", "Xvfb", display, "-screen", "0", geometry, "-auth", authority_path,
+			       "-nolisten", "tcp", (char*)NULL);
+		}
+		fprintf(stderr, "frdp-session-agent: failed to exec display backend\n");
+		backend_exec_failed(exec_pipe[1]);
     }
 
     close(exec_pipe[1]);
@@ -1696,6 +2164,7 @@ int main(int argc, char **argv)
             close(control_fd);
         if (heartbeat_fd >= 0)
             close(heartbeat_fd);
+		close(authority_fd);
         closelog();
         return 1;
     }
@@ -1716,10 +2185,41 @@ int main(int argc, char **argv)
             close(control_fd);
         if (heartbeat_fd >= 0)
             close(heartbeat_fd);
+		close(authority_fd);
         closelog();
         return 1;
     }
-    frdpAgentFrameState frame_state;
+	if (backend == FRDP_AGENT_BACKEND_XORG_DUMMY)
+	{
+		frdpAgentResizeRequest request = {
+			.width = initial_width,
+			.height = initial_height,
+			.color_depth = initial_depth,
+		};
+		frdpAgentResizeResponse response = { 0 };
+
+		if (resize_backend_display(xdisplay, &request, &response) != 0)
+		{
+			syslog(LOG_ERR,
+			       "correlation_id=%s session_id=%s failed to apply initial display geometry",
+			       escaped_correlation_id, escaped_session_id);
+			XCloseDisplay(xdisplay);
+			kill(pid, SIGTERM);
+			usleep(200000);
+			kill(pid, SIGKILL);
+			waitpid(pid, NULL, 0);
+			if (ready_fd >= 0)
+				close(ready_fd);
+			if (control_fd >= 0)
+				close(control_fd);
+			if (heartbeat_fd >= 0)
+				close(heartbeat_fd);
+			close(authority_fd);
+			closelog();
+			return 1;
+		}
+	}
+	frdpAgentFrameState frame_state;
     if (frame_state_init(&frame_state, xdisplay, correlation_id, session_id) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s failed to initialize frame state",
                escaped_correlation_id, escaped_session_id);
@@ -1734,6 +2234,7 @@ int main(int argc, char **argv)
             close(control_fd);
         if (heartbeat_fd >= 0)
             close(heartbeat_fd);
+		close(authority_fd);
         closelog();
         return 1;
     }
@@ -1753,6 +2254,7 @@ int main(int argc, char **argv)
             close(control_fd);
         if (heartbeat_fd >= 0)
             close(heartbeat_fd);
+		close(authority_fd);
         closelog();
         return 1;
     }
@@ -1778,6 +2280,7 @@ int main(int argc, char **argv)
             if (control_fd >= 0)
                 close(control_fd);
             close(heartbeat_fd);
+			close(authority_fd);
             closelog();
             return 1;
         }
@@ -1801,6 +2304,7 @@ int main(int argc, char **argv)
         }
         if (heartbeat_fd >= 0)
             close(heartbeat_fd);
+		close(authority_fd);
         closelog();
         return 1;
     }
@@ -1828,8 +2332,9 @@ int main(int argc, char **argv)
         shutdown(heartbeat_fd, SHUT_RDWR);
         (void)pthread_join(heartbeat_thread, NULL);
     }
-    if (heartbeat_fd >= 0)
-        close(heartbeat_fd);
+	if (heartbeat_fd >= 0)
+		close(heartbeat_fd);
+	close(authority_fd);
     if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
         syslog(LOG_ERR, "correlation_id=%s session_id=%s display server exited with status %d",
                escaped_correlation_id, escaped_session_id, WEXITSTATUS(status));

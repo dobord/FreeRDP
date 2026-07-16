@@ -61,6 +61,19 @@ typedef struct {
     uint32_t failure_threshold;
 } frdpSessionHeartbeatPolicy;
 
+typedef enum
+{
+	FRDP_SESSION_DISPLAY_XVFB = 0,
+	FRDP_SESSION_DISPLAY_XORG_DUMMY = 1
+} frdpSessionDisplayBackend;
+
+typedef struct
+{
+	frdpSessionDisplayBackend backend;
+	char xorg_path[256];
+	char xorg_config[256];
+} frdpSessionDisplayPolicy;
+
 typedef struct {
     int enabled;
 } frdpAuditPolicy;
@@ -83,7 +96,8 @@ typedef struct {
     char session_socket[108];
     frdpSessionResourcePolicy session_resources;
     frdpSessionHeartbeatPolicy session_heartbeat;
-    frdpChannelPolicy channels;
+	frdpSessionDisplayPolicy session_display;
+	frdpChannelPolicy channels;
     frdpClipboardPolicy clipboard;
     frdpAuditPolicy audit;
 } frdpConfig;

@@ -1761,7 +1761,11 @@ static BOOL frdpd_peer_post_connect(freerdp_peer* client)
 {
 	rdpSettings* settings = NULL;
 	frdpdPeerContext* context = NULL;
+	UINT32 desktop_width = 0;
+	UINT32 desktop_height = 0;
+	UINT32 color_depth = 0;
 	char log_hostname[FRDPD_LOG_STRING_SIZE] = { 0 };
+	char log_session_id[FRDPD_LOG_STRING_SIZE] = { 0 };
 	char log_user[FRDPD_LOG_STRING_SIZE] = { 0 };
 
 	WINPR_ASSERT(client);
@@ -1771,6 +1775,20 @@ static BOOL frdpd_peer_post_connect(freerdp_peer* client)
 	context = (frdpdPeerContext*)client->context;
 	WINPR_ASSERT(settings);
 	WINPR_ASSERT(context);
+	desktop_width = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
+	desktop_height = freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
+	color_depth = freerdp_settings_get_uint32(settings, FreeRDP_ColorDepth);
+
+	if (context->managed_session_open &&
+	    !frdpd_send_agent_resize(context, desktop_width, desktop_height, color_depth))
+	{
+		WLog_WARN(TAG,
+		          "correlation_id=%s failed to synchronize display to %" PRIu32 "x%" PRIu32
+		          " for session_id=%s",
+		          context->correlation_id, desktop_width, desktop_height,
+		          frdpd_context_log_session_id(context, log_session_id, sizeof(log_session_id)));
+		return FALSE;
+	}
 
 	WLog_INFO(TAG,
 	          "correlation_id=%s client %s logged in as %s; requested desktop %" PRIu32 "x%" PRIu32
@@ -1778,9 +1796,7 @@ static BOOL frdpd_peer_post_connect(freerdp_peer* client)
 	          context->correlation_id,
 	          frdpd_client_log_name(client, log_hostname, sizeof(log_hostname)),
 	          frdpd_log_value(context->pam_user, log_user, sizeof(log_user), "unknown"),
-	          freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth),
-	          freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight),
-	          freerdp_settings_get_uint32(settings, FreeRDP_ColorDepth));
+	          desktop_width, desktop_height, color_depth);
 	return TRUE;
 }
 

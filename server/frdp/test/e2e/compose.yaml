@@ -32,6 +32,7 @@ services:
   frdpd-local:
     <<: *frdp-image
     profiles: ["local"]
+    cap_add: ["SYS_PTRACE"]
     hostname: frdpd.local.test
     environment:
       FRDP_IDENTITY_PROVIDER: local
@@ -130,6 +131,7 @@ services:
   frdpd-freeipa:
     <<: *frdp-image
     profiles: ["freeipa"]
+    cap_add: ["SYS_PTRACE"]
     image: ${FRDP_FREEIPA_CLIENT_IMAGE:-frdpd-e2e-freeipa-client:dev}
     build:
       context: ../../../..
@@ -236,6 +238,7 @@ services:
   frdpd-samba:
     <<: *frdp-image
     profiles: ["samba"]
+    cap_add: ["SYS_PTRACE"]
     hostname: frdpd.ad.test
     dns: ["${FRDP_AD_DC_IP:-172.31.56.20}"]
     dns_search: ["ad.test"]

@@ -1,12 +1,18 @@
 if(NOT DEFINED FRDP_BUILD_DIR OR NOT DEFINED FRDP_INSTALL_BINDIR OR
+   NOT DEFINED FRDP_INSTALL_DATADIR OR
    NOT DEFINED FRDP_INSTALL_MANDIR OR
    NOT DEFINED FRDP_VERSION_FULL OR
    NOT DEFINED FRDP_NTLM_PROVISIONING_AVAILABLE)
   message(FATAL_ERROR "FRDP install test arguments are incomplete")
 endif()
-
 set(install_root "${FRDP_BUILD_DIR}/frdp-server-install-test")
 set(install_prefix "/frdp-server-install-prefix")
+if(IS_ABSOLUTE "${FRDP_INSTALL_DATADIR}")
+  set(installed_data_root "${install_root}${FRDP_INSTALL_DATADIR}")
+else()
+  set(installed_data_root
+      "${install_root}${install_prefix}/${FRDP_INSTALL_DATADIR}")
+endif()
 if(IS_ABSOLUTE "${FRDP_INSTALL_BINDIR}")
   set(installed_hash "${install_root}${FRDP_INSTALL_BINDIR}/winpr-hash")
 else()
@@ -59,5 +65,19 @@ foreach(manpage
     message(FATAL_ERROR "server component omitted ${manpage}")
   endif()
 endforeach()
+
+if(NOT DEFINED FRDP_XORG_DUMMY_CONFIG_DIR OR FRDP_XORG_DUMMY_CONFIG_DIR STREQUAL "")
+  message(FATAL_ERROR "FRDP_XORG_DUMMY_CONFIG_DIR was not provided")
+endif()
+if(IS_ABSOLUTE "${FRDP_XORG_DUMMY_CONFIG_DIR}")
+  set(installed_xorg_config
+      "${install_root}${FRDP_XORG_DUMMY_CONFIG_DIR}/xorg-dummy.conf")
+else()
+  set(installed_xorg_config
+      "${install_root}${install_prefix}/${FRDP_XORG_DUMMY_CONFIG_DIR}/xorg-dummy.conf")
+endif()
+if(NOT EXISTS "${installed_xorg_config}")
+  message(FATAL_ERROR "server component omitted xorg-dummy.conf")
+endif()
 
 file(REMOVE_RECURSE "${install_root}")

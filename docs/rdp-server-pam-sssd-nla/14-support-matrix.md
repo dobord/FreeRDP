@@ -48,7 +48,8 @@ the release record.
 
 | Capability | Status | Required evidence before GA |
 |---|---|---|
-| Xvfb-backed desktop session | Prototype | Replace or augment the fixed-mode Xvfb backend to apply the now-negotiated Display Control geometry changes, then attach resize churn and load/soak evidence. |
+| Xvfb-backed desktop session | Prototype | Fixed-geometry compatibility backend; add load/soak and broader client evidence for deployments that do not need dynamic resize. |
+| Xorg dummy desktop session | Prototype | Trusted-path single-output RandR resize and FreeRDP-client churn/reconnect evidence exist; add multi-monitor policy, Windows-client interoperability, package-installed runtime, and load/soak evidence. |
 | Wayland backend | Not supported | No production backend is implemented. |
 | Text clipboard | Prototype | Runtime `cliprdr` handler, direction/size policy enforcement, client interoperability, and audit evidence. |
 | Audio output | Not supported | Baseline audio handler and policy tests are not implemented. |

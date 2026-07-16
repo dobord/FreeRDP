@@ -17,6 +17,10 @@ profile frdpd /usr/bin/frdpd {
   /usr/bin/frdp-sesmand ix,
   /usr/bin/frdp-session-agent ix,
   /usr/bin/frdp-krb-authd ix,
+  /usr/bin/Xvfb ix,
+  /usr/lib/xorg/Xorg ix,
+  /usr/libexec/Xorg ix,
+  /usr/share/frdpd/xorg-dummy.conf r,
 
   # Deny everything else by default
   deny /** rw,

@@ -7,9 +7,12 @@ frdp-session-agent \- per-session X11 backend for frdp-sesmand
 .B frdp-session-agent
 is an internal per-user process started and supervised by
 .BR frdp-sesmand (8).
-It starts the configured Xvfb display, injects validated keyboard and pointer
+It starts the configured Xvfb or Xorg dummy display, injects validated keyboard and pointer
 input, captures bounded framebuffer tiles, and handles the supported display
 and text-clipboard IPC operations.
+.PP
+The display server receives a random per-session MIT-MAGIC-COOKIE-1 from an
+unlinked authority inode and does not listen on TCP.
 .PP
 It is not intended to be started manually.  Session identity, inherited
 control descriptors, display geometry, and readiness reporting are supplied by
@@ -27,8 +30,18 @@ Audit correlation identifier.
 Allocated X11 display.
 .TP
 .B FRDP_GEOMETRY
-Xvfb screen geometry.
+Initial screen geometry.
+.TP
+.B FRDP_DISPLAY_BACKEND
+Display backend selected by the session manager: xvfb or xorg-dummy.
+.TP
+.B FRDP_XORG_PATH
+Trusted absolute raw Xorg server path for the xorg-dummy backend.
+.TP
+.B FRDP_XORG_CONFIG
+Trusted absolute Xorg dummy configuration path.
 .SH SEE ALSO
 .BR frdpd (8),
 .BR frdp-sesmand (8),
+.BR Xorg (1),
 .BR Xvfb (1)

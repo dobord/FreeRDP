@@ -56,6 +56,39 @@ process_is_running()
 	[[ -n $state && $state != Z* ]]
 }
 
+wait_display_geometry()
+{
+	local display=$1
+	local expected=$2
+	local geometry=
+
+	for ((attempt = 0; attempt < 100; attempt++)); do
+		geometry=$(xdpyinfo -display "$display" 2>/dev/null |
+			awk '$1 == "dimensions:" { print $2; exit }' || true)
+		[[ $geometry == "$expected" ]] && return 0
+		sleep 0.1
+	done
+	return 1
+}
+
+request_session_xauthority()
+{
+	local agent_pid=$1
+	local request="$FRDP_E2E_CONTROL_DIR/xauthority-$agent_pid-request"
+	local authority="$FRDP_E2E_CONTROL_DIR/xauthority-$agent_pid"
+
+	: >"$request"
+	for ((attempt = 0; attempt < 100; attempt++)); do
+		if [[ -f $authority ]]; then
+			[[ $(stat -c %a "$authority") == 400 ]] || return 1
+			printf '%s\n' "$authority"
+			return 0
+		fi
+		sleep 0.1
+	done
+	return 1
+}
+
 session_identity_is_exclusively_active()
 {
 	local file=$1
@@ -137,7 +170,7 @@ run_auth_only()
 	log "auth-only '$label' produced expected result: $expected"
 }
 
-run_policy_denied_auth_only()
+run_policy_denied_connection()
 {
 	local label=$1
 	local logfile="$FRDP_ARTIFACT_DIR/auth-${label}.log"
@@ -146,11 +179,16 @@ run_policy_denied_auth_only()
 	build_args "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"
 	set +e
 	timeout "${FRDP_AUTH_TIMEOUT}s" xvfb-run -a "$XFREERDP" "${RDP_ARGS[@]}" \
-		"$AUTH_ONLY_ARG" >"$logfile" 2>&1
+		>"$logfile" 2>&1
 	status=$?
 	set -e
-	[[ $status -ne 124 ]] || fail "policy-denied auth-only '$label' timed out"
-	log "policy-denied auth-only '$label' completed with client status $status"
+	[[ $status -ne 124 ]] || fail "policy-denied connection '$label' timed out"
+	[[ $(grep -c 'Authentication complete' "$logfile" || true) -eq 1 ]] ||
+		fail "policy-denied connection '$label' did not complete exactly one authentication"
+	if grep -q "Caught signal 'Segmentation fault'" "$logfile"; then
+		fail "policy-denied connection '$label' crashed"
+	fi
+	log "policy-denied connection '$label' completed with client status $status"
 }
 
 request_policy_reload()
@@ -355,6 +393,9 @@ frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" | tee "$FRDP_ARTIFACT_DIR/
 	fail "managed session $session_id did not open as active"
 [[ -n $open_display ]] || fail "managed session $session_id has no display"
 positive_integer "$open_pid" || fail "managed session $session_id has invalid agent PID '$open_pid'"
+XAUTHORITY=$(request_session_xauthority "$open_pid") ||
+	fail "failed to obtain the isolated test Xauthority for agent $open_pid"
+export XAUTHORITY
 
 client_clipboard_text=$'client-to-server FreeRDP clipboard UTF-8: Привет \360\237\214\215'
 printf '%s' "$client_clipboard_text" | xclip -selection clipboard -in &
@@ -383,7 +424,7 @@ done
 log "server-to-client Unicode clipboard transfer passed"
 if [[ $FRDP_E2E_POLICY_RELOAD == 1 ]]; then
 	request_policy_reload deny
-	run_policy_denied_auth_only reload-denied
+	run_policy_denied_connection reload-denied
 	process_is_running "$client_pid" || fail "active peer was disconnected by policy reload"
 	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
 		>"$FRDP_ARTIFACT_DIR/session-list-after-policy-deny.txt" 2>&1 ||
@@ -409,7 +450,7 @@ if [[ $FRDP_E2E_POLICY_RELOAD == 1 ]]; then
 	log "active peer retained its channel and clipboard policy snapshot"
 
 	request_policy_reload malformed
-	run_policy_denied_auth_only reload-malformed-retained-deny
+	run_policy_denied_connection reload-malformed-retained-deny
 	process_is_running "$client_pid" || fail "active peer was disconnected by failed policy reload"
 	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
 		>"$FRDP_ARTIFACT_DIR/session-list-after-malformed-policy-reload.txt" 2>&1 ||
@@ -436,6 +477,15 @@ for ((i = 0; i < 100; i++)); do
 done
 grep -q "ConfigureNotify (800x600)" "$FRDP_ARTIFACT_DIR/rdp-session.log" ||
 	fail "xfreerdp did not observe the requested window resize"
+wait_display_geometry "$open_display" 800x600 ||
+	fail "managed display did not apply the 800x600 Display Control layout"
+xdotool windowsize --sync "$window_id" 1024 768 || fail "failed to restore the xfreerdp window size"
+wait_display_geometry "$open_display" 1024x768 ||
+	fail "managed display did not apply the restored 1024x768 layout"
+xdotool windowsize --sync "$window_id" 800 600 || fail "failed to repeat the xfreerdp window resize"
+wait_display_geometry "$open_display" 800x600 ||
+	fail "managed display did not apply the repeated 800x600 layout"
+log "managed Xorg dummy display completed 800x600 -> 1024x768 -> 800x600 resize churn"
 sleep 1
 process_is_running "$client_pid" || fail "xfreerdp did not remain connected"
 frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" \
@@ -524,6 +574,7 @@ for ((i = 0; i < FRDP_E2E_TIMEOUT; i++)); do
 	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$FRDP_ARTIFACT_DIR/session-list-cleanup.txt" 2>&1 || true
 	if grep -q '^No active sessions$' "$FRDP_ARTIFACT_DIR/session-list-cleanup.txt"; then
 		log "managed RDP session was cleaned after explicit kill-session"
+		sleep 2
 		exit 0
 	fi
 	sleep 1

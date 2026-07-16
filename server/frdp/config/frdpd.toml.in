@@ -25,6 +25,12 @@ ntlm_fallback = @FRDP_CONFIG_NTLM_FALLBACK@
 
 [session]
 session_socket = "/run/frdp-sesmand/sesmand.sock"
+# Xvfb remains the compatibility default. For real single-monitor resize, install
+# the Xorg dummy driver and select the trusted absolute server/config paths:
+display_backend = "xvfb"
+# display_backend = "xorg-dummy"
+# xorg_path = "/usr/lib/xorg/Xorg"
+# xorg_config = "/usr/share/frdpd/xorg-dummy.conf"
 # Optional POSIX resource-limit guard applied by frdp-sesmand to newly launched
 # session agents before exec. 0 or omission means unlimited; cgroup/logind
 # ownership remains a separate production hardening milestone.
@@ -40,8 +46,7 @@ session_socket = "/run/frdp-sesmand/sesmand.sock"
 # static_deny = ""
 # dynamic_mode = "blocklist"
 # dynamic_deny = ""
-# Dynamic channel lists feed the DVC authorization callback, but remain preparatory
-# while drdynvc and useful dynamic handlers stay disabled.
+# Dynamic channel lists feed the DVC authorization callback for implemented handlers.
 # Use allowlist mode to permit only exact channel names:
 # static_mode = "allowlist"
 # static_allow = "cliprdr"

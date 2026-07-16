@@ -26,7 +26,7 @@ Homepage: https://www.freerdp.com/
 
 Package: frdpd
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, libpam0g, sssd, xvfb
+Depends: ${shlibs:Depends}, ${misc:Depends}, libpam0g, sssd, xserver-xorg-video-dummy, xvfb
 Description: FreeRDP-based RDP server with PAM/SSSD/NLA
  This package provides the frdpd daemon, authentication helpers and session
  manager. It supports password-backed NLA (CredSSP) through PAM/SSSD and
