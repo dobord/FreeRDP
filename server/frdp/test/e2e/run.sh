@@ -174,7 +174,8 @@ validate_rdp_auth_artifacts()
 {
 	local profile=$1
 	local server_service=$2
-	local server_id server_log server_env test_user deny_user accepted rejected evidence
+	local server_id server_log server_env test_user deny_user test_group accepted rejected evidence
+	local dc_id dc_log
 	local total_accepted total_rejected
 	local ntlm_proof_rejected wrong_password_rejected denied_user_rejected
 	local keytab_rollover old_kvno new_kvno
@@ -255,6 +256,29 @@ validate_rdp_auth_artifacts()
 				"$profile" >&2
 			return 1
 		fi
+	fi
+	if [[ $profile == samba ]]; then
+		dc_log="$artifacts/samba/dc-policy.log"
+		test_group=$(sed -n 's/^FRDP_TEST_GROUP=//p' <<<"$server_env")
+		if [[ -z $test_group || $test_group == *$'\n'* ]]; then
+			printf 'profile samba server has ambiguous GPO group configuration\n' >&2
+			return 1
+		fi
+		dc_id=$("${compose[@]}" --profile samba ps -a -q samba-dc 2>/dev/null || true)
+		if [[ -z $dc_id || $dc_id == *$'\n'* ]]; then
+			printf 'profile samba did not produce exactly one domain controller\n' >&2
+			return 1
+		fi
+		docker logs --timestamps "$dc_id" >"$dc_log" 2>&1 || return 1
+		grep -Fq 'Samba AD enforcing GPO allow/deny checks passed for PAM service frdpd' \
+			"$server_log" || return 1
+		grep -Fq "auth-only 'gpo-denied' produced expected result: failure" \
+			"$artifacts/samba/probe.log" || return 1
+		grep -E 'Samba AD enforcing GPO \{[0-9A-F-]{36}\}' "$dc_log" |
+			grep -Fq "allows $test_group and denies enabled user $deny_user for frdpd" || {
+			printf 'profile samba domain controller is missing the enforcing GPO fixture\n' >&2
+			return 1
+		}
 	fi
 	if [[ $profile == freeipa ]]; then
 		keytab_rollover="$artifacts/freeipa/freeipa-keytab-rollover.txt"

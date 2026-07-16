@@ -308,6 +308,7 @@ configure_samba_identity()
 	local host_fqdn=${FRDP_AD_HOST_FQDN:-$(hostname -f)}
 	local computer_name=${FRDP_AD_COMPUTER_NAME:-FRDPD}
 	local test_group=${FRDP_TEST_GROUP:-rdp-users}
+	local allowed_checks denied_checks
 
 	validate_local_name "$test_group" || fail "invalid Samba AD test group name"
 
@@ -365,7 +366,8 @@ use_fully_qualified_names = false
 fallback_homedir = /home/%u
 default_shell = /bin/bash
 dyndns_update = false
-ad_gpo_access_control = permissive
+ad_gpo_access_control = enforcing
+ad_gpo_map_remote_interactive = +frdpd
 EOF
 
 	ensure_sss_nsswitch
@@ -374,6 +376,14 @@ EOF
 	wait_supplementary_group "$FRDP_TEST_USER" "$test_group" ||
 		fail "SSSD did not resolve supplementary group $test_group for $FRDP_TEST_USER"
 	log "SSSD resolved supplementary group $test_group for $FRDP_TEST_USER"
+	allowed_checks=$(LC_ALL=C sssctl user-checks -a acct -s frdpd "$FRDP_TEST_USER" 2>&1) ||
+		fail "Samba AD enforcing GPO allowed-user check failed"
+	grep -Fq 'pam_acct_mgmt: Success' <<<"$allowed_checks" ||
+		fail "Samba AD enforcing GPO did not allow the RDP test user"
+	denied_checks=$(LC_ALL=C sssctl user-checks -a acct -s frdpd "$FRDP_DENY_USER" 2>&1) || true
+	grep -Fq 'pam_acct_mgmt: Permission denied' <<<"$denied_checks" ||
+		fail "Samba AD enforcing GPO did not deny the RDP policy-test user"
+	log "Samba AD enforcing GPO allow/deny checks passed for PAM service frdpd"
 }
 
 configure_identity()

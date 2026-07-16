@@ -28,6 +28,11 @@ making the current canonical helper topology repeatably green.
 | Automated verification | 93% | Unit tests, helper-process component tests, live helper-topology startup smoke coverage, prerequisite-gated Xvfb/PAM lifecycle and sesmand restart reconciliation coverage, installed Debian active-session/in-flight-auth/bounded-outage helper recovery, installed Samba AD/SSSD package transitions, metadata codec/store and same-inode recovery tests, malformed/slow helper-client coverage, focused ASan+UBSan and strict-warning gates including default-on/explicit-off NTLM build variants, systemd/tmpfiles/monitoring verification, ASan/UBSan-backed parser/policy fuzzers, and green real-client local-PAM, Samba AD/SSSD, and joined FreeIPA/HBAC Compose profiles proving disconnect/reconnect identity with retained artifacts. Both SSSD profiles additionally prove deterministic active-session `frdp-sesmand` crash cleanup, manager PID/socket-inode replacement, bounded stale-peer disconnect, and fresh provider-authenticated session/reconnect. FreeIPA also retains increasing-KVNO rollover, old/new key validation and post-rollover PAM/SSSD RDP evidence. Weekly Samba and FreeIPA jobs request two clean harness repetitions with per-attempt artifacts | Successful repeated provider CI history still needs to accumulate; no Windows `mstsc`, IPA multi-master/ticket-renewal, reconnect across restart, full PAM crash reconciliation, longer operational helper outages, graphical session load/soak, sustained fuzz corpus, broader selected RDP input fuzzing, full-session protocol regression, or Valgrind/LSan variant matrix yet |
 | Overall production readiness | **25–30%** | A testable MVP skeleton with meaningful security boundaries | Several correctness, lifecycle, interoperability and operability gates remain open |
 
+The Samba evidence includes a domain-root security GPO with explicit
+remote-interactive allow/deny rights, SSSD enforcing mode, `frdpd` PAM-service
+mapping, and both preflight `sssctl` and real NLA/PAM outcomes for enabled
+allowed and denied users.
+
 ## Highest-value implementation order
 
 ### Gate 0 — Establish a trustworthy baseline
@@ -121,8 +126,9 @@ for an extended session, and denied channels cannot be opened or used.
 
 1. Implement the Kerberos acceptor path from the actual CredSSP/SPNEGO token,
    configured SPN/keytab and SSSD-backed principal mapping.
-2. Add broader FreeIPA topology, ticket-renewal and policy scenarios; add strict
-   Samba AD GPO policy after the baseline AD profile is stable.
+2. Add broader FreeIPA topology, ticket-renewal and policy scenarios; extend
+   the enforcing Samba AD GPO baseline with OU/link-precedence and trust/forest
+   scenarios.
 3. Complete DEB and RPM builds, service users/directories, permissions,
    post-install validation and upgrade tests.
 4. Validate SELinux and AppArmor policies in enforcing mode.
@@ -215,8 +221,9 @@ The Compose harness under `server/frdp/test/e2e` defines four profiles:
 - `component`: clean container build plus focused CTest;
 - `local`: actual TLS/NLA/CredSSP, local PAM, helper IPC and managed Xvfb
   lifecycle;
-- `samba`: provisioned Samba AD DC, machine join via `adcli`, SSSD AD, PAM and
-  real RDP client;
+- `samba`: provisioned Samba AD DC, machine join via `adcli`, SSSD AD with an
+  enforcing remote-interactive allow/deny GPO for `frdpd`, PAM and real RDP
+  client;
 - `freeipa`: official FreeIPA server, OTP host enrollment, root-only keytab,
   `sssd-ipa`, explicit HBAC allow/deny policy, PAM and real RDP client.
 
@@ -228,7 +235,7 @@ fail-fast behavior and incomplete-attempt preservation.
 Each RDP profile starts with fresh profile containers, volumes, and artifacts,
 checks an enabled user,
 cleans its successful auth-only session, and proves that wrong-password and
-disabled/locked-account or HBAC-policy attempts leave no managed session or durable session
+locked-account, AD-GPO, or HBAC-policy attempts leave no managed session or durable session
 runtime artifact. The local profile requires exactly three PAM accepts; Samba
 and FreeIPA require six because each also authenticates an active-session crash
 probe and a full post-recovery session/reconnect cycle through SSSD. Every
@@ -254,8 +261,10 @@ uses the IPA providers with Kerberos validation, disables the default
 It then rotates the host principal, requires an increased KVNO, rejects the old
 key, accepts an atomically installed root-only replacement, and completes the
 real PAM/SSSD RDP probes. Broader IPA topology, ticket-renewal and policy cases
-remain external matrix work. The Samba profile joins the host but keeps GPO access control permissive
-until authentication and lifecycle behavior are stable.
+remain external matrix work. The Samba profile links a security GPO at the
+domain root, maps `frdpd` to the remote-interactive logon right, runs SSSD GPO
+access control in enforcing mode, and proves both a group-based allow and an
+enabled-user deny before the real-client lifecycle checks.
 
 ### External lab E2E
 
@@ -264,7 +273,7 @@ Some requirements should not be forced into a single Docker host:
 - Windows `mstsc` client/build matrix;
 - Kerberos-only and ticket-renewal scenarios with real DNS/time behavior;
 - FreeIPA multi-master, ticket-renewal and broader topology/policy scenarios;
-- AD GPO allow/deny and trust/forest scenarios;
+- broader AD GPO scope/link-precedence and trust/forest scenarios;
 - reconnect across daemon restart;
 - clipboard interoperability beyond the current FreeRDP client and baseline audio policy;
 - network loss, packet delay, bandwidth limits and TLS certificate rotation;

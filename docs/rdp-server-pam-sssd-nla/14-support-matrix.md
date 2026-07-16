@@ -27,7 +27,8 @@ the release record.
 
 | Capability | Status | Required evidence before GA |
 |---|---|---|
-| PAM password authentication through SSSD | Candidate | Accepted, denied, expired/disabled account, group lookup, and PAM account/session tests against local, Samba AD, and FreeIPA profiles. |
+| PAM password authentication through SSSD | Candidate | Accepted, provider-policy-denied, expired/disabled account, group lookup, and PAM account/session tests across local, Samba AD, and FreeIPA profiles. |
+| Samba AD GPO access control | Candidate | Enforcing domain-root remote-interactive allow/deny policy is covered; add OU/link precedence, trust/forest, independent Windows-client, and production-domain policy evidence. |
 | NTLM-enabled NLA fallback | Prototype | Explicit deployment decision, audit trail, and client matrix evidence; default guidance remains Kerberos-preferred. |
 | NTLM-disabled Kerberos-only mode | Prototype | Integrated CredSSP/SPNEGO acceptor, keytab/SPN handling, SSSD principal mapping, and Windows client evidence. |
 | Remote Credential Guard ticket handoff | Not supported | Current integrated path rejects unsupported ticket handoff. |

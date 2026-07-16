@@ -224,6 +224,9 @@ foreach(expected
         "FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER: 1"
         "FRDP_FREEIPA_ENROLL_PASSWORD: \${FRDP_FREEIPA_ENROLL_PASSWORD:-IpaEnrollPassw0rd!}"
         "FRDP_DENY_LABEL: policy-denied"
+        "FRDP_DENY_LABEL: gpo-denied"
+        "FRDP_GPO_DENY_USER:-rdpgpodenied"
+        "test -f /run/frdp-gpo-ready"
         "WITH_FREEIPA_CLIENT: ON"
         "samba-tool group listmembers"
         "grep -Fxq")
@@ -255,7 +258,16 @@ foreach(expected
         "FRDP_TEST_GROUP:-rdp-users"
         "samba-tool group add"
         "samba-tool group addmembers"
-        "samba-tool group listmembers")
+        "samba-tool group listmembers"
+        "provision_rdp_gpo"
+        "SeRemoteInteractiveLogonRight"
+        "SeDenyRemoteInteractiveLogonRight"
+        "gPCMachineExtensionNames"
+        "{827D319E-6EAC-11D2-A4EA-00C04F79F83A}"
+        "samba-tool user enable \"\$deny_user\""
+        "userAccountControl"
+        "deny account %s is not enabled"
+        "frdp-gpo-ready")
   expect_contains("${samba_entrypoint}" "${expected}" "Samba entrypoint")
 endforeach()
 
@@ -265,7 +277,10 @@ foreach(expected
         "getent group \"$group\""
         "id -G \"$user\""
         "SSSD resolved supplementary group"
-        "SSSD did not resolve supplementary group")
+        "SSSD did not resolve supplementary group"
+        "ad_gpo_access_control = enforcing"
+        "ad_gpo_map_remote_interactive = +frdpd"
+        "Samba AD enforcing GPO allow/deny checks passed")
   expect_contains("${frdpd_entrypoint}" "${expected}" "frdpd entrypoint")
 endforeach()
 
@@ -374,6 +389,9 @@ foreach(expected
         "profile freeipa is missing joined-host evidence"
         "Access granted by HBAC rule [frdpd-allow]"
         "Access denied by HBAC rules"
+        "dc-policy.log"
+        "auth-only 'gpo-denied' produced expected result: failure"
+        "profile samba domain controller is missing the enforcing GPO fixture"
         "container-inspect")
   expect_contains("${runner}" "${expected}" "E2E runner")
 endforeach()
