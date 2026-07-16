@@ -12,6 +12,7 @@ if [[ ! -s "$deb_path" ]]; then
   exit 2
 fi
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(realpath "$script_dir/../../..")
 session_smoke="$script_dir/e2e/scripts/rdp-session-smoke.sh"
 if [[ ! -s "$session_smoke" ]]; then
   echo "RDP session smoke fixture is missing: $session_smoke" >&2
@@ -19,9 +20,21 @@ if [[ ! -s "$session_smoke" ]]; then
 fi
 command -v docker >/dev/null
 
+provider=${FRDP_LIFECYCLE_PROVIDER:-local}
+case "$provider" in
+  local|samba) ;;
+  *)
+    echo "unsupported lifecycle identity provider: $provider" >&2
+    exit 2
+    ;;
+esac
+
 suffix="$$-$RANDOM"
 image="frdp-systemd-lifecycle:$suffix"
 container="frdp-systemd-lifecycle-$suffix"
+dc_image=""
+dc_container=""
+network=""
 
 cleanup() {
   local status=$?
@@ -35,8 +48,21 @@ cleanup() {
       exit "$status"
     fi
   fi
+  if (( status != 0 )) && [[ -n "$dc_container" ]] &&
+     docker inspect "$dc_container" >/dev/null 2>&1; then
+    docker logs --tail 200 "$dc_container" >&2 || true
+  fi
   docker rm -f "$container" >/dev/null 2>&1 || true
+  if [[ -n "$dc_container" ]]; then
+    docker rm -f "$dc_container" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$network" ]]; then
+    docker network rm "$network" >/dev/null 2>&1 || true
+  fi
   docker image rm "$image" >/dev/null 2>&1 || true
+  if [[ -n "$dc_image" ]]; then
+    docker image rm "$dc_image" >/dev/null 2>&1 || true
+  fi
   trap - EXIT
   exit "$status"
 }
@@ -48,16 +74,55 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq \
     && sed -i '\|^path-exclude=/usr/share/man/|d' /etc/dpkg/dpkg.cfg.d/excludes \
     && apt-get install -qq -y --no-install-recommends \
-      freerdp3-x11 netcat-openbsd openssl procps systemd systemd-sysv \
-      x11-apps x11-utils \
+      adcli freerdp3-x11 krb5-user libnss-sss libpam-sss netcat-openbsd \
+      openssl procps sssd sssd-ad sssd-tools systemd systemd-sysv \
+      x11-apps x11-utils xvfb \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
 EOF
 
-docker run -d --privileged --name "$container" --tmpfs /run --tmpfs /run/lock \
-  "$image" >/dev/null
+run_args=(
+  -d --privileged --name "$container" --tmpfs /run --tmpfs /run/lock
+)
+if [[ "$provider" == samba ]]; then
+  dc_image="frdp-samba-lifecycle:$suffix"
+  dc_container="frdp-samba-lifecycle-$suffix"
+  network="frdp-samba-lifecycle-$suffix"
+  docker build -q -t "$dc_image" -f "$script_dir/e2e/Dockerfile.samba" \
+    "$repo_root" >/dev/null
+  docker network create "$network" >/dev/null
+  docker run -d --name "$dc_container" --cap-add SYS_ADMIN --network "$network" \
+    --network-alias dc.ad.test --hostname dc.ad.test \
+    -e FRDP_AD_REALM=AD.TEST \
+    -e FRDP_AD_NETBIOS_DOMAIN=AD \
+    -e 'FRDP_AD_ADMIN_PASSWORD=SambaAdminPassw0rd!' \
+    -e FRDP_TEST_USER=rdpuser \
+    -e 'FRDP_TEST_PASSWORD=RdpPassw0rd!' \
+    -e FRDP_TEST_GROUP=rdp-users \
+    -e FRDP_DENY_USER=rdpdisabled \
+    -e 'FRDP_DENY_PASSWORD=DeniedPassw0rd!' \
+    "$dc_image" >/dev/null
+  for _ in $(seq 1 120); do
+    if docker exec "$dc_container" samba-tool user show rdpuser >/dev/null 2>&1 &&
+       docker exec "$dc_container" samba-tool group listmembers rdp-users 2>/dev/null |
+         grep -Fxq rdpuser; then
+      break
+    fi
+    sleep 1
+  done
+  docker exec "$dc_container" samba-tool user show rdpuser >/dev/null
+  dc_ip=$(docker inspect --format "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+    "$dc_container")
+  [[ "$dc_ip" =~ ^[0-9]+([.][0-9]+){3}$ ]]
+  run_args+=(--network "$network" --dns "$dc_ip" --dns-search ad.test \
+    --hostname frdpd.ad.test)
+else
+  run_args+=(--hostname frdpd.local.test)
+fi
+
+docker run "${run_args[@]}" "$image" >/dev/null
 for _ in $(seq 1 30); do
   state=$(docker exec "$container" systemctl is-system-running 2>/dev/null || true)
   if [[ "$state" == running || "$state" == degraded ]]; then
@@ -72,8 +137,27 @@ fi
 
 docker cp "$deb_path" "$container:/tmp/frdpd-base.deb"
 docker cp "$session_smoke" "$container:/tmp/rdp-session-smoke.sh"
-docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -c '
+docker exec -e DEBIAN_FRONTEND=noninteractive \
+  -e FRDP_LIFECYCLE_PROVIDER="$provider" "$container" bash -Eeuo pipefail -c '
   trap '\''echo "lifecycle failure at line $LINENO: $BASH_COMMAND" >&2'\'' ERR
+
+  case "$FRDP_LIFECYCLE_PROVIDER" in
+    local)
+      test_user=lifecycle
+      test_password="RdpPassw0rd!"
+      rdp_domain=
+      ;;
+    samba)
+      test_user=rdpuser
+      test_password="RdpPassw0rd!"
+      rdp_domain=AD
+      ;;
+    *) exit 2 ;;
+  esac
+  client_domain_args=()
+  if [[ -n "$rdp_domain" ]]; then
+    client_domain_args+=("/d:$rdp_domain")
+  fi
   chmod 0755 /tmp/rdp-session-smoke.sh
 
   assert_real_services() {
@@ -118,14 +202,23 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     frdpctl status --socket /run/frdp-sesmand/sesmand.sock | \
       grep -Fxq "Session manager: reachable"
     timeout 5 bash -c "</dev/tcp/127.0.0.1/3389"
+    if [[ "$FRDP_LIFECYCLE_PROVIDER" == samba ]]; then
+      systemctl --quiet is-active sssd.service
+      test "$(systemctl show --property=InvocationID --value sssd.service)" = \
+        "$sssd_invocation"
+      adcli testjoin --domain=ad.test --domain-controller=dc.ad.test >/dev/null
+      getent passwd "$test_user" >/dev/null
+      id -nG "$test_user" | tr " " "\n" | grep -Fxq rdp-users
+    fi
   }
 
   run_session_smoke() {
     local stage=$1
 
     FRDP_RDP_TARGET=127.0.0.1:3389 \
-    FRDP_TEST_USER=lifecycle \
-    FRDP_TEST_PASSWORD="RdpPassw0rd!" \
+    FRDP_TEST_USER="$test_user" \
+    FRDP_TEST_PASSWORD="$test_password" \
+    FRDP_RDP_DOMAIN="$rdp_domain" \
     FRDP_SESSION_MINIMAL_CHANNELS=1 \
     FRDP_SESSION_HOLD_SECONDS=1 \
     FRDP_SESSION_TIMEOUT=30 \
@@ -149,7 +242,8 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
       sed -n "s/^-- cursor: //p")
     test -n "$journal_cursor"
     if timeout 20 xvfb-run -a xfreerdp3 \
-         /v:127.0.0.1:3389 /u:lifecycle /p:RdpPassw0rd! /cert:ignore /sec:nla \
+         /v:127.0.0.1:3389 "/u:$test_user" "/p:$test_password" \
+         "${client_domain_args[@]}" /cert:ignore /sec:nla \
          /size:800x600 /bpp:24 /audio-mode:2 /network:modem \
          -gfx -disp -dynamic-resolution -clipboard -heartbeat -multitransport \
          -auto-reconnect /log-level:INFO "$auth_only_arg" \
@@ -171,7 +265,7 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
         ;;
       sesmand-outage-*)
         client_marker="ERRCONNECT_CONNECT_CANCELLED"
-        server_marker="session manager rejected login for lifecycle: IPC failure"
+        server_marker="session manager rejected login for $test_user: IPC failure"
         ;;
       *) return 1 ;;
     esac
@@ -258,7 +352,8 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     DISPLAY="$transition_display" xdpyinfo >/dev/null
 
     DISPLAY="$transition_display" xfreerdp3 \
-      /v:127.0.0.1:3389 /u:lifecycle /p:RdpPassw0rd! /cert:ignore /sec:nla \
+      /v:127.0.0.1:3389 "/u:$test_user" "/p:$test_password" \
+      "${client_domain_args[@]}" /cert:ignore /sec:nla \
       /size:800x600 /bpp:24 /audio-mode:2 /network:modem \
       -gfx -disp -dynamic-resolution -clipboard -heartbeat -multitransport \
       -auto-reconnect /log-level:INFO \
@@ -271,7 +366,7 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
       frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
         > "$transition_artifacts/session-list.txt" 2>&1 || true
       read -r transition_session_id transition_agent_pid < <(
-        awk '\''NR > 1 && $2 == "lifecycle" && $4 == "active" { print $1, $5; exit }'\'' \
+        awk -v user="$test_user" '\''NR > 1 && $2 == user && $4 == "active" { print $1, $5; exit }'\'' \
           "$transition_artifacts/session-list.txt") || true
       if [[ -n "$transition_session_id" && -n "$transition_agent_pid" ]]; then
         if assert_transition_session_active; then
@@ -292,9 +387,10 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     [[ -n "$state" && "$state" != Z* ]]
     frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
       > "$transition_artifacts/session-list-before-transition.txt"
-    awk -v id="$transition_session_id" -v pid="$transition_agent_pid" '\''
-      NR > 1 && $2 == "lifecycle" { count++ }
-      NR > 1 && $1 == id && $2 == "lifecycle" && $4 == "active" && $5 == pid {
+    awk -v id="$transition_session_id" -v pid="$transition_agent_pid" \
+      -v user="$test_user" '\''
+      NR > 1 && $2 == user { count++ }
+      NR > 1 && $1 == id && $2 == user && $4 == "active" && $5 == pid {
         matched++
       }
       END { exit (count == 1 && matched == 1) ? 0 : 1 }
@@ -413,7 +509,8 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
 
     (
       if timeout 20 xvfb-run -a xfreerdp3 \
-           /v:127.0.0.1:3389 /u:lifecycle /p:RdpPassw0rd! /cert:ignore /sec:nla \
+           /v:127.0.0.1:3389 "/u:$test_user" "/p:$test_password" \
+           "${client_domain_args[@]}" /cert:ignore /sec:nla \
            /size:800x600 /bpp:24 /audio-mode:2 /network:modem \
            -gfx -disp -dynamic-resolution -clipboard -heartbeat -multitransport \
            -auto-reconnect /log-level:INFO "$auth_only_arg" \
@@ -484,6 +581,98 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     run_session_smoke post-authd-inflight-crash
   }
 
+  configure_samba_identity() {
+    local checks i
+
+    for i in $(seq 1 120); do
+      if getent hosts dc.ad.test >/dev/null 2>&1 &&
+         timeout 1 bash -c "</dev/tcp/dc.ad.test/389" 2>/dev/null; then
+        break
+      fi
+      sleep 1
+    done
+    getent hosts dc.ad.test >/dev/null
+    timeout 1 bash -c "</dev/tcp/dc.ad.test/389"
+    cat > /etc/krb5.conf <<EOF
+[libdefaults]
+ default_realm = AD.TEST
+ dns_lookup_realm = false
+ dns_lookup_kdc = true
+ rdns = false
+ udp_preference_limit = 0
+
+[domain_realm]
+ .ad.test = AD.TEST
+ ad.test = AD.TEST
+EOF
+    printf "%s\n" "SambaAdminPassw0rd!" | adcli join ad.test \
+      --domain-controller=dc.ad.test \
+      --host-fqdn=frdpd.ad.test \
+      --computer-name=FRDPD \
+      --login-user=Administrator \
+      --stdin-password
+    adcli testjoin --domain=ad.test --domain-controller=dc.ad.test
+
+    install -d -m 0700 /etc/sssd
+    cat > /etc/sssd/sssd.conf <<EOF
+[sssd]
+config_file_version = 2
+services = nss, pam
+domains = ad.test
+
+[nss]
+
+[pam]
+
+[domain/ad.test]
+id_provider = ad
+auth_provider = ad
+access_provider = ad
+ad_domain = ad.test
+ad_server = dc.ad.test
+krb5_realm = AD.TEST
+krb5_ccname_template = FILE:/tmp/krb5cc_%U
+ldap_id_mapping = true
+cache_credentials = false
+krb5_store_password_if_offline = false
+use_fully_qualified_names = false
+fallback_homedir = /home/%u
+default_shell = /bin/bash
+dyndns_update = false
+ad_gpo_access_control = permissive
+EOF
+    chmod 0600 /etc/sssd/sssd.conf
+    for database in passwd group; do
+      if ! awk -v db="$database" '\''
+        $1 == db ":" { for (i = 2; i <= NF; i++) if ($i == "sss") found = 1 }
+        END { exit found ? 0 : 1 }
+      '\'' /etc/nsswitch.conf; then
+        sed -ri "s/^(${database}:[^#]*)$/\\1 sss/" /etc/nsswitch.conf
+      fi
+    done
+    printf "%s\n" \
+      "auth required pam_env.so" \
+      "auth required pam_sss.so try_first_pass" \
+      "account required pam_sss.so" \
+      "session required pam_limits.so" \
+      "session required pam_mkhomedir.so skel=/etc/skel umask=0077" \
+      "session optional pam_sss.so" > /etc/pam.d/frdpd
+    sssctl config-check
+    systemctl enable --now sssd.service
+    for i in $(seq 1 120); do
+      if getent passwd "$test_user" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+    getent passwd "$test_user"
+    id -nG "$test_user" | tr " " "\n" | grep -Fxq rdp-users
+    checks=$(LC_ALL=C sssctl user-checks -a acct -s frdpd "$test_user" 2>&1)
+    grep -Fq "pam_acct_mgmt: Success" <<< "$checks"
+    checks=$(LC_ALL=C sssctl user-checks -a acct -s frdpd rdpdisabled 2>&1 || true)
+    grep -Fq "pam_acct_mgmt: Permission denied" <<< "$checks"
+  }
+
   echo "stage=install"
   apt-get update -qq
   apt-get install -qq -y /tmp/frdpd-base.deb
@@ -494,15 +683,21 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     ! systemctl --quiet is-active "$unit"
   done
   rm -f /usr/sbin/policy-rc.d
-  useradd --create-home --shell /bin/bash lifecycle
-  printf "%s\n" "lifecycle:RdpPassw0rd!" | chpasswd
-  printf "%s\n" \
-    "auth required pam_env.so" \
-    "auth required pam_unix.so try_first_pass" \
-    "account required pam_unix.so" \
-    "session required pam_limits.so" \
-    "session required pam_mkhomedir.so skel=/etc/skel umask=0077" \
-    "session optional pam_unix.so" > /etc/pam.d/frdpd
+  if [[ "$FRDP_LIFECYCLE_PROVIDER" == samba ]]; then
+    configure_samba_identity
+    sssd_invocation=$(systemctl show --property=InvocationID --value sssd.service)
+    test -n "$sssd_invocation"
+  else
+    useradd --create-home --shell /bin/bash "$test_user"
+    printf "%s:%s\n" "$test_user" "$test_password" | chpasswd
+    printf "%s\n" \
+      "auth required pam_env.so" \
+      "auth required pam_unix.so try_first_pass" \
+      "account required pam_unix.so" \
+      "session required pam_limits.so" \
+      "session required pam_mkhomedir.so skel=/etc/skel umask=0077" \
+      "session optional pam_unix.so" > /etc/pam.d/frdpd
+  fi
   pam_hash=$(sha256sum /etc/pam.d/frdpd | cut -d" " -f1)
 
   echo "stage=start"
@@ -512,8 +707,8 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     -keyout /etc/frdpd/tls.key -out /etc/frdpd/tls.crt >/dev/null 2>&1
   chmod 0600 /etc/frdpd/tls.key
   chmod 0644 /etc/frdpd/tls.crt
-  printf "%s" "RdpPassw0rd!" | \
-    winpr-hash -u lifecycle --password-stdin -f sam > /etc/frdpd/ntlm.sam
+  printf "%s" "$test_password" | \
+    winpr-hash -u "$test_user" --password-stdin -f sam > /etc/frdpd/ntlm.sam
   chmod 0600 /etc/frdpd/ntlm.sam
   secret_hashes=$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)
   systemctl enable --now frdpd.service
@@ -619,6 +814,6 @@ docker exec -e DEBIAN_FRONTEND=noninteractive "$container" bash -Eeuo pipefail -
     "$secret_hashes"
   rm -rf /etc/frdpd
 
-  printf "base=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback\nactive_helper_crash=frdp-sesmand\ninflight_helper_crash=frdp-authd\nhelper_outage=frdp-authd,frdp-sesmand\nactive_transition=upgrade,rollback\nresult=pass\n" \
-    "$base_version" "$upgrade_version" "$base_version"
+  printf "provider=%s\nbase=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback\nactive_helper_crash=frdp-sesmand\ninflight_helper_crash=frdp-authd\nhelper_outage=frdp-authd,frdp-sesmand\nactive_transition=upgrade,rollback\nresult=pass\n" \
+    "$FRDP_LIFECYCLE_PROVIDER" "$base_version" "$upgrade_version" "$base_version"
 '

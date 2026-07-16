@@ -198,6 +198,21 @@ jobs:
             "$artifacts/systemd-lifecycle.txt"
           grep -Fxq "active_transition=upgrade,rollback" \
             "$artifacts/systemd-lifecycle.txt"
+          FRDP_LIFECYCLE_PROVIDER=samba \
+            server/frdp/test/TestFreeRDPFrdpDebianLifecycle.sh "$deb_path" |
+            tee "$artifacts/systemd-lifecycle-samba.txt"
+          grep -Fxq "provider=samba" \
+            "$artifacts/systemd-lifecycle-samba.txt"
+          grep -Fxq "auth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback" \
+            "$artifacts/systemd-lifecycle-samba.txt"
+          grep -Fxq "active_helper_crash=frdp-sesmand" \
+            "$artifacts/systemd-lifecycle-samba.txt"
+          grep -Fxq "inflight_helper_crash=frdp-authd" \
+            "$artifacts/systemd-lifecycle-samba.txt"
+          grep -Fxq "helper_outage=frdp-authd,frdp-sesmand" \
+            "$artifacts/systemd-lifecycle-samba.txt"
+          grep -Fxq "active_transition=upgrade,rollback" \
+            "$artifacts/systemd-lifecycle-samba.txt"
 
       - name: Upload Debian artifacts
         if: always()

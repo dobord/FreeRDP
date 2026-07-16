@@ -25,7 +25,7 @@ The root `debian/` directory contains minimal preview packaging for the server-o
   synthetic-upgrade, and rolled-back package versions. Separate held-session probes verify bounded
   client disconnect plus stale registry/agent cleanup during both package transitions before the
   post-transition login.
-- Remaining Debian work includes a complete source-package copyright audit, resolving or formally reviewing non-error lintian findings, package signing, SSSD-provider real-login and active-session validation against the installed package during upgrade/rollback, and validation of installed SELinux/AppArmor draft examples.
+- Remaining Debian work includes a complete source-package copyright audit, resolving or formally reviewing non-error lintian findings, package signing, additional provider/distribution coverage beyond the installed-package Samba AD/SSSD upgrade/rollback gate, and validation of installed SELinux/AppArmor draft examples.
 
 ## RPM packaging
 
@@ -102,10 +102,12 @@ Open reproducibility gaps:
   binary-package lintian run reports only the expected first-upload changelog
   warning after manuals and systemd documentation links were added for every
   packaged command.
-- Installed package validation does not yet prove AD/SSSD policy or real-client
-  sessions with an SSSD provider during package upgrade/rollback, nor enforcing
-  SELinux/AppArmor mode. Local PAM with an independent distro client is covered
-  at each package version.
+- Installed package validation now joins a package host to Samba AD, verifies
+  SSSD account and supplementary-group policy, and holds real-client sessions
+  across package upgrade/rollback. It proves bounded old-session cleanup, fresh
+  domain login/reconnect, and an unchanged SSSD service and machine join at each
+  package version. Other providers and enforcing SELinux/AppArmor mode remain
+  open; local PAM is covered independently at the same transitions.
 - Successful Debian and Fedora package-job history still needs to accumulate,
   and the current private-library approach still needs multi-architecture and
   upgrade compatibility evidence.
