@@ -153,10 +153,14 @@ to `/run/frdp-sesmand` plus `/run/frdp-auth-token`. It also sets
 `frdp-session-agent` launches can also receive configured POSIX
 `RLIMIT_NPROC` and `RLIMIT_AS` guards. Optional fail-closed transient
 per-session scopes add cgroup process ownership, accounting, `TasksMax`,
-`MemoryMax`, and optional static CPU capacity through `CPUQuotaPerSecUSec`; a root/systemd-gated test verifies D-Bus reconnection, confirmed
-unit activation, the cgroup of both the agent and a detached descendant,
-metadata-driven restart cleanup, and unit collection. systemd-logind registration, PAM-handle reconciliation,
-and production dynamic quota management remain open.
+`MemoryMax`, and CPU capacity through `CPUQuotaPerSecUSec`; a
+root/systemd-gated test verifies D-Bus reconnection, confirmed unit activation,
+finite and unlimited property updates, the cgroup of both the agent and a
+detached descendant, metadata-driven restart cleanup, and unit collection.
+Config reload updates all existing scoped sessions as a rollback-protected
+batch; inability to restore the previous limits stops the manager for normal
+session cleanup. systemd-logind registration, PAM-handle reconciliation, and
+an individual per-session runtime quota API remain open.
 
 ## Package signing and reproducible builds
 

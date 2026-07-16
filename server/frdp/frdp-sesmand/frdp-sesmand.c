@@ -1386,6 +1386,31 @@ static int apply_sesmand_policy(const char* pam_service,
 		return -1;
 	if (resource_policy->systemd_scope && (frdp_sesmand_scope_manager_init(&g_scope_manager) != 0))
 		return -1;
+	if ((resource_policy->max_processes != g_session_resource_policy.max_processes) ||
+	    (resource_policy->memory_max_mb != g_session_resource_policy.memory_max_mb) ||
+	    (resource_policy->cpu_quota_percent != g_session_resource_policy.cpu_quota_percent))
+	{
+		for (int idx = 0; idx < session_count; idx++)
+		{
+			if (sessions[idx].scope_name[0] == '\0')
+				continue;
+			if (frdp_sesmand_scope_update(&g_scope_manager, sessions[idx].scope_name,
+			                              resource_policy) != 0)
+			{
+				for (int rollback = 0; rollback <= idx; rollback++)
+				{
+					if ((sessions[rollback].scope_name[0] != '\0') &&
+					    (frdp_sesmand_scope_update(&g_scope_manager, sessions[rollback].scope_name,
+					                               &g_session_resource_policy) != 0))
+					{
+						g_stop_requested = 1;
+						return -2;
+					}
+				}
+				return -3;
+			}
+		}
+	}
 	if (set_pam_service_name(pam_service) != 0)
 		return -1;
 	g_session_resource_policy = *resource_policy;
@@ -1417,12 +1442,21 @@ static int reload_configured_sesmand_policy(char *error, size_t error_size)
             snprintf(error, error_size, "%s", "config reload failed");
         return -1;
 	}
-	if (apply_sesmand_policy(pam_service, &resource_policy, &heartbeat_policy, &display_policy) !=
-	    0)
+	const int apply_rc =
+	    apply_sesmand_policy(pam_service, &resource_policy, &heartbeat_policy, &display_policy);
+	if (apply_rc != 0)
 	{
 		if (error && error_size > 0)
-            snprintf(error, error_size, "%s", "invalid session policy");
-        return -1;
+		{
+			const char* message = "invalid session policy";
+
+			if (apply_rc == -2)
+				message = "scope rollback failed; manager stopping";
+			else if (apply_rc == -3)
+				message = "scope limit update failed";
+			snprintf(error, error_size, "%s", message);
+		}
+		return -1;
 	}
 	return 0;
 }

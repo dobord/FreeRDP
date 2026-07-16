@@ -330,6 +330,51 @@ cleanup:
 	return (rc < 0) ? -1 : 0;
 }
 
+int frdp_sesmand_scope_update(frdpSesmandScopeManager* manager, const char* name,
+                              const frdpSessionResourcePolicy* policy)
+{
+	sd_bus_error error = SD_BUS_ERROR_NULL;
+	sd_bus_message* message = NULL;
+	sd_bus_message* reply = NULL;
+	uint64_t tasks_max = 0;
+	uint64_t memory_max = 0;
+	uint64_t cpu_quota_per_sec_usec = 0;
+	int rc = -1;
+
+	if (!manager || !scope_name_is_valid(name) ||
+	    (frdp_sesmand_scope_limits(policy, &tasks_max, &memory_max, &cpu_quota_per_sec_usec) !=
+	     0) ||
+	    (frdp_sesmand_scope_manager_init(manager) != 0))
+		return -1;
+	if (tasks_max == 0U)
+		tasks_max = UINT64_MAX;
+	if (memory_max == 0U)
+		memory_max = UINT64_MAX;
+	if (cpu_quota_per_sec_usec == 0U)
+		cpu_quota_per_sec_usec = UINT64_MAX;
+	rc = sd_bus_message_new_method_call((sd_bus*)manager->bus, &message, "org.freedesktop.systemd1",
+	                                    "/org/freedesktop/systemd1",
+	                                    "org.freedesktop.systemd1.Manager", "SetUnitProperties");
+	if (rc < 0)
+		goto cleanup;
+	if ((rc = sd_bus_message_append(message, "sb", name, 1)) < 0 ||
+	    (rc = sd_bus_message_open_container(message, SD_BUS_TYPE_ARRAY, "(sv)")) < 0 ||
+	    (rc = append_uint64_property(message, "TasksMax", tasks_max)) < 0 ||
+	    (rc = append_uint64_property(message, "MemoryMax", memory_max)) < 0 ||
+	    (rc = append_uint64_property(message, "CPUQuotaPerSecUSec", cpu_quota_per_sec_usec)) < 0 ||
+	    (rc = sd_bus_message_close_container(message)) < 0)
+		goto cleanup;
+	rc = sd_bus_call((sd_bus*)manager->bus, message, FRDP_SYSTEMD_BUS_TIMEOUT_USEC, &error, &reply);
+
+cleanup:
+	sd_bus_error_free(&error);
+	sd_bus_message_unref(reply);
+	sd_bus_message_unref(message);
+	if (rc < 0)
+		frdp_sesmand_scope_manager_uninit(manager);
+	return (rc < 0) ? -1 : 0;
+}
+
 static int cgroup_is_empty_or_missing(const char* path)
 {
 	char events_path[PATH_MAX] = { 0 };

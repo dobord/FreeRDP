@@ -461,6 +461,28 @@ static int test_session_scope(void)
 	    !output_has_line(properties, "CPUQuotaPerSecUSec=250ms") ||
 	    !process_is_in_scope(child, scope_name))
 		goto cleanup;
+	stage = "finite property update";
+	policy.max_processes = 19;
+	policy.memory_max_mb = 96;
+	policy.cpu_quota_percent = 50;
+	memset(properties, 0, sizeof(properties));
+	if ((frdp_sesmand_scope_update(&manager, scope_name, &policy) != 0) ||
+	    (run_command(show_argv, properties, sizeof(properties)) != 0) ||
+	    !output_has_line(properties, "TasksMax=19") ||
+	    !output_has_line(properties, "MemoryMax=100663296") ||
+	    !output_has_line(properties, "CPUQuotaPerSecUSec=500ms"))
+		goto cleanup;
+	stage = "unlimited property update";
+	policy.max_processes = 0;
+	policy.memory_max_mb = 0;
+	policy.cpu_quota_percent = 0;
+	memset(properties, 0, sizeof(properties));
+	if ((frdp_sesmand_scope_update(&manager, scope_name, &policy) != 0) ||
+	    (run_command(show_argv, properties, sizeof(properties)) != 0) ||
+	    !output_has_line(properties, "TasksMax=infinity") ||
+	    !output_has_line(properties, "MemoryMax=infinity") ||
+	    !output_has_line(properties, "CPUQuotaPerSecUSec=infinity"))
+		goto cleanup;
 	stage = "detached descendant";
 	if ((test_write_exact(launch_pipe[1], &launch_marker, 1U) != 0) ||
 	    (test_read_exact(status_pipe[0], &detached_child, sizeof(detached_child)) != 0) ||

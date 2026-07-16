@@ -260,6 +260,11 @@ static int test_session_resource_policy(void)
 	if ((config.session_resources.systemd_scope != 1) ||
 	    (config.session_resources.cpu_quota_percent != 250))
 		return -1;
+	if (load_config_body("frdp-session-systemd-scope-max-cpu.toml",
+	                     "[session]\nsystemd_scope = true\ncpu_quota_percent = 10000\n",
+	                     &config) != 0 ||
+	    config.session_resources.cpu_quota_percent != 10000)
+		return -1;
 	if (load_config_body("frdp-session-resource-unlimited.toml",
 	                     "[session]\nmax_sessions = 0\nmax_processes = 0\nmemory_max_mb = 0\n"
 	                     "cpu_quota_percent = 0\nsystemd_scope = false\n",

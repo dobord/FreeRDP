@@ -200,10 +200,13 @@ each child behind a launch barrier while it creates a transient `frdp-session-<u
 child PID into it, maps the same limits to `TasksMax` and `MemoryMax`, applies an optional static
 `CPUQuotaPerSecUSec`, and confirms active state. Startup,
 reload, asynchronous unit creation, and session creation fail closed when requested ownership cannot be
-established. Durable metadata drives restart cleanup; stale bus handles reconnect, and bounded stop falls
-back to cgroup-v2 `cgroup.kill` plus the process-group guard. Leave the setting disabled
-without a system manager/system bus. systemd-logind registration, lost-PAM-handle reconciliation, and
-production dynamic quota management remain open.
+established. Reloaded process, memory, and CPU limits are applied as one rollback-protected batch to all
+existing scoped sessions; a rollback failure stops the manager so normal cleanup closes the sessions.
+Existing non-scoped sessions retain their POSIX limits, and scope ownership itself remains a launch-time
+choice. Durable metadata drives restart cleanup; stale bus handles reconnect, and bounded stop falls back
+to cgroup-v2 `cgroup.kill` plus the process-group guard. Leave the setting disabled without a system
+manager/system bus. systemd-logind registration, lost-PAM-handle reconciliation, and an individual
+per-session runtime quota API remain open.
 
 SELinux and AppArmor draft profiles install as inactive examples under `/usr/share/frdpd/security`. They are
 not loaded automatically and must be reviewed, adapted, and validated for the target distribution before use.

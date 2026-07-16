@@ -151,7 +151,7 @@ static int test_session_capacity_policy(void)
 
 static int test_systemd_scope_policy(void)
 {
-	const frdpSessionResourcePolicy policy = {
+	frdpSessionResourcePolicy policy = {
 		.max_processes = 77, .memory_max_mb = 1536, .cpu_quota_percent = 250, .systemd_scope = 1
 	};
 	char name[FRDP_SESMAND_SCOPE_NAME_SIZE] = { 0 };
@@ -166,6 +166,18 @@ static int test_systemd_scope_policy(void)
 	     0) ||
 	    (tasks_max != 77U) || (memory_max != 1536ULL * 1024ULL * 1024ULL) ||
 	    (cpu_quota_per_sec_usec != 2500000ULL))
+		return -1;
+	policy.cpu_quota_percent = 10000;
+	if ((frdp_sesmand_scope_limits(&policy, &tasks_max, &memory_max, &cpu_quota_per_sec_usec) !=
+	     0) ||
+	    (cpu_quota_per_sec_usec != 100000000ULL))
+		return -1;
+	policy.max_processes = 0;
+	policy.memory_max_mb = 0;
+	policy.cpu_quota_percent = 0;
+	if ((frdp_sesmand_scope_limits(&policy, &tasks_max, &memory_max, &cpu_quota_per_sec_usec) !=
+	     0) ||
+	    (tasks_max != 0U) || (memory_max != 0U) || (cpu_quota_per_sec_usec != 0U))
 		return -1;
 	if ((frdp_sesmand_scope_name("01234567-89AB-cdef-0123-456789abcdef", name, sizeof(name)) ==
 	     0) ||
