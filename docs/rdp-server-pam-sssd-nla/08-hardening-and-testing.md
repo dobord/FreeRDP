@@ -151,8 +151,12 @@ restrictions, `SystemCallArchitectures=native`, and explicit write access only
 to `/run/frdp-sesmand` plus `/run/frdp-auth-token`. It also sets
 `TasksMax=4096` as a coarse daemon-wide process-count guard. Per-session
 `frdp-session-agent` launches can also receive configured POSIX
-`RLIMIT_NPROC` and `RLIMIT_AS` guards, while systemd-logind scope ownership,
-cgroup CPU/memory accounting, and production quota management remain open.
+`RLIMIT_NPROC` and `RLIMIT_AS` guards. Optional fail-closed transient
+per-session scopes add cgroup process ownership, accounting, `TasksMax`, and
+`MemoryMax`; a root/systemd-gated test verifies D-Bus reconnection, confirmed
+unit activation, the cgroup of both the agent and a detached descendant,
+metadata-driven restart cleanup, and unit collection. systemd-logind registration, PAM-handle reconciliation, CPU quotas,
+and production dynamic quota management remain open.
 
 ## Package signing and reproducible builds
 

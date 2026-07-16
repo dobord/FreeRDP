@@ -9,7 +9,8 @@ authoritative status and required evidence are tracked in
 - Debian 12 and Ubuntu Server 24.04 LTS;
 - Ubuntu Server 22.04 LTS after separate dependency review;
 - RHEL 9 compatible distributions;
-- systemd, journald, logind;
+- systemd, journald, logind, and a system D-Bus daemon for optional transient
+  per-session scope ownership;
 - PAM, SSSD, MIT Kerberos or Heimdal according to the build matrix;
 - SELinux or AppArmor profile review before enforcement.
 

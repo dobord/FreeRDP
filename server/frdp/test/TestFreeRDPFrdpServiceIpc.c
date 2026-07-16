@@ -3412,56 +3412,79 @@ cleanup:
 static int test_sesmand_component(void)
 {
 	frdpTestHelper helper;
+	const char* stage = "start";
 	int rc = -1;
 
 	if (start_helper(FRDP_SESMAND_BINARY, "frdp-sesmand-component", &helper) != 0)
 		return -1;
+	stage = "health";
 	if (test_helper_health(helper.socket_path, "frdp-sesmand") != 0)
 		goto cleanup;
+	stage = "empty list";
 	if (test_sesmand_list_empty(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "unknown session";
 	if (test_sesmand_rejects_unknown_session(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "unknown disconnect session";
 	if (test_sesmand_rejects_unknown_disconnect_session(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "unterminated request";
 	if (test_sesmand_rejects_unterminated_request(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "legacy v1 open";
 	if (test_sesmand_rejects_legacy_v1_open_request(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "legacy v2 missing account";
 	if (test_sesmand_rejects_legacy_v2_missing_posix_account(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "legacy v2 account mismatch";
 	if (test_sesmand_rejects_legacy_v2_posix_account_mismatch(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "missing authorization";
 	if (test_sesmand_rejects_missing_authorization(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "explicit reconnect authorization";
 	if (test_sesmand_requires_authorization_for_explicit_reconnect(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "invalid authorization";
 	if (test_sesmand_rejects_invalid_authorization(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "bad length";
 	if (test_sesmand_rejects_bad_length(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "oversized payload";
 	if (test_sesmand_rejects_oversized_payload(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "truncated clients";
 	if (test_sesmand_survives_truncated_clients(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "slow complete client";
 	if (test_sesmand_handles_slow_complete_client(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "concurrent requests";
 	if (run_concurrent_requests(helper.socket_path, test_sesmand_list_empty,
 	                            FRDP_IPC_CONCURRENT_CLIENTS) != 0)
 		goto cleanup;
+	stage = "reload payload";
 	if (test_sesmand_rejects_reload_payload(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "reload";
 	if (test_sesmand_reload(helper.socket_path, 1, "accepted", NULL) != 0)
 		goto cleanup;
 	/* A final list request proves the registry and service loop remained healthy. */
+	stage = "post-reload list";
 	if (test_sesmand_list_empty(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "health rate limit";
 	if ((test_helper_health_rate_limit(helper.socket_path, "frdp-sesmand") != 0) ||
 	    (test_sesmand_list_empty(helper.socket_path) != 0))
 		goto cleanup;
 	rc = 0;
 
 cleanup:
+	if (rc != 0)
+		fprintf(stderr, "sesmand component test failed at stage: %s\n", stage);
 	if (stop_helper(&helper) != 0)
 		rc = -1;
 	return rc;

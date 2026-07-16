@@ -55,6 +55,7 @@ typedef struct {
     uint32_t max_sessions;
     uint32_t max_processes;
     uint32_t memory_max_mb;
+    int systemd_scope;
 } frdpSessionResourcePolicy;
 
 typedef struct {

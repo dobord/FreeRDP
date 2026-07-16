@@ -32,13 +32,13 @@ static int metadata_matches(const frdpSesmandSessionMetadata* left,
 {
 	return left && right && (strcmp(left->session_id, right->session_id) == 0) &&
 	       (left->uid == right->uid) && (left->agent_pid == right->agent_pid) &&
-	       (left->pgid == right->pgid) &&
-	       (left->agent_start_ticks == right->agent_start_ticks) &&
+	       (left->pgid == right->pgid) && (left->agent_start_ticks == right->agent_start_ticks) &&
 	       (left->state == right->state) && (left->display_number == right->display_number) &&
 	       (left->agent_socket_dev == right->agent_socket_dev) &&
 	       (left->agent_socket_ino == right->agent_socket_ino) &&
 	       (left->display_reservation_dev == right->display_reservation_dev) &&
-	       (left->display_reservation_ino == right->display_reservation_ino);
+	       (left->display_reservation_ino == right->display_reservation_ino) &&
+	       (left->systemd_scope == right->systemd_scope);
 }
 
 static int visit_metadata(const frdpSesmandSessionMetadata* metadata, uint64_t file_dev,
@@ -81,6 +81,7 @@ static int test_metadata_store(void)
 	uint64_t first_ino = 0;
 	uint64_t second_dev = 0;
 	uint64_t second_ino = 0;
+	int metadata_fd = -1;
 	int rc = -1;
 
 	if (make_test_dir(dir, sizeof(dir)) != 0)
@@ -98,6 +99,7 @@ static int test_metadata_store(void)
 	metadata.agent_socket_ino = 12;
 	metadata.display_reservation_dev = 13;
 	metadata.display_reservation_ino = 14;
+	metadata.systemd_scope = 1;
 	if (!frdp_sesmand_session_metadata_is_valid(&metadata) ||
 	    (frdp_sesmand_session_metadata_filename(filename, sizeof(filename), session_id) != 0) ||
 	    (snprintf(path, sizeof(path), "%s/%s", dir, filename) >= (int)sizeof(path)))
@@ -105,6 +107,18 @@ static int test_metadata_store(void)
 	if (frdp_sesmand_session_metadata_save(dir, &metadata, &first_dev, &first_ino) !=
 	    FRDP_SESMAND_SESSION_METADATA_SAVE_COMMITTED)
 		goto out;
+	visit.expected = &metadata;
+	if ((frdp_sesmand_session_metadata_visit(dir, visit_metadata, &visit) != 0) ||
+	    (visit.count != 1) || (visit.file_dev != first_dev) || (visit.file_ino != first_ino))
+		goto out;
+	metadata_fd = open(path, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+	if ((metadata_fd < 0) || (pwrite(metadata_fd, "\1\0\0\0", 4U, 8) != 4) ||
+	    (pwrite(metadata_fd, "\0", 1U, 53) != 1) || (fsync(metadata_fd) != 0) ||
+	    (close(metadata_fd) != 0))
+		goto out;
+	metadata_fd = -1;
+	metadata.systemd_scope = 0;
+	memset(&visit, 0, sizeof(visit));
 	visit.expected = &metadata;
 	if ((frdp_sesmand_session_metadata_visit(dir, visit_metadata, &visit) != 0) ||
 	    (visit.count != 1) || (visit.file_dev != first_dev) || (visit.file_ino != first_ino))
@@ -151,6 +165,8 @@ static int test_metadata_store(void)
 	rc = 0;
 
 out:
+	if (metadata_fd >= 0)
+		close(metadata_fd);
 	unlink(temp_path);
 	unlink(path);
 	if (dir[0] != '\0')

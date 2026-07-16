@@ -29,6 +29,9 @@ session_socket = "/run/frdp-sesmand/sesmand.sock"
 # Optional POSIX guards for new session-agent children; 0 or omission means unlimited.
 # max_processes = 256
 # memory_max_mb = 4096
+# Also apply those limits through a transient per-session systemd scope.
+# Keep false where no system manager/system bus is available.
+# systemd_scope = false
 # agent_heartbeat_interval_ms = 5000
 # agent_heartbeat_timeout_ms = 500
 # agent_heartbeat_failures = 3
@@ -189,8 +192,15 @@ For `sesmand`, restrictions intentionally account for PAM, logind, user session 
 directories. The shipped unit keeps `PrivateTmp=true`, `ProtectSystem=full`, kernel/log/clock/hostname/realtime/personality
 restrictions, `SystemCallArchitectures=native`, and explicit write access only to `/run/frdp-sesmand` plus
 `/run/frdp-auth-token`. It also sets `TasksMax=4096` as a baseline process-count guard for the session
-manager and its launched desktop agent process groups; this is not a substitute for the remaining
-logind/cgroup ownership and CPU/memory quota work.
+manager and its launched desktop agent process groups. Per-session agents always receive configured
+POSIX `RLIMIT_NPROC` and `RLIMIT_AS` guards. With `[session].systemd_scope = true`, the manager holds
+each child behind a launch barrier while it creates a transient `frdp-session-<uuid>.scope`, moves the
+child PID into it, maps the same limits to `TasksMax` and `MemoryMax`, and confirms active state. Startup,
+reload, asynchronous unit creation, and session creation fail closed when requested ownership cannot be
+established. Durable metadata drives restart cleanup; stale bus handles reconnect, and bounded stop falls
+back to cgroup-v2 `cgroup.kill` plus the process-group guard. Leave the setting disabled
+without a system manager/system bus. systemd-logind registration, lost-PAM-handle reconciliation, CPU
+quotas, and production dynamic quota management remain open.
 
 SELinux and AppArmor draft profiles install as inactive examples under `/usr/share/frdpd/security`. They are
 not loaded automatically and must be reviewed, adapted, and validated for the target distribution before use.

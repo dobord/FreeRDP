@@ -124,7 +124,7 @@ static int test_reused_pid_metadata_does_not_signal_current_process(void)
 	metadata.display_reservation_ino = (uint64_t)reservation_stat.st_ino;
 	if ((frdp_sesmand_session_metadata_save(dir, &metadata, &metadata_dev, &metadata_ino) !=
 	     FRDP_SESMAND_SESSION_METADATA_SAVE_COMMITTED) ||
-	    (frdp_sesmand_session_reconcile_all(dir) != 0) || (kill(getpid(), 0) != 0) ||
+	    (frdp_sesmand_session_reconcile_all(dir, NULL) != 0) || (kill(getpid(), 0) != 0) ||
 	    (access(socket_path, F_OK) == 0) || (access(reservation_path, F_OK) == 0) ||
 	    (access(metadata_path, F_OK) == 0))
 		goto out;

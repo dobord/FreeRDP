@@ -34,11 +34,14 @@ display_backend = "xvfb"
 # Optional cap on all sessions managed by frdp-sesmand, including disconnected
 # sessions retained for reconnect. 0 or omission means unlimited.
 # max_sessions = 64
-# Optional POSIX resource-limit guard applied by frdp-sesmand to newly launched
-# session agents before exec. 0 or omission means unlimited; cgroup/logind
-# ownership remains a separate production hardening milestone.
+# Optional POSIX resource-limit guards for newly launched session agents.
+# With systemd_scope=true the same values also become TasksMax/MemoryMax.
+# 0 or omission means unlimited.
 # max_processes = 256
 # memory_max_mb = 4096
+# Place each new desktop agent and its descendants in a fail-closed transient
+# systemd scope before exec. Keep false without a usable system manager/bus.
+# systemd_scope = false
 # agent_heartbeat_interval_ms = 5000
 # agent_heartbeat_timeout_ms = 500
 # agent_heartbeat_failures = 3

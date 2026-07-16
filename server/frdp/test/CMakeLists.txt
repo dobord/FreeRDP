@@ -106,6 +106,8 @@ add_executable(${MODULE_NAME}
     ../frdp-sesmand/session_recovery.h
     ../frdp-sesmand/session_resources.c
     ../frdp-sesmand/session_resources.h
+    ../frdp-sesmand/session_scope.c
+    ../frdp-sesmand/session_scope.h
     ../frdp-sesmand/session_state.c
     ../frdp-sesmand/session_state.h)
 add_dependencies(${MODULE_NAME} frdpd frdpctl frdp-authd frdp-authd-test-deny frdp-sesmand
@@ -120,8 +122,9 @@ if(WITH_FRDPD_NTLM AND TARGET winpr-hash)
 endif()
 
 target_include_directories(${MODULE_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_include_directories(${MODULE_NAME} SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
-target_link_libraries(${MODULE_NAME} PRIVATE winpr ${PAM_LIBRARIES} ${UUID_LIBRARY})
+target_include_directories(${MODULE_NAME} SYSTEM PRIVATE ${PAM_INCLUDE_DIR} ${LIBSYSTEMD_INCLUDE_DIRS})
+target_link_libraries(${MODULE_NAME} PRIVATE winpr ${PAM_LIBRARIES} ${UUID_LIBRARY}
+                                             ${LIBSYSTEMD_LIBRARIES})
 if(HAVE_PAM_PAM_APPL_H)
   target_compile_definitions(${MODULE_NAME} PRIVATE HAVE_PAM_PAM_APPL_H)
 endif()

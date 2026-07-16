@@ -23,6 +23,7 @@ typedef struct
 	uint64_t agent_socket_ino;
 	uint64_t display_reservation_dev;
 	uint64_t display_reservation_ino;
+	int systemd_scope;
 } frdpSesmandSessionMetadata;
 
 typedef int (*frdpSesmandSessionMetadataVisitor)(const frdpSesmandSessionMetadata* metadata,

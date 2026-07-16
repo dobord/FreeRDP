@@ -455,6 +455,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_session_max_sessions = 0;
     int seen_session_max_processes = 0;
     int seen_session_memory_max_mb = 0;
+    int seen_session_systemd_scope = 0;
     int seen_session_heartbeat_interval_ms = 0;
     int seen_session_heartbeat_timeout_ms = 0;
     int seen_session_heartbeat_failures = 0;
@@ -593,6 +594,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
                                      ((strcmp(key, "max_processes") == 0) ||
                                        (strcmp(key, "max_sessions") == 0) ||
                                        (strcmp(key, "memory_max_mb") == 0) ||
+                                       (strcmp(key, "systemd_scope") == 0) ||
                                        (strcmp(key, "agent_heartbeat_interval_ms") == 0) ||
                                        (strcmp(key, "agent_heartbeat_timeout_ms") == 0) ||
                                        (strcmp(key, "agent_heartbeat_failures") == 0))) ||
@@ -835,6 +837,18 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 }
                 seen_session_memory_max_mb = 1;
                 if (parse_uint32_limit(val, &config->session_resources.memory_max_mb) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "systemd_scope") == 0)
+            {
+                if (seen_session_systemd_scope) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_session_systemd_scope = 1;
+                if (parse_bool_value(val, &config->session_resources.systemd_scope) != 0) {
                     fclose(f);
                     return -1;
                 }

@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cmake \
         coreutils \
         curl \
+        dbus \
         dnsutils \
         gawk \
         grep \
@@ -51,6 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         sssd-krb5 \
         sssd-ldap \
         sssd-tools \
+        libsystemd-dev \
         util-linux \
         uuid-dev \
         x11-apps \

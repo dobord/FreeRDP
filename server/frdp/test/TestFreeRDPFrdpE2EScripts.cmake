@@ -744,7 +744,7 @@ foreach(expected
 endforeach()
 
 file(READ "${frdp_repo_root}/debian/control" frdp_debian_control)
-foreach(expected "libicu-dev")
+foreach(expected "libicu-dev" "dbus")
   expect_contains("${frdp_debian_control}" "${expected}" "FRDP Debian control")
 endforeach()
 
@@ -832,6 +832,7 @@ file(READ "${frdp_repo_root}/packaging/rpm/frdpd.spec" frdp_rpm_spec)
 foreach(expected
         "BuildRequires: pkgconf-pkg-config, zlib-devel, cjson-devel, libicu-devel"
         "BuildRequires: libjpeg-turbo-devel, libpng-devel"
+        "Requires: dbus, pam, sssd"
         "%global __provides_exclude_from ^%{_libdir}/frdpd/.*$"
         "%global __requires_exclude ^(libfreerdp3|libfreerdp-server3|libwinpr3|libwinpr-tools3)"
         "-DWITH_FRDPD=ON"

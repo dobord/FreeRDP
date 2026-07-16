@@ -1,8 +1,10 @@
 #include "frdp-sesmand/session_resources.h"
+#include "frdp-sesmand/session_scope.h"
 
 #include <errno.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 
 typedef struct
 {
@@ -147,6 +149,31 @@ static int test_session_capacity_policy(void)
 	return 0;
 }
 
+static int test_systemd_scope_policy(void)
+{
+	const frdpSessionResourcePolicy policy = { .max_processes = 77,
+		                                       .memory_max_mb = 1536,
+		                                       .systemd_scope = 1 };
+	char name[FRDP_SESMAND_SCOPE_NAME_SIZE] = { 0 };
+	uint64_t tasks_max = 0;
+	uint64_t memory_max = 0;
+
+	if (frdp_sesmand_scope_name("01234567-89ab-cdef-0123-456789abcdef", name, sizeof(name)) != 0 ||
+	    strcmp(name, "frdp-session-01234567-89ab-cdef-0123-456789abcdef.scope") != 0)
+		return -1;
+	if ((frdp_sesmand_scope_limits(&policy, &tasks_max, &memory_max) != 0) || (tasks_max != 77U) ||
+	    (memory_max != 1536ULL * 1024ULL * 1024ULL))
+		return -1;
+	if ((frdp_sesmand_scope_name("01234567-89AB-cdef-0123-456789abcdef", name, sizeof(name)) ==
+	     0) ||
+	    (frdp_sesmand_scope_name("../invalid", name, sizeof(name)) == 0) ||
+	    (frdp_sesmand_scope_name("01234567-89ab-cdef-0123-456789abcdef", name, 8U) == 0) ||
+	    (frdp_sesmand_scope_limits(NULL, &tasks_max, &memory_max) == 0) ||
+	    (frdp_sesmand_scope_limits(&policy, NULL, &memory_max) == 0))
+		return -1;
+	return 0;
+}
+
 int TestFreeRDPFrdpSessionResources(int argc, char* argv[])
 {
 	(void)argc;
@@ -185,6 +212,11 @@ int TestFreeRDPFrdpSessionResources(int argc, char* argv[])
 	if (test_session_capacity_policy() != 0)
 	{
 		fprintf(stderr, "session capacity policy test failed\n");
+		return -1;
+	}
+	if (test_systemd_scope_policy() != 0)
+	{
+		fprintf(stderr, "systemd scope policy test failed\n");
 		return -1;
 	}
 	return 0;

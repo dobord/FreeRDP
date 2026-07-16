@@ -68,14 +68,14 @@ static int session_id_is_valid(const char* session_id)
 
 int frdp_sesmand_session_metadata_is_valid(const frdpSesmandSessionMetadata* metadata)
 {
-	if (!metadata || !session_id_is_valid(metadata->session_id) ||
-	    (metadata->uid == (uid_t)-1) || (metadata->agent_pid <= 1) ||
-	    (metadata->pgid != metadata->agent_pid) || (metadata->agent_start_ticks == 0) ||
+	if (!metadata || !session_id_is_valid(metadata->session_id) || (metadata->uid == (uid_t)-1) ||
+	    (metadata->agent_pid <= 1) || (metadata->pgid != metadata->agent_pid) ||
+	    (metadata->agent_start_ticks == 0) ||
 	    !frdp_sesmand_session_state_is_valid(metadata->state) ||
 	    !frdp_sesmand_display_number_is_valid(metadata->display_number) ||
 	    (metadata->agent_socket_dev == 0) || (metadata->agent_socket_ino == 0) ||
-	    (metadata->display_reservation_dev == 0) ||
-	    (metadata->display_reservation_ino == 0))
+	    (metadata->display_reservation_dev == 0) || (metadata->display_reservation_ino == 0) ||
+	    ((metadata->systemd_scope != 0) && (metadata->systemd_scope != 1)))
 		return 0;
 	return 1;
 }
@@ -184,9 +184,10 @@ static void metadata_encode(const frdpSesmandSessionMetadata* metadata,
 {
 	memset(wire, 0, FRDP_SESMAND_SESSION_METADATA_WIRE_SIZE);
 	memcpy(wire, METADATA_MAGIC, sizeof(METADATA_MAGIC));
-	write_u32_le(&wire[8], 1U);
+	write_u32_le(&wire[8], 2U);
 	write_u32_le(&wire[12], FRDP_SESMAND_SESSION_METADATA_WIRE_SIZE);
 	memcpy(&wire[16], metadata->session_id, sizeof(metadata->session_id));
+	wire[53] = metadata->systemd_scope ? 1U : 0U;
 	write_u64_le(&wire[56], (uint64_t)metadata->uid);
 	write_u64_le(&wire[64], (uint64_t)metadata->agent_pid);
 	write_u64_le(&wire[72], (uint64_t)metadata->pgid);
@@ -207,18 +208,19 @@ static int metadata_decode(const unsigned char wire[FRDP_SESMAND_SESSION_METADAT
 	const uint64_t pgid_value = read_u64_le(&wire[72]);
 	const uint32_t state_value = read_u32_le(&wire[88]);
 	const uint32_t display_value = read_u32_le(&wire[92]);
+	const uint32_t version = read_u32_le(&wire[8]);
 	uid_t uid = (uid_t)uid_value;
 	pid_t pid = (pid_t)pid_value;
 	pid_t pgid = (pid_t)pgid_value;
 
 	if (!metadata || (memcmp(wire, METADATA_MAGIC, sizeof(METADATA_MAGIC)) != 0) ||
-	    (read_u32_le(&wire[8]) != 1U) ||
+	    ((version != 1U) && (version != 2U)) ||
 	    (read_u32_le(&wire[12]) != FRDP_SESMAND_SESSION_METADATA_WIRE_SIZE) ||
-	    (wire[FRDP_SESMAND_SESSION_ID_SIZE + 15U] != '\0') || (wire[53] != 0) ||
-	    (wire[54] != 0) || (wire[55] != 0) || ((uint64_t)uid != uid_value) ||
-	    (pid <= 1) || ((uint64_t)pid != pid_value) || (pgid <= 1) ||
-	    ((uint64_t)pgid != pgid_value) || (state_value > (uint32_t)INT32_MAX) ||
-	    (display_value > (uint32_t)INT32_MAX))
+	    (wire[FRDP_SESMAND_SESSION_ID_SIZE + 15U] != '\0') ||
+	    ((version == 1U) && (wire[53] != 0)) || ((version == 2U) && (wire[53] > 1U)) ||
+	    (wire[54] != 0) || (wire[55] != 0) || ((uint64_t)uid != uid_value) || (pid <= 1) ||
+	    ((uint64_t)pid != pid_value) || (pgid <= 1) || ((uint64_t)pgid != pgid_value) ||
+	    (state_value > (uint32_t)INT32_MAX) || (display_value > (uint32_t)INT32_MAX))
 		return -1;
 
 	memset(metadata, 0, sizeof(*metadata));
@@ -233,6 +235,7 @@ static int metadata_decode(const unsigned char wire[FRDP_SESMAND_SESSION_METADAT
 	metadata->agent_socket_ino = read_u64_le(&wire[104]);
 	metadata->display_reservation_dev = read_u64_le(&wire[112]);
 	metadata->display_reservation_ino = read_u64_le(&wire[120]);
+	metadata->systemd_scope = (version == 2U) ? wire[53] : 0;
 	return frdp_sesmand_session_metadata_is_valid(metadata) ? 0 : -1;
 }
 

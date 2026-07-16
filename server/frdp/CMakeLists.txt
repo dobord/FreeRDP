@@ -4,6 +4,7 @@
 find_package(PAM REQUIRED)
 find_package(X11 REQUIRED)
 find_package(Threads REQUIRED)
+find_package(libsystemd REQUIRED)
 
 if(NOT WITH_SERVER_CHANNELS OR NOT CHANNEL_DRDYNVC_SERVER OR NOT CHANNEL_DISP_SERVER OR NOT CHANNEL_CLIPRDR_SERVER)
   message(FATAL_ERROR "WITH_FRDPD requires the drdynvc, disp, and cliprdr server channels")
@@ -119,13 +120,16 @@ add_executable(frdp-sesmand
     frdp-sesmand/session_recovery.h
     frdp-sesmand/session_resources.c
     frdp-sesmand/session_resources.h
+    frdp-sesmand/session_scope.c
+    frdp-sesmand/session_scope.h
     frdp-sesmand/session_state.c
     frdp-sesmand/session_state.h
     config/frdp-config.c
     config/frdp-config.h
     $<TARGET_OBJECTS:frdp-ipc>)
-target_include_directories(frdp-sesmand SYSTEM PRIVATE ${PAM_INCLUDE_DIR})
-target_link_libraries(frdp-sesmand PRIVATE winpr ${PAM_LIBRARIES} ${UUID_LIBRARY})
+target_include_directories(frdp-sesmand SYSTEM PRIVATE ${PAM_INCLUDE_DIR} ${LIBSYSTEMD_INCLUDE_DIRS})
+target_link_libraries(frdp-sesmand PRIVATE winpr ${PAM_LIBRARIES} ${UUID_LIBRARY}
+                                             ${LIBSYSTEMD_LIBRARIES})
 frdp_apply_strict_warnings(frdp-sesmand)
 installwithrpath(TARGETS frdp-sesmand DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)
 set_property(TARGET frdp-sesmand PROPERTY FOLDER "Server/frdp")

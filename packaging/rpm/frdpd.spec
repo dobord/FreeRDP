@@ -17,7 +17,7 @@ BuildRequires: libjpeg-turbo-devel, libpng-devel
 BuildRequires: libX11-devel, libXv-devel, libXtst-devel, libXdamage-devel, libXrandr-devel, sssd-client, libuuid-devel, systemd-rpm-macros
 
 # Runtime dependencies
-Requires: pam, sssd, xorg-x11-drv-dummy, xorg-x11-server-Xorg, xorg-x11-server-Xvfb
+Requires: dbus, pam, sssd, xorg-x11-drv-dummy, xorg-x11-server-Xorg, xorg-x11-server-Xvfb
 %{?systemd_requires}
 
 %description

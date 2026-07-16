@@ -5,6 +5,7 @@
 #include "display_policy.h"
 #include "process_identity.h"
 #include "session_metadata.h"
+#include "session_scope.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -16,6 +17,12 @@
 #include <sys/syscall.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+typedef struct
+{
+	const char* dir;
+	frdpSesmandScopeManager* scope_manager;
+} recoveryContext;
 
 static int process_group_exists(pid_t pgid)
 {
@@ -191,9 +198,12 @@ static int sync_directory(const char* dir)
 static int reconcile_session(const frdpSesmandSessionMetadata* metadata, uint64_t file_dev,
                              uint64_t file_ino, void* context)
 {
+	recoveryContext* recovery = (recoveryContext*)context;
 	char agent_socket[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
 	char display_reservation[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
-	const char* dir = *(const char* const*)context;
+	char scope_name[FRDP_SESMAND_SCOPE_NAME_SIZE] = { 0 };
+	const char* dir = recovery ? recovery->dir : NULL;
+	int scope_stopped = 0;
 
 	if (!metadata || !dir ||
 	    (snprintf(agent_socket, sizeof(agent_socket), "%s/agent-%s.sock", dir,
@@ -202,7 +212,13 @@ static int reconcile_session(const frdpSesmandSessionMetadata* metadata, uint64_
 	                                           sizeof(display_reservation), dir,
 	                                           metadata->display_number) != 0))
 		return -1;
-	if (stop_matching_process_group(metadata) != 0)
+	if (metadata->systemd_scope &&
+	    (!recovery->scope_manager ||
+	     ((frdp_sesmand_scope_name(metadata->session_id, scope_name, sizeof(scope_name)) != 0) ||
+	      (frdp_sesmand_scope_stop(recovery->scope_manager, scope_name) != 0))))
+		return -1;
+	scope_stopped = metadata->systemd_scope;
+	if (!scope_stopped && (stop_matching_process_group(metadata) != 0))
 		return -1;
 	if ((frdp_sesmand_session_unlink_artifact(agent_socket, metadata->agent_socket_dev,
 	                                          metadata->agent_socket_ino, S_IFSOCK) != 0) ||
@@ -214,9 +230,9 @@ static int reconcile_session(const frdpSesmandSessionMetadata* metadata, uint64_
 	return frdp_sesmand_session_metadata_remove(dir, metadata->session_id, file_dev, file_ino);
 }
 
-int frdp_sesmand_session_reconcile_all(const char* dir)
+int frdp_sesmand_session_reconcile_all(const char* dir, frdpSesmandScopeManager* scope_manager)
 {
-	const char* context = dir;
+	recoveryContext context = { dir, scope_manager };
 
 	return frdp_sesmand_session_metadata_visit(dir, reconcile_session, &context);
 }

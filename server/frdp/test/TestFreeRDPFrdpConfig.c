@@ -66,6 +66,8 @@ static int test_default_blocklist(void)
 		return -1;
 	if (config.session_resources.memory_max_mb != 0)
 		return -1;
+	if (config.session_resources.systemd_scope != 0)
+		return -1;
 	if (config.session_heartbeat.interval_ms != FRDP_SESSION_HEARTBEAT_DEFAULT_INTERVAL_MS)
 		return -1;
 	if (config.session_heartbeat.timeout_ms != FRDP_SESSION_HEARTBEAT_DEFAULT_TIMEOUT_MS)
@@ -186,7 +188,8 @@ static int test_server_auth_session_fields(void)
 	                   "session_socket = \"/run/frdp-sesmand/sesmand.sock\"\n"
 	                   "max_sessions = 32\n"
 	                   "max_processes = 128\n"
-	                   "memory_max_mb = 2048\n";
+	                   "memory_max_mb = 2048\n"
+	                   "systemd_scope = true\n";
 
 	if (load_config_body("frdp-server-auth-session.toml", body, &config) != 0)
 		return -1;
@@ -224,6 +227,8 @@ static int test_server_auth_session_fields(void)
 		return -1;
 	if (config.session_resources.memory_max_mb != 2048)
 		return -1;
+	if (config.session_resources.systemd_scope != 1)
+		return -1;
 	return 0;
 }
 
@@ -241,8 +246,16 @@ static int test_session_resource_policy(void)
 		return -1;
 	if (config.session_resources.memory_max_mb != 1024)
 		return -1;
+	if (config.session_resources.systemd_scope != 0)
+		return -1;
+	if (load_config_body("frdp-session-systemd-scope.toml", "[session]\nsystemd_scope = true\n",
+	                     &config) != 0)
+		return -1;
+	if (config.session_resources.systemd_scope != 1)
+		return -1;
 	if (load_config_body("frdp-session-resource-unlimited.toml",
-	                     "[session]\nmax_sessions = 0\nmax_processes = 0\nmemory_max_mb = 0\n",
+	                     "[session]\nmax_sessions = 0\nmax_processes = 0\nmemory_max_mb = 0\n"
+	                     "systemd_scope = false\n",
 	                     &config) != 0)
 		return -1;
 	if (config.session_resources.max_sessions != 0)
@@ -250,6 +263,8 @@ static int test_session_resource_policy(void)
 	if (config.session_resources.max_processes != 0)
 		return -1;
 	if (config.session_resources.memory_max_mb != 0)
+		return -1;
+	if (config.session_resources.systemd_scope != 0)
 		return -1;
 	return 0;
 }
@@ -890,6 +905,15 @@ static int test_invalid_channel_config(void)
 		return -1;
 	if (expect_load_failure("frdp-too-large-session-memory-max.toml",
 	                        "[session]\nmemory_max_mb = 1048577\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-session-systemd-scope.toml",
+	                        "[session]\nsystemd_scope = true\nsystemd_scope = false\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-quoted-session-systemd-scope.toml",
+	                        "[session]\nsystemd_scope = \"true\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-invalid-session-systemd-scope.toml",
+	                        "[session]\nsystemd_scope = required\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-small-heartbeat-interval.toml",
 	                        "[session]\nagent_heartbeat_interval_ms = 999\n") != 0)
