@@ -14,6 +14,7 @@ FRDP_AUTH_TIMEOUT=${FRDP_AUTH_TIMEOUT:-45}
 FRDP_ARTIFACT_DIR=${FRDP_ARTIFACT_DIR:-/artifacts}
 FRDP_E2E_POLICY_RELOAD=${FRDP_E2E_POLICY_RELOAD:-0}
 FRDP_E2E_FRDPD_RESTART=${FRDP_E2E_FRDPD_RESTART:-0}
+FRDP_E2E_GRAPHICAL_LOAD_CONCURRENCY=${FRDP_E2E_GRAPHICAL_LOAD_CONCURRENCY:-0}
 FRDP_E2E_CONTROL_DIR=${FRDP_E2E_CONTROL_DIR:-/run/frdp-e2e-control}
 
 mkdir -p "$FRDP_ARTIFACT_DIR"
@@ -44,6 +45,11 @@ find_xfreerdp()
 positive_integer()
 {
 	[[ $1 =~ ^[1-9][0-9]*$ ]]
+}
+
+nonnegative_integer()
+{
+	[[ $1 == 0 || $1 =~ ^[1-9][0-9]*$ ]]
 }
 
 process_is_running()
@@ -315,12 +321,100 @@ stop_process()
 	wait "$pid" 2>/dev/null || true
 }
 
+run_graphical_load()
+{
+	local concurrency=$1
+	local active_list="$FRDP_ARTIFACT_DIR/graphical-load-active.txt"
+	local current_list="$FRDP_ARTIFACT_DIR/graphical-load-current.txt"
+	local detached_list="$FRDP_ARTIFACT_DIR/graphical-load-detached.txt"
+	local cleanup_list="$FRDP_ARTIFACT_DIR/graphical-load-cleanup.txt"
+	local runtime_log="$FRDP_ARTIFACT_DIR/graphical-load-runtime.txt"
+	local attempt socket_dir socket_name session_id pid worker
+	local -a session_ids=()
+
+	((concurrency > 0)) || return 0
+	rm -f "$active_list" "$current_list" "$detached_list" "$cleanup_list" "$runtime_log" \
+		"$FRDP_ARTIFACT_DIR/graphical-load-result.txt"
+	build_args "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"
+	load_pids=()
+	for ((worker = 1; worker <= concurrency; worker++)); do
+		stdbuf -oL -eL "$XFREERDP" "${RDP_ARGS[@]}" \
+			>"$FRDP_ARTIFACT_DIR/graphical-load-worker-$worker.log" 2>&1 &
+		load_pids+=("$!")
+	done
+
+	for ((attempt = 0; attempt < FRDP_E2E_TIMEOUT * 10; attempt++)); do
+		for pid in "${load_pids[@]}"; do
+			process_is_running "$pid" || fail "graphical load client $pid exited before activation"
+		done
+		frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$current_list" 2>&1 || true
+		if awk -v expected="$concurrency" -v user="$FRDP_TEST_USER" '
+			NR > 1 {
+				total++
+				if ($1 == "" || $2 != user || $3 !~ /^:[0-9]+$/ || $4 != "active" ||
+				    $5 !~ /^[1-9][0-9]*$/ || seen_id[$1]++ || seen_display[$3]++ ||
+				    seen_pid[$5]++)
+					bad = 1
+			}
+			END { exit (total == expected && !bad) ? 0 : 1 }
+		' "$current_list"; then
+			cp "$current_list" "$active_list"
+			break
+		fi
+		sleep 0.1
+	done
+	[[ -s $active_list ]] || fail "graphical load did not activate $concurrency unique sessions"
+	mapfile -t session_ids < <(awk 'NR > 1 { print $1 }' "$active_list")
+	[[ ${#session_ids[@]} -eq $concurrency ]] || fail "graphical load session count changed"
+
+	for pid in "${load_pids[@]}"; do
+		stop_process "$pid"
+	done
+	load_pids=()
+	for ((attempt = 0; attempt < FRDP_E2E_TIMEOUT * 10; attempt++)); do
+		frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$detached_list" 2>&1 || true
+		if awk -v expected="$concurrency" -v user="$FRDP_TEST_USER" '
+			NR > 1 { total++; if ($2 != user || $4 != "disconnected") bad = 1 }
+			END { exit (total == expected && !bad) ? 0 : 1 }
+		' "$detached_list"; then
+			break
+		fi
+		sleep 0.1
+	done
+	awk -v expected="$concurrency" -v user="$FRDP_TEST_USER" '
+		NR > 1 { total++; if ($2 != user || $4 != "disconnected") bad = 1 }
+		END { exit (total == expected && !bad) ? 0 : 1 }
+	' "$detached_list" || fail "graphical load sessions did not detach cleanly"
+
+	for session_id in "${session_ids[@]}"; do
+		frdpctl kill-session "$session_id" --socket "$FRDP_SESSION_SOCKET" >/dev/null ||
+			fail "failed to clean graphical load session $session_id"
+	done
+	for ((attempt = 0; attempt < FRDP_E2E_TIMEOUT * 10; attempt++)); do
+		frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$cleanup_list" 2>&1 || true
+		grep -Fxq 'No active sessions' "$cleanup_list" && break
+		sleep 0.1
+	done
+	grep -Fxq 'No active sessions' "$cleanup_list" ||
+		fail "graphical load sessions remained after cleanup"
+	socket_dir=$(dirname "$FRDP_SESSION_SOCKET")
+	socket_name=$(basename "$FRDP_SESSION_SOCKET")
+	find "$socket_dir" -mindepth 1 -maxdepth 1 ! -name "$socket_name" -printf '%f\n' \
+		>"$runtime_log"
+	[[ ! -s $runtime_log ]] || fail "graphical load left managed session runtime artifacts"
+	printf 'concurrency=%s\nunique_session_ids=pass\nunique_displays=pass\nunique_agent_pids=pass\ncleanup=pass\n' \
+		"$concurrency" >"$FRDP_ARTIFACT_DIR/graphical-load-result.txt"
+	log "concurrent graphical load passed for $concurrency unique managed sessions"
+}
+
 positive_integer "$FRDP_E2E_TIMEOUT" || fail "FRDP_E2E_TIMEOUT must be positive"
 positive_integer "$FRDP_AUTH_TIMEOUT" || fail "FRDP_AUTH_TIMEOUT must be positive"
 [[ $FRDP_E2E_POLICY_RELOAD == 0 || $FRDP_E2E_POLICY_RELOAD == 1 ]] ||
 	fail "FRDP_E2E_POLICY_RELOAD must be 0 or 1"
 [[ $FRDP_E2E_FRDPD_RESTART == 0 || $FRDP_E2E_FRDPD_RESTART == 1 ]] ||
 	fail "FRDP_E2E_FRDPD_RESTART must be 0 or 1"
+nonnegative_integer "$FRDP_E2E_GRAPHICAL_LOAD_CONCURRENCY" ||
+	fail "FRDP_E2E_GRAPHICAL_LOAD_CONCURRENCY must be nonnegative"
 command -v timeout >/dev/null 2>&1 || fail "timeout executable was not found"
 command -v xvfb-run >/dev/null 2>&1 || fail "xvfb-run executable was not found"
 command -v Xvfb >/dev/null 2>&1 || fail "Xvfb executable was not found"
@@ -363,6 +457,7 @@ xvfb_pid=$!
 client_pid=
 client_clipboard_pid=
 server_clipboard_pid=
+load_pids=()
 # ShellCheck cannot infer that the signal/exit trap invokes this function.
 # shellcheck disable=SC2317
 cleanup()
@@ -376,6 +471,9 @@ cleanup()
 	if [[ -n ${client_pid:-} ]]; then
 		stop_process "$client_pid"
 	fi
+	for pid in "${load_pids[@]}"; do
+		stop_process "$pid"
+	done
 	stop_process "$xvfb_pid"
 }
 trap cleanup EXIT TERM INT
@@ -387,6 +485,7 @@ done
 [[ -S /tmp/.X11-unix/X99 ]] || fail "client Xvfb did not start"
 
 export DISPLAY=:99
+run_graphical_load "$FRDP_E2E_GRAPHICAL_LOAD_CONCURRENCY"
 build_args "$FRDP_TEST_USER" "$FRDP_TEST_PASSWORD"
 stdbuf -oL -eL "$XFREERDP" "${RDP_ARGS[@]}" >"$FRDP_ARTIFACT_DIR/rdp-session.log" 2>&1 &
 client_pid=$!

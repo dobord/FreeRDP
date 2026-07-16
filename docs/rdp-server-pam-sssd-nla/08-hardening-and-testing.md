@@ -91,6 +91,12 @@ Create a harness that spawns multiple RDP clients concurrently to measure CPU, m
 - Monitor server metrics (CPU, memory, sessions, threads) and record throughput.
 - Use these metrics to set defaults for `max_connections`, session limits and per-session resource quotas.
 
+The deterministic local-PAM Compose gate currently opens two graphical
+`xfreerdp` clients concurrently and proves unique session ids, displays and
+agent PIDs plus complete detach/cleanup. The separate retained-client load
+script covers configurable parallel auth-only iterations. Neither gate yet
+records CPU, RSS, network throughput, long-soak stability or memory growth.
+
 ## SELinux/AppArmor profiles
 
 Write mandatory access control profiles to confine the RDP daemons:

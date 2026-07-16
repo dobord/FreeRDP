@@ -42,6 +42,7 @@ services:
       FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
       FRDP_E2E_POLICY_RELOAD: 1
       FRDP_E2E_FRDPD_RESTART: 1
+      FRDP_E2E_GRAPHICAL_LOAD_CONCURRENCY: 2
     healthcheck: *frdp-healthcheck
     stop_grace_period: 30s
     volumes:
@@ -65,6 +66,7 @@ services:
       FRDP_DENY_PASSWORD: ${FRDP_DENY_PASSWORD:-DeniedPassw0rd!}
       FRDP_E2E_POLICY_RELOAD: 1
       FRDP_E2E_FRDPD_RESTART: 1
+      FRDP_E2E_GRAPHICAL_LOAD_CONCURRENCY: 2
     depends_on:
       frdpd-local:
         condition: service_healthy

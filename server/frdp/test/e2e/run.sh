@@ -180,6 +180,7 @@ validate_rdp_auth_artifacts()
 	local ntlm_proof_rejected wrong_password_rejected denied_user_rejected
 	local policy_reload_failed policy_channel_rejected
 	local keytab_rollover old_kvno new_kvno
+	local graphical_concurrency graphical_result
 	local expected_accepted=5
 	local provider_result=
 
@@ -195,8 +196,16 @@ validate_rdp_auth_artifacts()
 		return 1
 	test_user=$(sed -n 's/^FRDP_TEST_USER=//p' <<<"$server_env")
 	deny_user=$(sed -n 's/^FRDP_DENY_USER=//p' <<<"$server_env")
+	graphical_concurrency=$(sed -n 's/^FRDP_E2E_GRAPHICAL_LOAD_CONCURRENCY=//p' \
+		<<<"$server_env")
+	graphical_concurrency=${graphical_concurrency:-0}
 	if [[ -z $test_user || $test_user == *$'\n'* || -z $deny_user || $deny_user == *$'\n'* ]]; then
 		printf 'profile %s server has ambiguous E2E user configuration\n' "$profile" >&2
+		return 1
+	fi
+	if [[ ! $graphical_concurrency =~ ^(0|[1-9][0-9]*)$ ||
+		$graphical_concurrency == *$'\n'* ]]; then
+		printf 'profile %s server has invalid graphical load concurrency\n' "$profile" >&2
 		return 1
 	fi
 	accepted=$(grep -Fc "PAM accepted RDP login for $test_user from" "$server_log" || true)
@@ -219,6 +228,7 @@ validate_rdp_auth_artifacts()
 	if [[ $profile == samba || $profile == freeipa ]]; then
 		expected_accepted=6
 	fi
+	expected_accepted=$((expected_accepted + graphical_concurrency))
 	if [[ $accepted -ne $expected_accepted || $total_accepted -ne $expected_accepted ||
 		$rejected -ne 1 ||
 		$total_rejected -ne 1 ]]; then
@@ -248,6 +258,21 @@ validate_rdp_auth_artifacts()
 		printf 'profile local expected 1 rejected policy reload and 2 channel denials; got %s and %s\n' \
 			"$policy_reload_failed" "$policy_channel_rejected" >&2
 		return 1
+	fi
+	if [[ $graphical_concurrency -gt 0 ]]; then
+		graphical_result="$artifacts/$profile/graphical-load-result.txt"
+		for evidence in \
+			"concurrency=$graphical_concurrency" \
+			'unique_session_ids=pass' \
+			'unique_displays=pass' \
+			'unique_agent_pids=pass' \
+			'cleanup=pass'; do
+			if ! grep -Fxq "$evidence" "$graphical_result"; then
+				printf 'profile %s is missing graphical load evidence: %s\n' \
+					"$profile" "$evidence" >&2
+				return 1
+			fi
+		done
 	fi
 	if [[ $profile == samba || $profile == freeipa ]]; then
 		if [[ $profile == samba ]]; then
