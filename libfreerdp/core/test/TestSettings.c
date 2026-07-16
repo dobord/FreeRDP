@@ -9,6 +9,7 @@
 #include <freerdp/codecs.h>
 
 #include "settings_property_lists.h"
+#include "../connect_retry.h"
 #include "../settings.h"
 
 #define log_start() log_start_(__func__)
@@ -163,6 +164,30 @@ fail:
 	freerdp_addin_argv_free(args1);
 	freerdp_addin_argv_free(args2);
 	return log_result(rc);
+}
+
+static BOOL test_initial_connect_retry_policy(void)
+{
+	BOOL rc = FALSE;
+	rdpSettings* settings = freerdp_settings_new(0);
+
+	if (!settings)
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_AutoReconnectionEnabled, FALSE))
+		goto out;
+	if (freerdp_should_retry_initial_connect(settings, FREERDP_ERROR_CONNECT_TRANSPORT_FAILED))
+		goto out;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_AutoReconnectionEnabled, TRUE))
+		goto out;
+	if (!freerdp_should_retry_initial_connect(settings, FREERDP_ERROR_CONNECT_TRANSPORT_FAILED))
+		goto out;
+	if (freerdp_should_retry_initial_connect(settings, FREERDP_ERROR_CONNECT_LOGON_FAILURE))
+		goto out;
+	rc = TRUE;
+
+out:
+	freerdp_settings_free(settings);
+	return rc;
 }
 
 static BOOL test_static_channels(void)
@@ -2400,6 +2425,8 @@ int TestSettings(int argc, char* argv[])
 	if (!test_serialize())
 		goto fail;
 	if (!test_dyn_channels())
+		goto fail;
+	if (!test_initial_connect_retry_policy())
 		goto fail;
 	if (!test_static_channels())
 		goto fail;

@@ -33,6 +33,7 @@
 #include "surface.h"
 #include "transport.h"
 #include "connection.h"
+#include "connect_retry.h"
 #include "message.h"
 #include <freerdp/buildflags.h>
 #include "gateway/rpc_fault.h"
@@ -221,7 +222,8 @@ BOOL freerdp_connect(freerdp* instance)
 	else
 	{
 		status2 = CHANNEL_RC_OK;
-		if (freerdp_get_last_error(instance->context) == FREERDP_ERROR_CONNECT_TRANSPORT_FAILED)
+		if (freerdp_should_retry_initial_connect(rdp->settings,
+		                                         freerdp_get_last_error(instance->context)))
 			status = freerdp_reconnect(instance);
 		else
 			goto freerdp_connect_finally;

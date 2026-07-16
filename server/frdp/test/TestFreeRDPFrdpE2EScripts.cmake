@@ -229,6 +229,7 @@ foreach(expected
         "profiles: [\"freeipa\"]"
         "FRDP_TEST_GROUP: \${FRDP_TEST_GROUP:-rdp-users}"
         "FRDP_E2E_POLICY_RELOAD: 1"
+        "FRDP_E2E_FRDPD_RESTART: 1"
         "local-control:/run/frdp-e2e-control"
         "FRDP_E2E_SESMAND_CRASH_RECOVERY: 1"
         "rdp-provider-recovery.sh"
@@ -308,6 +309,17 @@ foreach(expected
         "run_policy_reload_supervisor \"\$frdpd_pid\" &")
   expect_contains("${frdpd_entrypoint}" "${expected}"
                   "frdpd policy reload entrypoint")
+endforeach()
+
+foreach(expected
+        "FRDP_E2E_FRDPD_RESTART"
+        "run_frdpd_supervisor"
+        "publish_frdpd_state"
+        "frdpd-restart-request"
+        "stdbuf -oL -eL frdpd"
+        "run_frdpd_supervisor &")
+  expect_contains("${frdpd_entrypoint}" "${expected}"
+                  "frdpd restart entrypoint")
 endforeach()
 
 foreach(expected
@@ -403,8 +415,8 @@ foreach(expected
         "run_profile_once"
         "validate_rdp_auth_artifacts"
         "server-auth.log"
-        "expected %s PAM accepts and 2 PAM denials"
-        "one NTLM proof rejection and two denied-user PAM denials"
+        "expected %s PAM accepts and 1 PAM denial"
+        "one NTLM proof rejection and one denied-user PAM denial"
         "proof identity does not match the delegated credentials"
         "managed Xorg dummy display completed 800x600 -> 1024x768 -> 800x600 resize churn"
         "provider-recovery.txt"
@@ -469,6 +481,9 @@ foreach(expected
         "reload-malformed-retained-deny"
         "active peer retained its channel and clipboard policy snapshot"
         "request_policy_reload restore"
+        "request_frdpd_restart"
+        "frdpd-restart.txt"
+        "daemon restart disconnected the peer before reconnect"
         "session-list-after-reconnect.txt")
   expect_contains("${rdp_probe}" "${expected}" "E2E RDP probe script")
 endforeach()

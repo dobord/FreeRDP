@@ -13,6 +13,7 @@ FRDP_E2E_TIMEOUT=${FRDP_E2E_TIMEOUT:-60}
 FRDP_AUTH_TIMEOUT=${FRDP_AUTH_TIMEOUT:-45}
 FRDP_ARTIFACT_DIR=${FRDP_ARTIFACT_DIR:-/artifacts}
 FRDP_E2E_POLICY_RELOAD=${FRDP_E2E_POLICY_RELOAD:-0}
+FRDP_E2E_FRDPD_RESTART=${FRDP_E2E_FRDPD_RESTART:-0}
 FRDP_E2E_CONTROL_DIR=${FRDP_E2E_CONTROL_DIR:-/run/frdp-e2e-control}
 
 mkdir -p "$FRDP_ARTIFACT_DIR"
@@ -210,6 +211,33 @@ request_policy_reload()
 	fail "frdpd policy reload command timed out: $mode"
 }
 
+request_frdpd_restart()
+{
+	local state="$FRDP_E2E_CONTROL_DIR/frdpd-state"
+	local old_pid=
+	local new_pid=
+	local generation=
+
+	old_pid=$(sed -n 's/^pid=//p' "$state")
+	generation=$(sed -n 's/^generation=//p' "$state")
+	[[ $old_pid =~ ^[1-9][0-9]*$ && $generation == 0 ]] ||
+		fail "initial frdpd supervisor state is invalid"
+	: >"$FRDP_E2E_CONTROL_DIR/frdpd-restart-request"
+	for ((i = 0; i < FRDP_E2E_TIMEOUT * 10; i++)); do
+		new_pid=$(sed -n 's/^pid=//p' "$state" 2>/dev/null || true)
+		generation=$(sed -n 's/^generation=//p' "$state" 2>/dev/null || true)
+		if [[ $new_pid =~ ^[1-9][0-9]*$ && $generation == 1 && $new_pid != "$old_pid" ]]; then
+			wait_tcp || fail "restarted frdpd did not reopen the RDP endpoint"
+			printf 'old_pid=%s\nnew_pid=%s\nresult=pass\n' "$old_pid" "$new_pid" \
+				>"$FRDP_ARTIFACT_DIR/frdpd-restart.txt"
+			log "frdpd restarted cleanly: $old_pid -> $new_pid"
+			return 0
+		fi
+		sleep 0.1
+	done
+	fail "frdpd restart did not publish a replacement process"
+}
+
 assert_no_managed_sessions()
 {
 	local label=$1
@@ -291,6 +319,8 @@ positive_integer "$FRDP_E2E_TIMEOUT" || fail "FRDP_E2E_TIMEOUT must be positive"
 positive_integer "$FRDP_AUTH_TIMEOUT" || fail "FRDP_AUTH_TIMEOUT must be positive"
 [[ $FRDP_E2E_POLICY_RELOAD == 0 || $FRDP_E2E_POLICY_RELOAD == 1 ]] ||
 	fail "FRDP_E2E_POLICY_RELOAD must be 0 or 1"
+[[ $FRDP_E2E_FRDPD_RESTART == 0 || $FRDP_E2E_FRDPD_RESTART == 1 ]] ||
+	fail "FRDP_E2E_FRDPD_RESTART must be 0 or 1"
 command -v timeout >/dev/null 2>&1 || fail "timeout executable was not found"
 command -v xvfb-run >/dev/null 2>&1 || fail "xvfb-run executable was not found"
 command -v Xvfb >/dev/null 2>&1 || fail "Xvfb executable was not found"
@@ -333,6 +363,8 @@ xvfb_pid=$!
 client_pid=
 client_clipboard_pid=
 server_clipboard_pid=
+# ShellCheck cannot infer that the signal/exit trap invokes this function.
+# shellcheck disable=SC2317
 cleanup()
 {
 	if [[ -n ${client_clipboard_pid:-} ]]; then
@@ -497,8 +529,20 @@ session_identity_is_exclusively_active "$FRDP_ARTIFACT_DIR/session-list-open-hel
 xwd -display :99 -root -silent -out "$FRDP_ARTIFACT_DIR/client-root.xwd" ||
 	fail "failed to capture the client Xvfb display"
 
-stop_process "$client_pid"
-client_pid=
+if [[ $FRDP_E2E_FRDPD_RESTART == 1 ]]; then
+	request_frdpd_restart
+	for ((i = 0; i < FRDP_E2E_TIMEOUT * 10; i++)); do
+		process_is_running "$client_pid" || break
+		sleep 0.1
+	done
+	process_is_running "$client_pid" && fail "old frdpd did not disconnect the active client"
+	wait "$client_pid" 2>/dev/null || true
+	client_pid=
+	log "daemon restart disconnected the peer before reconnect"
+else
+	stop_process "$client_pid"
+	client_pid=
+fi
 
 for ((i = 0; i < FRDP_E2E_TIMEOUT; i++)); do
 	frdpctl list-sessions --socket "$FRDP_SESSION_SOCKET" >"$FRDP_ARTIFACT_DIR/session-list-after.txt" 2>&1 || true

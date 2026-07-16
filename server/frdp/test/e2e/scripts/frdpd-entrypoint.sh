@@ -15,6 +15,7 @@ FRDP_CONFIG=${FRDP_CONFIG:-/etc/frdpd/frdpd.toml}
 FRDP_E2E_SESMAND_CRASH_RECOVERY=${FRDP_E2E_SESMAND_CRASH_RECOVERY:-0}
 FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER=${FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER:-0}
 FRDP_E2E_POLICY_RELOAD=${FRDP_E2E_POLICY_RELOAD:-0}
+FRDP_E2E_FRDPD_RESTART=${FRDP_E2E_FRDPD_RESTART:-0}
 FRDP_E2E_CONTROL_DIR=${FRDP_E2E_CONTROL_DIR:-/run/frdp-e2e-control}
 FRDP_E2E_KEYTAB_DIR=${FRDP_E2E_KEYTAB_DIR:-/run/frdp-e2e-keytab}
 
@@ -490,6 +491,69 @@ run_sesmand_supervisor()
 	return 1
 }
 
+publish_frdpd_state()
+{
+	local pid=$1
+	local generation=$2
+	local temporary="$FRDP_E2E_CONTROL_DIR/.frdpd-state.$$"
+
+	printf 'pid=%s\ngeneration=%s\n' "$pid" "$generation" >"$temporary"
+	mv -f "$temporary" "$FRDP_E2E_CONTROL_DIR/frdpd-state"
+}
+
+run_frdpd_supervisor()
+{
+	local generation=0
+	local pid=
+	local status=0
+
+	trap '[[ -z ${pid:-} ]] || kill -TERM "$pid" 2>/dev/null || true; [[ -z ${pid:-} ]] || wait "$pid" 2>/dev/null || true; exit 143' TERM INT
+	while ((generation < 2)); do
+		stdbuf -oL -eL frdpd --config "$FRDP_CONFIG" --domain-mode=plain &
+		pid=$!
+		publish_frdpd_state "$pid" "$generation"
+
+		while kill -0 "$pid" 2>/dev/null; do
+			if ((generation == 0)) && [[ -f $FRDP_E2E_CONTROL_DIR/frdpd-restart-request ]]; then
+				rm -f "$FRDP_E2E_CONTROL_DIR/frdpd-restart-request"
+				kill -TERM "$pid"
+				break
+			fi
+			sleep 0.1
+		done
+		set +e
+		wait "$pid"
+		status=$?
+		set -e
+		pid=
+		if ((generation == 0)) && ((status == 0)); then
+			generation=1
+			continue
+		fi
+		return "$status"
+	done
+	return 1
+}
+
+wait_initial_frdpd()
+{
+	local generation=
+	local pid=
+
+	for ((i = 0; i < 100; i++)); do
+		if [[ -f $FRDP_E2E_CONTROL_DIR/frdpd-state ]]; then
+			pid=$(sed -n 's/^pid=//p' "$FRDP_E2E_CONTROL_DIR/frdpd-state")
+			generation=$(sed -n 's/^generation=//p' "$FRDP_E2E_CONTROL_DIR/frdpd-state")
+			if [[ $pid =~ ^[1-9][0-9]*$ && $generation == 0 ]] && kill -0 "$pid" 2>/dev/null; then
+				printf '%s\n' "$pid"
+				return 0
+			fi
+		fi
+		sleep 0.1
+	done
+	return 1
+}
+
 run_policy_reload_supervisor()
 {
 	local frdpd_pid=$1
@@ -540,6 +604,11 @@ run_policy_reload_supervisor()
 		done
 		sleep 0.1
 	done
+	if [[ $FRDP_E2E_FRDPD_RESTART == 1 ]]; then
+		while :; do
+			sleep 1
+		done
+	fi
 	return 1
 }
 
@@ -579,6 +648,11 @@ run_xauthority_export_supervisor()
 		done
 		sleep 0.1
 	done
+	if [[ $FRDP_E2E_FRDPD_RESTART == 1 ]]; then
+		while :; do
+			sleep 1
+		done
+	fi
 }
 
 inject_sesmand_crash()
@@ -709,6 +783,9 @@ fi
 if [[ $FRDP_E2E_POLICY_RELOAD != 0 && $FRDP_E2E_POLICY_RELOAD != 1 ]]; then
 	fail "FRDP_E2E_POLICY_RELOAD must be 0 or 1"
 fi
+if [[ $FRDP_E2E_FRDPD_RESTART != 0 && $FRDP_E2E_FRDPD_RESTART != 1 ]]; then
+	fail "FRDP_E2E_FRDPD_RESTART must be 0 or 1"
+fi
 if [[ $FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER == 1 && $FRDP_IDENTITY_PROVIDER != freeipa ]]; then
 	fail "keytab rollover requires the FreeIPA provider profile"
 fi
@@ -718,6 +795,9 @@ if [[ $FRDP_E2E_SESMAND_CRASH_RECOVERY == 1 && $FRDP_IDENTITY_PROVIDER != samba 
 fi
 if [[ $FRDP_E2E_POLICY_RELOAD == 1 && $FRDP_IDENTITY_PROVIDER != local ]]; then
 	fail "frdpd policy reload injection requires the local provider profile"
+fi
+if [[ $FRDP_E2E_FRDPD_RESTART == 1 && $FRDP_IDENTITY_PROVIDER != local ]]; then
+	fail "frdpd restart injection requires the local provider profile"
 fi
 mkdir -p "$FRDP_E2E_CONTROL_DIR"
 rm -f "$FRDP_E2E_CONTROL_DIR"/*
@@ -745,9 +825,15 @@ fi
 wait_socket "$FRDP_AUTH_SOCKET" || fail "frdp-authd socket was not created"
 wait_socket "$FRDP_SESSION_SOCKET" || fail "frdp-sesmand socket was not created"
 
-frdpd --config "$FRDP_CONFIG" --domain-mode=plain &
-frdpd_pid=$!
-children+=("$frdpd_pid")
+if [[ $FRDP_E2E_FRDPD_RESTART == 1 ]]; then
+	run_frdpd_supervisor &
+	children+=("$!")
+	frdpd_pid=$(wait_initial_frdpd) || fail "initial frdpd process was not published"
+else
+	stdbuf -oL -eL frdpd --config "$FRDP_CONFIG" --domain-mode=plain &
+	frdpd_pid=$!
+	children+=("$frdpd_pid")
+fi
 
 run_xauthority_export_supervisor "$frdpd_pid" &
 children+=("$!")

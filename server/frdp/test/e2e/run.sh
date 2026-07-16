@@ -220,15 +220,15 @@ validate_rdp_auth_artifacts()
 		expected_accepted=6
 	fi
 	if [[ $accepted -ne $expected_accepted || $total_accepted -ne $expected_accepted ||
-		$rejected -ne 2 ||
-		$total_rejected -ne 2 ]]; then
-		printf 'profile %s expected %s PAM accepts and 2 PAM denials, got %s and %s\n' \
+		$rejected -ne 1 ||
+		$total_rejected -ne 1 ]]; then
+		printf 'profile %s expected %s PAM accepts and 1 PAM denial, got %s and %s\n' \
 			"$profile" "$expected_accepted" "$total_accepted" "$total_rejected" >&2
 		return 1
 	fi
 	if [[ $ntlm_proof_rejected -ne 1 || $wrong_password_rejected -ne 0 ||
-		$denied_user_rejected -ne 2 ]]; then
-		printf 'profile %s did not produce one NTLM proof rejection and two denied-user PAM denials\n' \
+		$denied_user_rejected -ne 1 ]]; then
+		printf 'profile %s did not produce one NTLM proof rejection and one denied-user PAM denial\n' \
 			"$profile" >&2
 		return 1
 	fi

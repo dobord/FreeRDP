@@ -75,6 +75,8 @@
 #define FRDPD_HELPER_READY_ATTEMPTS 50U
 #define FRDPD_HELPER_READY_TIMEOUT_MS 100U
 #define FRDPD_HELPER_READY_RETRY_MS 100U
+#define FRDPD_PEER_DRAIN_ATTEMPTS 200U
+#define FRDPD_PEER_DRAIN_RETRY_MS 50U
 
 typedef struct
 {
@@ -1532,14 +1534,14 @@ static BOOL frdpd_reserve_connection(frdpdServerConfig* config, const char* host
 	const LONG max_connections = config ? (LONG)config->max_connections : 0;
 	char log_hostname[FRDPD_LOG_STRING_SIZE] = { 0 };
 
-	if (!config || (max_connections <= 0))
-		return TRUE;
+	if (!config)
+		return FALSE;
 
 	for (;;)
 	{
 		const LONG active = InterlockedCompareExchange(&config->active_connections, 0, 0);
 
-		if (active >= max_connections)
+		if ((max_connections > 0) && (active >= max_connections))
 		{
 			WLog_WARN(TAG, "rejecting client %s: max_connections=%ld active=%ld",
 			          frdpd_log_value(hostname, log_hostname, sizeof(log_hostname), "unknown"),
@@ -1553,8 +1555,24 @@ static BOOL frdpd_reserve_connection(frdpdServerConfig* config, const char* host
 
 static void frdpd_release_connection(frdpdServerConfig* config)
 {
-	if (config && (config->max_connections > 0))
+	if (config)
 		(void)InterlockedDecrement(&config->active_connections);
+}
+
+static BOOL frdpd_wait_for_peer_drain(frdpdServerConfig* config)
+{
+	WINPR_ASSERT(config);
+
+	for (UINT32 attempt = 0; attempt < FRDPD_PEER_DRAIN_ATTEMPTS; attempt++)
+	{
+		if (InterlockedCompareExchange(&config->active_connections, 0, 0) == 0)
+			return TRUE;
+		Sleep(FRDPD_PEER_DRAIN_RETRY_MS);
+	}
+
+	WLog_ERR(TAG, "timed out waiting for %ld peer worker(s) during shutdown",
+	         (long)InterlockedCompareExchange(&config->active_connections, 0, 0));
+	return FALSE;
 }
 
 static void frdpd_peer_clear_owned_auth_identity(freerdp_peer* client,
@@ -2837,7 +2855,8 @@ static int frdpd_run_server(frdpdOptions* options)
 	    TAG, "frdpd listening on %s:%" PRIu16 " with PAM service '%s' and NLA/CredSSP enabled",
 	    config->bind_address ? config->bind_address : "0.0.0.0", config->port, config->pam_service);
 	frdpd_server_mainloop(listener, options);
-	rc = 0;
+	if (frdpd_wait_for_peer_drain(config))
+		rc = 0;
 
 fail:
 	freerdp_listener_free(listener);
