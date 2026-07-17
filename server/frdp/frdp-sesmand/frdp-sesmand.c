@@ -5,8 +5,7 @@
  *
  * This process maintains a registry of active sessions, opens PAM sessions,
  * launches per-user session agents and supports reconnect and cleanup.  The
- * implementation here is intentionally minimal; error handling and
- * integration with systemd-logind/cgroups are elided for clarity.
+ * implementation keeps the lifecycle policy in focused helper modules.
  */
 
 #include <stdio.h>
@@ -46,6 +45,7 @@
 #include "session_cleanup.h"
 #include "session_disconnect.h"
 #include "session_identity.h"
+#include "session_logind.h"
 #include "session_metadata.h"
 #include "session_pam_owner.h"
 #include "session_reconnect.h"
@@ -82,15 +82,24 @@ typedef struct {
     uint32_t heartbeat_failures;
     int heartbeat_fd;
 	char scope_name[FRDP_SESMAND_SCOPE_NAME_SIZE];
+	frdpSesmandLogindSession logind_session;
 } session;
 
 #define FRDP_AGENT_READY_MARKER 'R'
+typedef struct
+{
+	char marker;
+	char logind_session_id[FRDP_SESMAND_LOGIND_ID_SIZE];
+	char logind_runtime_path[FRDP_SESMAND_LOGIND_RUNTIME_SIZE];
+} frdpSesmandLaunchMessage;
+
 static session sessions[FRDP_CONFIG_MAX_SESSIONS];
 static int session_count = 0;
 static int next_display = FRDP_SESMAND_DISPLAY_MIN;
 static char g_pam_service[64] = "frdpd";
 static frdpSessionResourcePolicy g_session_resource_policy = {0};
 static frdpSesmandScopeManager g_scope_manager = { 0 };
+static frdpSesmandLogindManager g_logind_manager = { 0 };
 static frdpSessionHeartbeatPolicy g_session_heartbeat_policy = {
     .interval_ms = FRDP_SESSION_HEARTBEAT_DEFAULT_INTERVAL_MS,
     .timeout_ms = FRDP_SESSION_HEARTBEAT_DEFAULT_TIMEOUT_MS,
@@ -695,7 +704,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
     char display_reservation_path[sizeof(((struct sockaddr_un *)0)->sun_path)] = {0};
     char agent_fd_str[16] = {0};
     char ready_fd_str[16] = {0};
-	char launch_marker = 'G';
+	frdpSesmandLaunchMessage launch_message = { .marker = 'G' };
 	char scope_name[FRDP_SESMAND_SCOPE_NAME_SIZE] = { 0 };
 	int exec_pipe[2] = { -1, -1 };
 	int launch_pair[2] = { -1, -1 };
@@ -751,6 +760,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 	s->display_reservation_fd = display_reservation_fd;
 	display_reservation_fd = -1;
 	s->heartbeat_fd = -1;
+	s->logind_session.fifo_fd = -1;
 	strncpy(s->user, user, sizeof(s->user) - 1);
 	s->user[sizeof(s->user) - 1] = '\0';
 	s->uid = uid;
@@ -810,7 +820,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 		return -1;
 	}
 	if (pid == 0) {
-		char child_launch_marker = 0;
+		frdpSesmandLaunchMessage child_launch = { 0 };
 		ssize_t launch_status = 0;
 
 		close(exec_pipe[0]);
@@ -825,10 +835,12 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
             child_exec_failed(exec_pipe[1]);
 		do
 		{
-			launch_status = read(launch_pair[0], &child_launch_marker, sizeof(child_launch_marker));
+			launch_status = recv(launch_pair[0], &child_launch, sizeof(child_launch), 0);
 		} while ((launch_status < 0) && (errno == EINTR));
 		close(launch_pair[0]);
-		if ((launch_status != (ssize_t)sizeof(child_launch_marker)) || (child_launch_marker != 'G'))
+		if ((launch_status != (ssize_t)sizeof(child_launch)) || (child_launch.marker != 'G') ||
+		    ((child_launch.logind_session_id[0] == '\0') !=
+		     (child_launch.logind_runtime_path[0] == '\0')))
 			child_exec_failed(exec_pipe[1]);
 		close_child_fds_except(exec_pipe[1], agent_fd, heartbeat_pair[1]);
 		if (frdp_sesmand_apply_session_resource_policy(&g_session_resource_policy) != 0)
@@ -840,6 +852,14 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 		if (configure_agent_display_environment(&g_session_display_policy) != 0)
 			child_exec_failed(exec_pipe[1]);
 		setenv("FRDP_SESSION_ID", new_session_id, 1);
+		if ((unsetenv("XDG_SESSION_ID") != 0) || (unsetenv("XDG_RUNTIME_DIR") != 0))
+			child_exec_failed(exec_pipe[1]);
+		if (child_launch.logind_session_id[0] != '\0')
+		{
+			if ((setenv("XDG_SESSION_ID", child_launch.logind_session_id, 1) != 0) ||
+			    (setenv("XDG_RUNTIME_DIR", child_launch.logind_runtime_path, 1) != 0))
+				child_exec_failed(exec_pipe[1]);
+		}
         snprintf(ready_fd_str, sizeof(ready_fd_str), "%d", exec_pipe[1]);
         setenv("FRDP_AGENT_READY_FD", ready_fd_str, 1);
         snprintf(agent_fd_str, sizeof(agent_fd_str), "%d", heartbeat_pair[1]);
@@ -916,8 +936,28 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 			return -1;
 		}
 	}
-	if (send(launch_pair[1], &launch_marker, sizeof(launch_marker), MSG_NOSIGNAL) !=
-	    (ssize_t)sizeof(launch_marker))
+	else if (g_session_resource_policy.logind_session)
+	{
+		if ((frdp_sesmand_logind_create(&g_logind_manager, uid, pid, g_pam_service, user,
+		                                  rhost ? rhost : "", display_str, &s->logind_session) != 0) ||
+		    (frdp_sesmand_pam_owner_bind_logind(pam_runtime_dir, new_session_id, &pam_owner,
+		                                         s->logind_session.fifo_fd) != 0) ||
+		    (snprintf(launch_message.logind_session_id,
+		              sizeof(launch_message.logind_session_id), "%s", s->logind_session.id) >=
+		     (int)sizeof(launch_message.logind_session_id)) ||
+		    (snprintf(launch_message.logind_runtime_path,
+		              sizeof(launch_message.logind_runtime_path), "%s",
+		              s->logind_session.runtime_path) >=
+		     (int)sizeof(launch_message.logind_runtime_path)))
+		{
+			close(launch_pair[1]);
+			close(exec_pipe[0]);
+			cleanup_session(session_count - 1);
+			return -1;
+		}
+	}
+	if (send(launch_pair[1], &launch_message, sizeof(launch_message), MSG_NOSIGNAL) !=
+	    (ssize_t)sizeof(launch_message))
 	{
 		close(launch_pair[1]);
 		close(exec_pipe[0]);
@@ -1016,6 +1056,11 @@ static int cleanup_session(int idx)
 		kill(-s->pgid, SIGTERM);
 		wait_for_agent_exit(s->agent_pid, s->pgid);
 	}
+	if (s->logind_session.fifo_fd >= 0)
+	{
+		if (frdp_sesmand_logind_release(&g_logind_manager, &s->logind_session) != 0)
+			syslog(LOG_WARNING, "failed to release login1 session; using FIFO cleanup");
+	}
 	/* The per-session owner closes PAM after the agent process group is gone. */
 	if (cleanup.close_pam_session)
 	{
@@ -1030,6 +1075,7 @@ static int cleanup_session(int idx)
 		if (pam_status != 0)
 			durable_cleanup_complete = 0;
 	}
+	frdp_sesmand_logind_session_close(&s->logind_session);
 	if (cleanup.unlink_agent_socket) {
 		if ((s->agent_socket_dev != 0) && (s->agent_socket_ino != 0))
 		{
@@ -1381,6 +1427,9 @@ static int apply_sesmand_policy(const char* pam_service,
 	    !session_display_policy_is_usable(display_policy))
 		return -1;
 	if (resource_policy->systemd_scope && (frdp_sesmand_scope_manager_init(&g_scope_manager) != 0))
+		return -1;
+	if (resource_policy->logind_session &&
+	    (frdp_sesmand_logind_manager_init(&g_logind_manager) != 0))
 		return -1;
 	if ((resource_policy->max_processes != g_session_resource_policy.max_processes) ||
 	    (resource_policy->memory_max_mb != g_session_resource_policy.memory_max_mb) ||
@@ -2152,6 +2201,7 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
 
     cleanup_all_sessions();
 	frdp_sesmand_scope_manager_uninit(&g_scope_manager);
+	frdp_sesmand_logind_manager_uninit(&g_logind_manager);
 	close(fd);
 	unlink(socket_path);
 	return g_stop_requested ? 0 : -1;

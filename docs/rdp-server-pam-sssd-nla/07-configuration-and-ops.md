@@ -70,7 +70,8 @@ Install or review the dedicated PAM service `/etc/pam.d/frdpd` from `server/frdp
 
 - `pam_sss.so` in auth/account/session;
 - `pam_limits.so` for resource limits;
-- `pam_systemd.so` if logind integration is required;
+- no `pam_systemd.so` when `[session].logind_session = true`; this is a mandatory operator
+  precondition because `frdp-sesmand` owns the login1 registration and does not parse PAM stacks;
 - correct behavior for expired passwords, locked accounts, and denied groups.
 
 The NLA password-backed flow is non-interactive. The normal `frdp-authd` broker path sets the password
@@ -88,7 +89,6 @@ auth      sufficient pam_sss.so try_first_pass
 auth      required   pam_deny.so
 account   required   pam_sss.so
 session   required   pam_limits.so
-session   optional   pam_systemd.so
 session   required   pam_sss.so
 password  sufficient pam_sss.so use_authtok
 ```
@@ -99,6 +99,14 @@ the PAM handle if the manager exits and writes a synchronized close receipt befo
 `/run/frdp-authd/authd.sock` and `/run/frdp-sesmand/sesmand.sock`. The old peer-worker direct PAM
 fallback has been removed; use `frdpd --pam-auth-test` for local PAM smoke checks without starting the
 full helper topology.
+
+For host login1 integration, set `logind_session = true` in `[session]` and keep
+`systemd_scope = false`. The manager registers the blocked agent as a remote X11 session before
+privilege drop, passes `XDG_SESSION_ID` and `XDG_RUNTIME_DIR` through the launch barrier, and gives
+the login1 FIFO to the durable PAM owner. Startup/reload and session creation fail closed when
+login1 is unavailable. Normal close calls `ReleaseSession`; manager-crash recovery closes the
+owner-held FIFO after process termination and before PAM close. This mode requires a PAM stack without
+`pam_systemd.so`.
 
 ## SSSD operations
 
@@ -213,7 +221,7 @@ Valid orphan close receipts also authorize same-inode removal of the correspondi
 display reservations are globally reconciled against their recorded manager PID/start time on startup. A
 durable `pam-<session>.failed` marker or a stale owner endpoint without a valid close receipt blocks startup
 for operator investigation; neither is interpreted as successful PAM cleanup.
-systemd-logind registration and an individual per-session runtime quota API remain open.
+Installed/provider login1 crash evidence and an individual per-session runtime quota API remain open.
 
 SELinux and AppArmor draft profiles install as inactive examples under `/usr/share/frdpd/security`. They are
 not loaded automatically and must be reviewed, adapted, and validated for the target distribution before use.

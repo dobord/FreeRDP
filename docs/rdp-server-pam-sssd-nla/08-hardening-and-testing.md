@@ -172,8 +172,10 @@ applies TERM grace and KILL escalation, so a descendant cannot destroy the pidfd
 anchor. Receipt-backed orphan socket cleanup and PID/start-time
 display-reservation reconciliation cover the earlier artifact-creation window.
 The close receipt is consumed only after artifact plus metadata removal succeeds.
-systemd-logind registration and an individual per-session runtime quota API
-remain open.
+Optional explicit systemd-logind registration binds the blocked agent by pidfd when supported,
+passes the validated session environment through the launch barrier, and retains the login1 FIFO
+in the PAM owner across manager failure. Its root/systemd component lifecycle test is present;
+installed/provider crash coverage and an individual per-session runtime quota API remain open.
 
 ## Package signing and reproducible builds
 

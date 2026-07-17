@@ -106,10 +106,15 @@ auth      sufficient pam_sss.so forward_pass
 auth      required   pam_deny.so
 account   required   pam_sss.so
 session   required   pam_limits.so
-session   optional   pam_systemd.so
 session   required   pam_sss.so
 password  sufficient pam_sss.so use_authtok
 ```
+
+This example is the required shape when `[session].logind_session = true`: omit
+`pam_systemd.so` because `frdp-sesmand` performs the login1 registration and does not inspect the
+PAM stack for duplicate ownership. Deployments that deliberately delegate registration to
+`pam_systemd.so` must keep `logind_session = false`, but that alternative does not receive the
+explicit blocked-agent/FIFO lifecycle described here.
 
 ## Name normalization
 
