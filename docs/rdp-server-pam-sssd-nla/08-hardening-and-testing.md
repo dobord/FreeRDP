@@ -175,7 +175,9 @@ The close receipt is consumed only after artifact plus metadata removal succeeds
 Optional explicit systemd-logind registration binds the blocked agent by pidfd when supported,
 passes the validated session environment through the launch barrier, and retains the login1 FIFO
 in the PAM owner across manager failure. Its root/systemd component lifecycle test is present;
-installed/provider crash coverage and an individual per-session runtime quota API remain open.
+installed/provider crash coverage remains open. Per-session runtime quota control is covered separately:
+the typed IPC/CLI tests enforce the complete bounded tuple, and a root/systemd CTest verifies initial,
+finite, unlimited, and config-reload-reset values directly through the live scope properties.
 
 ## Package signing and reproducible builds
 

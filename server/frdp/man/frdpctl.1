@@ -14,6 +14,13 @@ frdpctl \- inspect and control FRDP managed sessions
 .br
 .B frdpctl reload
 .RI [ --socket " path" ]
+.br
+.B frdpctl set-session-limits
+.I id
+.BI --max-processes " n"
+.BI --memory-max-mb " n"
+.BI --cpu-quota-percent " n"
+.RI [ --socket " path" ]
 .SH DESCRIPTION
 .B frdpctl
 uses the local session-manager IPC endpoint to report service reachability,
@@ -33,7 +40,14 @@ Close the named managed session and its owned resources.
 .B reload
 Reload the PAM service and resource-limit policy used for future sessions.
 Heartbeat policy is also reloaded and its schedule is reset for existing
-sessions.
+sessions.  Existing scoped sessions are reset to the configured process,
+memory, and CPU cgroup limit tuple.
+.TP
+.BI set-session-limits " id"
+Set the complete runtime cgroup limit tuple for one managed scoped session.
+Zero means unlimited.  Process and memory values accept 0 through 1048576;
+CPU percent accepts 0 through 10000.  The session manager may reject sessions
+without transient systemd scope ownership.
 .SH OPTIONS
 .TP
 .BI --socket " path"

@@ -226,7 +226,20 @@ Valid orphan close receipts also authorize same-inode removal of the correspondi
 display reservations are globally reconciled against their recorded manager PID/start time on startup. A
 durable `pam-<session>.failed` marker or a stale owner endpoint without a valid close receipt blocks startup
 for operator investigation; neither is interpreted as successful PAM cleanup.
-An individual per-session runtime quota API remains open.
+Operators can replace the complete cgroup tuple for one existing scoped session without restarting it:
+
+```sh
+frdpctl set-session-limits <session-id> \
+  --max-processes 256 --memory-max-mb 2048 --cpu-quota-percent 100
+```
+
+All three options are mandatory; `0` means unlimited for that property. The command is rejected for an
+unknown session, a session created without `systemd_scope`, or a value outside the configuration bounds.
+The manager applies the tuple atomically from the operator's perspective: a failed update restores that
+session's complete previous cgroup tuple, and an unconfirmed rollback stops the manager so normal cleanup
+runs. A successful `frdpctl reload` deliberately resets every existing scoped session, including runtime
+overrides, to the tuple in `frdpd.toml`. POSIX `RLIMIT_NPROC` and `RLIMIT_AS` remain launch-time guards and
+are not changed by this command.
 
 SELinux and AppArmor draft profiles install as inactive examples under `/usr/share/frdpd/security`. They are
 not loaded automatically and must be reviewed, adapted, and validated for the target distribution before use.

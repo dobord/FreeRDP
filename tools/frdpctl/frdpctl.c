@@ -12,6 +12,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "config/frdp-config.h"
 #include "ipc/frdp-ipc.h"
 
 #define FRDPCTL_DEFAULT_SESSION_SOCKET "/run/frdp-sesmand/sesmand.sock"
@@ -29,6 +30,12 @@ typedef struct
 
 typedef frdpctlListSessionsOptions frdpctlReloadOptions;
 
+typedef struct
+{
+    const char *socket_path;
+    frdpSessionLimitsRequest request;
+} frdpctlSessionLimitsOptions;
+
 static void usage(const char *argv0)
 {
     printf("Usage: %s <command> [options]\n", argv0);
@@ -37,6 +44,8 @@ static void usage(const char *argv0)
     printf("  list-sessions [--socket <path>]\n");
     printf("  kill-session <id> [--socket <path>]\n");
     printf("  reload [--socket <path>]\n");
+    printf("  set-session-limits <id> --max-processes <n> --memory-max-mb <n>\n");
+    printf("    --cpu-quota-percent <n> [--socket <path>]\n");
 }
 
 static int copy_field(char *dst, size_t dst_size, const char *value)
@@ -125,6 +134,63 @@ static int parse_list_sessions_options(int argc, char **argv, frdpctlListSession
         return -1;
     }
     return 0;
+}
+
+static int parse_uint32_limit(const char *value, uint32_t maximum, uint32_t *result)
+{
+    char *end = NULL;
+    unsigned long parsed = 0;
+
+    if (!value || !result || (value[0] == '\0') ||
+        (strspn(value, "0123456789") != strlen(value)))
+        return -1;
+    errno = 0;
+    parsed = strtoul(value, &end, 10);
+    if ((errno != 0) || !end || (*end != '\0') || (parsed > maximum))
+        return -1;
+    *result = (uint32_t)parsed;
+    return 0;
+}
+
+static int parse_session_limits_options(int argc, char **argv,
+                                        frdpctlSessionLimitsOptions *options)
+{
+    int seen_cpu = 0;
+    int seen_memory = 0;
+    int seen_processes = 0;
+
+    if (!options || (argc < 3))
+        return -1;
+    memset(options, 0, sizeof(*options));
+    options->socket_path = FRDPCTL_DEFAULT_SESSION_SOCKET;
+    if (copy_field(options->request.session_id, sizeof(options->request.session_id), argv[2]) != 0)
+        return -1;
+
+    for (int i = 3; i < argc; i++) {
+        if ((i + 1) >= argc)
+            return -1;
+        if (strcmp(argv[i], "--socket") == 0) {
+            options->socket_path = argv[++i];
+        } else if ((strcmp(argv[i], "--max-processes") == 0) && !seen_processes) {
+            seen_processes = 1;
+            if (parse_uint32_limit(argv[++i], FRDP_SESSION_MAX_PROCESSES_LIMIT,
+                                   &options->request.max_processes) != 0)
+                return -1;
+        } else if ((strcmp(argv[i], "--memory-max-mb") == 0) && !seen_memory) {
+            seen_memory = 1;
+            if (parse_uint32_limit(argv[++i], FRDP_SESSION_MEMORY_MAX_MB_LIMIT,
+                                   &options->request.memory_max_mb) != 0)
+                return -1;
+        } else if ((strcmp(argv[i], "--cpu-quota-percent") == 0) && !seen_cpu) {
+            seen_cpu = 1;
+            if (parse_uint32_limit(argv[++i], FRDP_SESSION_CPU_QUOTA_PERCENT_LIMIT,
+                                   &options->request.cpu_quota_percent) != 0)
+                return -1;
+        } else {
+            return -1;
+        }
+    }
+    return (seen_processes && seen_memory && seen_cpu) ? 0 : -1;
 }
 
 static void terminate_session_list_response_strings(frdpSessionListResponse *response)
@@ -341,6 +407,51 @@ static int send_reload_request(const char *socket_path)
     return 0;
 }
 
+static int send_session_limits_request(const frdpctlSessionLimitsOptions *options)
+{
+    frdpControlResponse response;
+    frdpSessionLimitsRequest request;
+    int fd = -1;
+
+    if (!options)
+        return 2;
+    memset(&response, 0, sizeof(response));
+    request = options->request;
+    snprintf(request.correlation_id, sizeof(request.correlation_id), "frdpctl-%ld", (long)getpid());
+    fd = frdp_ipc_connect(options->socket_path);
+    if (fd < 0) {
+        char escaped_socket[sizeof(((struct sockaddr_un *)0)->sun_path) * 4] = { 0 };
+
+        escape_text(options->socket_path, escaped_socket, sizeof(escaped_socket));
+        fprintf(stderr, "unable to connect to session manager socket %s: %s\n", escaped_socket,
+                strerror(errno));
+        return 3;
+    }
+    if ((frdp_ipc_send_session_limits_request(fd, &request) != 0) ||
+        (frdp_ipc_recv_session_limits_response(fd, &response) != 0)) {
+        fprintf(stderr, "session limits IPC failed\n");
+        frdp_ipc_close(fd);
+        return 3;
+    }
+    frdp_ipc_close(fd);
+    response.message[sizeof(response.message) - 1] = '\0';
+    response.error[sizeof(response.error) - 1] = '\0';
+    if (!response.success) {
+        char escaped_error[sizeof(response.error) * 4] = { 0 };
+
+        escape_text(response.error[0] ? response.error : "unknown", escaped_error,
+                    sizeof(escaped_error));
+        fprintf(stderr, "session limits failed: %s\n", escaped_error);
+        return 4;
+    }
+    char escaped_message[sizeof(response.message) * 4] = { 0 };
+
+    escape_text(response.message[0] ? response.message : "accepted", escaped_message,
+                sizeof(escaped_message));
+    printf("Session limits %s\n", escaped_message);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
@@ -380,6 +491,16 @@ int main(int argc, char **argv)
             return 1;
         }
         return send_reload_request(options.socket_path);
+    } else if (strcmp(cmd, "set-session-limits") == 0) {
+        frdpctlSessionLimitsOptions options;
+
+        if (parse_session_limits_options(argc, argv, &options) != 0) {
+            fprintf(stderr, "Usage: %s set-session-limits <id> --max-processes <n> "
+                            "--memory-max-mb <n> --cpu-quota-percent <n> [--socket <path>]\n",
+                    argv[0]);
+            return 1;
+        }
+        return send_session_limits_request(&options);
     } else {
         fprintf(stderr, "Unknown command: %s\n", cmd);
         usage(argv[0]);

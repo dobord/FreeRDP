@@ -1183,6 +1183,75 @@ int frdp_ipc_recv_session_reload_response(int fd, frdpControlResponse *response)
     return frdp_ipc_recv_control_response(fd, FRDP_IPC_SESSION_RELOAD_RESPONSE, response);
 }
 
+int frdp_ipc_send_session_limits_request(int fd, const frdpSessionLimitsRequest *request)
+{
+    uint8_t wire[FRDP_IPC_SESSION_LIMITS_REQUEST_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!request) {
+        errno = EINVAL;
+        return -1;
+    }
+    memcpy(&wire[offset], request->correlation_id, sizeof(request->correlation_id));
+    offset += sizeof(request->correlation_id);
+    memcpy(&wire[offset], request->session_id, sizeof(request->session_id));
+    offset += sizeof(request->session_id);
+    frdp_ipc_write_u32_le(&wire[offset], request->max_processes);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], request->memory_max_mb);
+    offset += 4U;
+    frdp_ipc_write_u32_le(&wire[offset], request->cpu_quota_percent);
+
+    if (frdp_ipc_send_header(fd, FRDP_IPC_SESSION_LIMITS_REQUEST, sizeof(wire)) != 0)
+        goto cleanup;
+    rc = frdp_ipc_send(fd, wire, sizeof(wire));
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_recv_session_limits_request_payload(int fd, frdpSessionLimitsRequest *request,
+                                                 uint32_t payload_len)
+{
+    uint8_t wire[FRDP_IPC_SESSION_LIMITS_REQUEST_WIRE_SIZE] = {0};
+    size_t offset = 0;
+    int rc = -1;
+
+    if (!request || (payload_len != sizeof(wire))) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_recv(fd, wire, sizeof(wire)) != (int)sizeof(wire))
+        goto cleanup;
+    memset(request, 0, sizeof(*request));
+    memcpy(request->correlation_id, &wire[offset], sizeof(request->correlation_id));
+    offset += sizeof(request->correlation_id);
+    memcpy(request->session_id, &wire[offset], sizeof(request->session_id));
+    offset += sizeof(request->session_id);
+    request->max_processes = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    request->memory_max_mb = frdp_ipc_read_u32_le(&wire[offset]);
+    offset += 4U;
+    request->cpu_quota_percent = frdp_ipc_read_u32_le(&wire[offset]);
+    rc = 0;
+
+cleanup:
+    frdp_ipc_clear_secret(wire, sizeof(wire));
+    return rc;
+}
+
+int frdp_ipc_send_session_limits_response(int fd, const frdpControlResponse *response)
+{
+    return frdp_ipc_send_control_response(fd, FRDP_IPC_SESSION_LIMITS_RESPONSE, response);
+}
+
+int frdp_ipc_recv_session_limits_response(int fd, frdpControlResponse *response)
+{
+    return frdp_ipc_recv_control_response(fd, FRDP_IPC_SESSION_LIMITS_RESPONSE, response);
+}
+
 int frdp_ipc_send_helper_health_request(int fd)
 {
     return frdp_ipc_send_header(fd, FRDP_IPC_HELPER_HEALTH_REQUEST, 0);

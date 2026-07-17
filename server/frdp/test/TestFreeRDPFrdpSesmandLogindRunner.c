@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -12,18 +13,23 @@
 
 #define FRDP_SYSTEMD_SKIP 77
 
-int main(void)
+int main(int argc, char* argv[])
 {
 	char unit[96] = { 0 };
+	const char* subcase = NULL;
 	pid_t child = -1;
 	int status = 0;
 
+	if ((argc != 2) || ((strcmp(argv[1], "login1-owner-crash") != 0) &&
+	                    (strcmp(argv[1], "scope-runtime-limits") != 0)))
+		return 2;
+	subcase = argv[1];
 	if (geteuid() != 0)
 	{
-		printf("frdp-sesmand login1 lifecycle skipped: root required\n");
+		printf("frdp-sesmand system lifecycle skipped: root required\n");
 		return FRDP_SYSTEMD_SKIP;
 	}
-	if (snprintf(unit, sizeof(unit), "--unit=frdp-sesmand-login1-test-%ld", (long)getpid()) >=
+	if (snprintf(unit, sizeof(unit), "--unit=frdp-sesmand-system-test-%ld", (long)getpid()) >=
 	    (int)sizeof(unit))
 		return 1;
 	child = fork();
@@ -33,7 +39,7 @@ int main(void)
 	{
 		execl(FRDP_SYSTEMD_RUN_BINARY, FRDP_SYSTEMD_RUN_BINARY, "--quiet", "--wait", "--pipe",
 		      "--collect", "--service-type=exec", unit, FRDP_TEST_BINARY,
-		      "TestFreeRDPFrdpServiceIpc", "login1-owner-crash", (char*)NULL);
+		      "TestFreeRDPFrdpServiceIpc", subcase, (char*)NULL);
 		_exit(127);
 	}
 	do

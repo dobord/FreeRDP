@@ -266,6 +266,28 @@ static int handle_reload_failure_request(int fd)
 	return frdp_ipc_send_session_reload_response(fd, &response);
 }
 
+static int handle_session_limits_request(int fd)
+{
+	frdpIpcHeader header = { 0 };
+	frdpSessionLimitsRequest request = { 0 };
+	frdpControlResponse response = { 0 };
+
+	if ((frdp_ipc_recv_header(fd, &header) != (int)sizeof(header)) ||
+	    (header.type != FRDP_IPC_SESSION_LIMITS_REQUEST) ||
+	    (header.payload_len != FRDP_IPC_SESSION_LIMITS_REQUEST_WIRE_SIZE) ||
+	    (frdp_ipc_recv_session_limits_request_payload(fd, &request, header.payload_len) != 0))
+		return -1;
+	request.correlation_id[sizeof(request.correlation_id) - 1] = '\0';
+	request.session_id[sizeof(request.session_id) - 1] = '\0';
+	if ((strncmp(request.correlation_id, "frdpctl-", strlen("frdpctl-")) != 0) ||
+	    (strcmp(request.session_id, "session-1") != 0) || (request.max_processes != 17U) ||
+	    (request.memory_max_mb != 64U) || (request.cpu_quota_percent != 250U))
+		return -1;
+	response.success = 1;
+	snprintf(response.message, sizeof(response.message), "updated session-1");
+	return frdp_ipc_send_session_limits_response(fd, &response);
+}
+
 static int make_socket(char* dir, size_t dir_size, char* path, size_t path_size)
 {
 	int fd = -1;
@@ -728,6 +750,76 @@ static int test_reload_escapes_error(void)
 	return 0;
 }
 
+static int test_set_session_limits(void)
+{
+	frdpctlRunResult result = { 0 };
+	char* argv[] = { FRDPCTL_BINARY, "set-session-limits", "session-1", "--max-processes",
+		             "17", "--memory-max-mb", "64", "--cpu-quota-percent", "250",
+		             "--socket", NULL, NULL };
+
+	if (run_with_server(argv, 10, handle_session_limits_request, &result) != 0)
+		return -1;
+	if ((result.status != 0) ||
+	    (strcmp(result.stdout_data, "Session limits updated session-1\n") != 0) ||
+	    (strcmp(result.stderr_data, "") != 0))
+		return -1;
+	return 0;
+}
+
+static int expect_invalid_session_limits(char** argv, const char* dir)
+{
+	frdpctlRunResult result = { 0 };
+
+	if ((run_frdpctl_capture(argv, dir, &result) != 0) || (result.status != 1) ||
+	    (strcmp(result.stdout_data, "") != 0) ||
+	    (strncmp(result.stderr_data, "Usage: ", strlen("Usage: ")) != 0))
+		return -1;
+	return 0;
+}
+
+static int test_rejects_invalid_session_limits(void)
+{
+	char dir[1024] = { 0 };
+	char socket_path[108] = { 0 };
+	int server_fd = -1;
+	int rc = -1;
+	char* missing[] = { FRDPCTL_BINARY, "set-session-limits", "session-1", "--max-processes",
+	                    "17", "--memory-max-mb", "64", NULL };
+	char* negative[] = { FRDPCTL_BINARY, "set-session-limits", "session-1", "--max-processes",
+	                     "-1", "--memory-max-mb", "64", "--cpu-quota-percent", "250", NULL };
+	char* processes_over[] = { FRDPCTL_BINARY, "set-session-limits", "session-1",
+	                           "--max-processes", "1048577", "--memory-max-mb", "64",
+	                           "--cpu-quota-percent", "250", NULL };
+	char* cpu_over[] = { FRDPCTL_BINARY, "set-session-limits", "session-1", "--max-processes",
+	                    "17", "--memory-max-mb", "64", "--cpu-quota-percent", "10001", NULL };
+	char* duplicate[] = { FRDPCTL_BINARY, "set-session-limits", "session-1", "--max-processes",
+	                     "17", "--max-processes", "18", "--memory-max-mb", "64",
+	                     "--cpu-quota-percent", "250", NULL };
+
+	server_fd = make_socket(dir, sizeof(dir), socket_path, sizeof(socket_path));
+	if (server_fd < 0)
+		goto cleanup;
+	close(server_fd);
+	server_fd = -1;
+	unlink(socket_path);
+	if ((expect_invalid_session_limits(missing, dir) != 0) ||
+	    (expect_invalid_session_limits(negative, dir) != 0) ||
+	    (expect_invalid_session_limits(processes_over, dir) != 0) ||
+	    (expect_invalid_session_limits(cpu_over, dir) != 0) ||
+	    (expect_invalid_session_limits(duplicate, dir) != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (server_fd >= 0)
+		close(server_fd);
+	if (socket_path[0] != '\0')
+		unlink(socket_path);
+	if (dir[0] != '\0')
+		rmdir(dir);
+	return rc;
+}
+
 int TestFreeRDPFrdpCtlIpc(int argc, char* argv[])
 {
 	(void)argc;
@@ -750,6 +842,10 @@ int TestFreeRDPFrdpCtlIpc(int argc, char* argv[])
 	if (test_reload_pam_service_message() != 0)
 		return -1;
 	if (test_reload_escapes_error() != 0)
+		return -1;
+	if (test_set_session_limits() != 0)
+		return -1;
+	if (test_rejects_invalid_session_limits() != 0)
 		return -1;
 	if (test_rejects_insecure_session_socket() != 0)
 		return -1;

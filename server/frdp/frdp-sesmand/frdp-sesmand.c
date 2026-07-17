@@ -45,6 +45,7 @@
 #include "session_cleanup.h"
 #include "session_disconnect.h"
 #include "session_identity.h"
+#include "session_limits.h"
 #include "session_logind.h"
 #include "session_metadata.h"
 #include "session_pam_owner.h"
@@ -82,6 +83,7 @@ typedef struct {
     uint32_t heartbeat_failures;
     int heartbeat_fd;
 	char scope_name[FRDP_SESMAND_SCOPE_NAME_SIZE];
+	frdpSessionResourcePolicy resource_policy;
 	frdpSesmandLogindSession logind_session;
 } session;
 
@@ -767,6 +769,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 	display_reservation_fd = -1;
 	s->heartbeat_fd = -1;
 	s->logind_session.fifo_fd = -1;
+	s->resource_policy = g_session_resource_policy;
 	strncpy(s->user, user, sizeof(s->user) - 1);
 	s->user[sizeof(s->user) - 1] = '\0';
 	s->uid = uid;
@@ -1222,6 +1225,21 @@ static int send_reload_response(int fd, int success, const char *message, const 
     return rc;
 }
 
+static int send_session_limits_response(int fd, int success, const char* message, const char* error)
+{
+	frdpControlResponse resp = { 0 };
+	int rc = 0;
+
+	resp.success = success;
+	if (message)
+		snprintf(resp.message, sizeof(resp.message), "%s", message);
+	if (error)
+		snprintf(resp.error, sizeof(resp.error), "%s", error);
+	rc = frdp_ipc_send_session_limits_response(fd, &resp);
+	SecureZeroMemory(&resp, sizeof(resp));
+	return rc;
+}
+
 static int verify_peer(int fd)
 {
     uint64_t peer_uid = 0;
@@ -1430,12 +1448,21 @@ static int load_configured_sesmand_policy(const char* config_path, char* service
 	return 0;
 }
 
+static int update_scope_limits(void* context, const char* scope_name,
+                               const frdpSessionResourcePolicy* policy)
+{
+	return frdp_sesmand_scope_update((frdpSesmandScopeManager*)context, scope_name, policy);
+}
+
 static int apply_sesmand_policy(const char* pam_service,
                                 const frdpSessionResourcePolicy* resource_policy,
                                 const frdpSessionHeartbeatPolicy* heartbeat_policy,
                                 const frdpSessionDisplayPolicy* display_policy)
 {
     const uint64_t now = monotonic_time_ms();
+	frdpSesmandSessionLimitsTarget targets[FRDP_CONFIG_MAX_SESSIONS] = { 0 };
+	size_t target_count = 0;
+	frdpSesmandSessionLimitsResult limits_result = FRDP_SESMAND_SESSION_LIMITS_APPLIED;
 
 	if (!resource_policy || !heartbeat_policy || !display_policy ||
 	    !session_display_backend_name(display_policy->backend) ||
@@ -1446,30 +1473,26 @@ static int apply_sesmand_policy(const char* pam_service,
 	if (resource_policy->logind_session &&
 	    (frdp_sesmand_logind_manager_init(&g_logind_manager) != 0))
 		return -1;
-	if ((resource_policy->max_processes != g_session_resource_policy.max_processes) ||
-	    (resource_policy->memory_max_mb != g_session_resource_policy.memory_max_mb) ||
-	    (resource_policy->cpu_quota_percent != g_session_resource_policy.cpu_quota_percent))
+	/* A successful reload is the explicit reset for per-session runtime overrides. */
+	for (int idx = 0; idx < session_count; idx++)
 	{
-		for (int idx = 0; idx < session_count; idx++)
-		{
-			if (sessions[idx].scope_name[0] == '\0')
-				continue;
-			if (frdp_sesmand_scope_update(&g_scope_manager, sessions[idx].scope_name,
-			                              resource_policy) != 0)
-			{
-				for (int rollback = 0; rollback <= idx; rollback++)
-				{
-					if ((sessions[rollback].scope_name[0] != '\0') &&
-					    (frdp_sesmand_scope_update(&g_scope_manager, sessions[rollback].scope_name,
-					                               &g_session_resource_policy) != 0))
-					{
-						g_stop_requested = 1;
-						return -2;
-					}
-				}
-				return -3;
-			}
-		}
+		if (sessions[idx].scope_name[0] == '\0')
+			continue;
+		targets[target_count].scope_name = sessions[idx].scope_name;
+		targets[target_count].previous = sessions[idx].resource_policy;
+		target_count++;
+	}
+	limits_result = frdp_sesmand_session_limits_transaction(
+	    targets, target_count, resource_policy, update_scope_limits, &g_scope_manager,
+	    &g_stop_requested);
+	if (limits_result == FRDP_SESMAND_SESSION_LIMITS_ROLLBACK_FAILED)
+		return -2;
+	if (limits_result != FRDP_SESMAND_SESSION_LIMITS_APPLIED)
+		return -3;
+	for (int idx = 0; idx < session_count; idx++)
+	{
+		if (sessions[idx].scope_name[0] != '\0')
+			sessions[idx].resource_policy = *resource_policy;
 	}
 	if (set_pam_service_name(pam_service) != 0)
 		return -1;
@@ -1583,6 +1606,46 @@ static int find_session_by_id(const char *session_id)
             return x;
     }
     return -1;
+}
+
+static int handle_session_limits_request(int fd, uint32_t payload_len)
+{
+	frdpSessionLimitsRequest request = { 0 };
+	frdpSesmandSessionLimitsTarget target = { 0 };
+	frdpSessionResourcePolicy updated = { 0 };
+	frdpSesmandSessionLimitsResult limits_result = FRDP_SESMAND_SESSION_LIMITS_UPDATE_FAILED;
+	char message[128] = { 0 };
+	int idx = -1;
+
+	if (frdp_ipc_recv_session_limits_request_payload(fd, &request, payload_len) != 0)
+		return send_session_limits_response(fd, 0, NULL, "invalid session limits request");
+	request.correlation_id[sizeof(request.correlation_id) - 1] = '\0';
+	request.session_id[sizeof(request.session_id) - 1] = '\0';
+	if ((request.correlation_id[0] == '\0') || (request.session_id[0] == '\0') ||
+	    (request.max_processes > FRDP_SESSION_MAX_PROCESSES_LIMIT) ||
+	    (request.memory_max_mb > FRDP_SESSION_MEMORY_MAX_MB_LIMIT) ||
+	    (request.cpu_quota_percent > FRDP_SESSION_CPU_QUOTA_PERCENT_LIMIT))
+		return send_session_limits_response(fd, 0, NULL, "invalid session limits request");
+	idx = find_session_by_id(request.session_id);
+	if (idx < 0)
+		return send_session_limits_response(fd, 0, NULL, "session not found");
+	if (sessions[idx].scope_name[0] == '\0')
+		return send_session_limits_response(fd, 0, NULL, "session has no systemd scope");
+	updated = sessions[idx].resource_policy;
+	updated.max_processes = request.max_processes;
+	updated.memory_max_mb = request.memory_max_mb;
+	updated.cpu_quota_percent = request.cpu_quota_percent;
+	target.scope_name = sessions[idx].scope_name;
+	target.previous = sessions[idx].resource_policy;
+	limits_result = frdp_sesmand_session_limits_transaction(
+	    &target, 1U, &updated, update_scope_limits, &g_scope_manager, &g_stop_requested);
+	if (limits_result == FRDP_SESMAND_SESSION_LIMITS_ROLLBACK_FAILED)
+		return send_session_limits_response(fd, 0, NULL, "session limits rollback failed");
+	if (limits_result != FRDP_SESMAND_SESSION_LIMITS_APPLIED)
+		return send_session_limits_response(fd, 0, NULL, "session limits update failed");
+	sessions[idx].resource_policy = updated;
+	snprintf(message, sizeof(message), "updated %s", request.session_id);
+	return send_session_limits_response(fd, 1, message, NULL);
 }
 
 static int reconnect_existing_session(int fd, const char *correlation_id,
@@ -2201,6 +2264,9 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
             } else {
                 (void)send_reload_response(cfd, 1, "accepted", NULL);
             }
+		} else if ((hdr.type == FRDP_IPC_SESSION_LIMITS_REQUEST) &&
+		           (hdr.payload_len == FRDP_IPC_SESSION_LIMITS_REQUEST_WIRE_SIZE)) {
+			(void)handle_session_limits_request(cfd, hdr.payload_len);
         } else if (((hdr.type == FRDP_IPC_SESSION_REQUEST_V3) &&
                     (hdr.payload_len == FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE)) ||
                    ((hdr.type == FRDP_IPC_SESSION_CLOSE_REQUEST) &&

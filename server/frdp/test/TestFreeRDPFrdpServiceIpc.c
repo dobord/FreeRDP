@@ -398,6 +398,19 @@ static void restore_path(char* saved_path)
 	free(saved_path);
 }
 
+static int process_is_in_user_slice(void)
+{
+	char contents[4096] = { 0 };
+	FILE* fp = fopen("/proc/self/cgroup", "r");
+
+	if (!fp)
+		return 0;
+	const size_t length = fread(contents, 1, sizeof(contents) - 1U, fp);
+	const int read_ok = !ferror(fp) && feof(fp);
+	fclose(fp);
+	return read_ok && (length > 0) && (strstr(contents, "/user.slice/") != NULL);
+}
+
 static int stop_helper(frdpTestHelper* helper)
 {
 	int status = 0;
@@ -1085,6 +1098,8 @@ static int write_pam_fixture_file(const char* path, const char* contents)
 	return -1;
 }
 
+#endif
+
 static int copy_test_executable(const char* source, const char* destination)
 {
 	char buffer[16384] = { 0 };
@@ -1139,6 +1154,8 @@ cleanup:
 		unlink(destination);
 	return rc;
 }
+
+#if defined(FRDP_PAM_WRAPPER_LIBRARY) && defined(FRDP_PAM_WRAPPER_MODULE_DIR)
 
 static int start_helper_with_pam_wrapper_config(const char* binary, const char* name,
                                                 const char* service_dir, const char* service,
@@ -2020,6 +2037,7 @@ static int test_sesmand_survives_truncated_clients(const char* socket_path)
 {
 	uint8_t open_request[FRDP_IPC_SESSION_REQUEST_V3_WIRE_SIZE] = { 0 };
 	uint8_t close_request[FRDP_IPC_SESSION_CLOSE_REQUEST_WIRE_SIZE] = { 0 };
+	uint8_t limits_request[FRDP_IPC_SESSION_LIMITS_REQUEST_WIRE_SIZE] = { 0 };
 
 	if (send_truncated_boundaries(socket_path, FRDP_IPC_SESSION_REQUEST_V3, open_request,
 	                              sizeof(open_request)) != 0)
@@ -2031,7 +2049,65 @@ static int test_sesmand_survives_truncated_clients(const char* socket_path)
 		return -1;
 	if (send_truncated_boundaries(socket_path, FRDP_IPC_SESSION_RELOAD_REQUEST, NULL, 0) != 0)
 		return -1;
+	if (send_truncated_boundaries(socket_path, FRDP_IPC_SESSION_LIMITS_REQUEST, limits_request,
+	                              sizeof(limits_request)) != 0)
+		return -1;
 	return test_sesmand_list_empty(socket_path);
+}
+
+static int test_sesmand_rejects_unknown_session_limits(const char* socket_path)
+{
+	frdpSessionLimitsRequest request = { 0 };
+	frdpControlResponse response = { 0 };
+	int fd = -1;
+	int rc = -1;
+
+	snprintf(request.correlation_id, sizeof(request.correlation_id), "limits-unknown");
+	snprintf(request.session_id, sizeof(request.session_id), "missing-session");
+	request.max_processes = 17U;
+	request.memory_max_mb = 64U;
+	request.cpu_quota_percent = 250U;
+	fd = frdp_ipc_connect(socket_path);
+	if ((fd < 0) || (frdp_ipc_send_session_limits_request(fd, &request) != 0) ||
+	    (frdp_ipc_recv_session_limits_response(fd, &response) != 0))
+		goto cleanup;
+	response.error[sizeof(response.error) - 1] = '\0';
+	if (!response.success && (strcmp(response.error, "session not found") == 0))
+		rc = 0;
+
+cleanup:
+	if (fd >= 0)
+		frdp_ipc_close(fd);
+	return rc;
+}
+
+static int expect_session_limits_failure(const char* socket_path, const char* session_id,
+                                         const char* expected_error)
+{
+	frdpSessionLimitsRequest request = { 0 };
+	frdpControlResponse response = { 0 };
+	int fd = -1;
+	int rc = -1;
+
+	if (!socket_path || !session_id || !expected_error)
+		return -1;
+	snprintf(request.correlation_id, sizeof(request.correlation_id), "limits-reject");
+	snprintf(request.session_id, sizeof(request.session_id), "%s", session_id);
+	request.max_processes = 17U;
+	request.memory_max_mb = 64U;
+	request.cpu_quota_percent = 250U;
+	fd = frdp_ipc_connect(socket_path);
+	if ((fd < 0) || (frdp_ipc_send_session_limits_request(fd, &request) != 0) ||
+	    (frdp_ipc_recv_session_limits_response(fd, &response) != 0))
+		goto cleanup;
+	response.error[sizeof(response.error) - 1] = '\0';
+	if (!response.success && (strcmp(response.error, expected_error) == 0))
+		rc = 0;
+
+cleanup:
+	if (fd >= 0)
+		frdp_ipc_close(fd);
+	return rc;
 }
 
 static int test_sesmand_reload(const char* socket_path, int expected_success,
@@ -2182,11 +2258,11 @@ cleanup:
 	return rc;
 }
 
-#if defined(FRDP_PAM_SESSION_TEST_MODULE) && defined(FRDP_PAM_WRAPPER_LIBRARY) && \
-    defined(FRDP_PAM_WRAPPER_MODULE_DIR)
 static int request_session_control(const char* socket_path, frdpIpcMessageType type,
                                    const char* correlation_id, const char* session_id,
                                    const char* user, frdpSessionResponse* response);
+#if defined(FRDP_PAM_SESSION_TEST_MODULE) && defined(FRDP_PAM_WRAPPER_LIBRARY) && \
+    defined(FRDP_PAM_WRAPPER_MODULE_DIR)
 static int list_single_session(const char* socket_path, const frdpSessionResponse* expected,
                                const char* user, const char* state, int32_t expected_agent_pid,
                                int32_t* agent_pid);
@@ -3197,19 +3273,6 @@ static int process_environment_has(pid_t pid, const char* expected)
 	return -1;
 }
 
-static int process_is_in_user_slice(void)
-{
-	char contents[4096] = { 0 };
-	FILE* fp = fopen("/proc/self/cgroup", "r");
-
-	if (!fp)
-		return 0;
-	const size_t length = fread(contents, 1, sizeof(contents) - 1U, fp);
-	const int read_ok = !ferror(fp) && feof(fp);
-	fclose(fp);
-	return read_ok && (length > 0) && (strstr(contents, "/user.slice/") != NULL);
-}
-
 static int test_sesmand_logind_owner_crash_cleanup(void)
 {
 	static const char service[] = "frdp-logind-owner-crash";
@@ -3436,6 +3499,7 @@ cleanup:
 	SecureZeroMemory(groups, sizeof(groups));
 	return rc;
 }
+
 #else
 static int test_authd_crash_during_pam(void)
 {
@@ -3467,6 +3531,204 @@ static int test_sesmand_logind_owner_crash_cleanup(void)
 	return 0;
 }
 #endif
+
+static int read_scope_limits(sd_bus* bus, const char* scope_name, uint64_t* tasks_max,
+                             uint64_t* memory_max, uint64_t* cpu_quota)
+{
+	sd_bus_error error = SD_BUS_ERROR_NULL;
+	sd_bus_message* reply = NULL;
+	const char* object_path = NULL;
+	int rc = -1;
+
+	if (!bus || !scope_name || !tasks_max || !memory_max || !cpu_quota)
+		return -1;
+	if (sd_bus_call_method(bus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+	                       "org.freedesktop.systemd1.Manager", "GetUnit", &error, &reply, "s",
+	                       scope_name) < 0)
+		goto cleanup;
+	if (sd_bus_message_read(reply, "o", &object_path) < 0)
+		goto cleanup;
+	if ((sd_bus_get_property_trivial(bus, "org.freedesktop.systemd1", object_path,
+	                                 "org.freedesktop.systemd1.Scope", "TasksMax", &error, 't',
+	                                 tasks_max) < 0) ||
+	    (sd_bus_get_property_trivial(bus, "org.freedesktop.systemd1", object_path,
+	                                 "org.freedesktop.systemd1.Scope", "MemoryMax", &error, 't',
+	                                 memory_max) < 0) ||
+	    (sd_bus_get_property_trivial(bus, "org.freedesktop.systemd1", object_path,
+	                                 "org.freedesktop.systemd1.Scope", "CPUQuotaPerSecUSec",
+	                                 &error, 't', cpu_quota) < 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	sd_bus_message_unref(reply);
+	sd_bus_error_free(&error);
+	return rc;
+}
+
+static int update_session_limits(const char* socket_path, const char* session_id,
+                                 uint32_t max_processes, uint32_t memory_max_mb,
+                                 uint32_t cpu_quota_percent)
+{
+	frdpSessionLimitsRequest request = { 0 };
+	frdpControlResponse response = { 0 };
+	int fd = -1;
+	int rc = -1;
+
+	snprintf(request.correlation_id, sizeof(request.correlation_id), "scope-limits");
+	snprintf(request.session_id, sizeof(request.session_id), "%s", session_id);
+	request.max_processes = max_processes;
+	request.memory_max_mb = memory_max_mb;
+	request.cpu_quota_percent = cpu_quota_percent;
+	fd = frdp_ipc_connect(socket_path);
+	if ((fd >= 0) && (frdp_ipc_send_session_limits_request(fd, &request) == 0) &&
+	    (frdp_ipc_recv_session_limits_response(fd, &response) == 0) && response.success)
+		rc = 0;
+	if (fd >= 0)
+		frdp_ipc_close(fd);
+	return rc;
+}
+
+static int test_sesmand_scope_runtime_limits(void)
+{
+#if !defined(FRDP_XVFB_EXECUTABLE)
+	printf("frdp-sesmand scope runtime limits skipped: Xvfb unavailable\n");
+	return FRDP_TEST_SKIP;
+#else
+	frdpTestHelper helper = { .pid = -1 };
+	frdpSessionResponse opened = { 0 };
+	frdpSessionResponse closed = { 0 };
+	sd_bus* bus = NULL;
+	char dir[1024] = { 0 };
+	char agent_dir[1024] = { 0 };
+	char agent_path[1024] = { 0 };
+	char key_path[1024] = { 0 };
+	char config_path[1024] = { 0 };
+	char config[512] = { 0 };
+	char scope_name[160] = { 0 };
+	char updated_path[4096] = { 0 };
+	char user[64] = { 0 };
+	uint64_t uid = 0;
+	uint64_t gid = 0;
+	uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+	uint64_t tasks_max = 0;
+	uint64_t memory_max = 0;
+	uint64_t cpu_quota = 0;
+	uint32_t group_count = 0;
+	char* saved_path = NULL;
+	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
+	int helper_started = 0;
+	int rc = -1;
+	const char* pam_service = NULL;
+	const char* stage = "prerequisites";
+
+	if (geteuid() != 0 || process_is_in_user_slice())
+		return FRDP_TEST_SKIP;
+	if (access("/etc/pam.d/common-session-noninteractive", R_OK) == 0)
+		pam_service = "common-session-noninteractive";
+	else if (access("/etc/pam.d/system-auth", R_OK) == 0)
+		pam_service = "system-auth";
+	if (!pam_service)
+	{
+		printf("frdp-sesmand scope runtime limits skipped: PAM service unavailable\n");
+		return FRDP_TEST_SKIP;
+	}
+	if (previous_key_path && !saved_key_path)
+		return -1;
+	if ((sd_bus_open_system(&bus) < 0) ||
+	    (lookup_user("nobody", user, sizeof(user), &uid, &gid, groups, &group_count) != 0) ||
+	    (uid == 0) || (make_runtime_dir(dir, sizeof(dir), "scope-runtime-limits") != 0) ||
+	    (make_runtime_dir(agent_dir, sizeof(agent_dir), "scope-runtime-agent") != 0) ||
+	    (chown(agent_dir, (uid_t)uid, (gid_t)gid) != 0))
+		goto cleanup;
+	if ((snprintf(key_path, sizeof(key_path), "%s/auth-token.key", dir) >=
+	     (int)sizeof(key_path)) ||
+	    (snprintf(agent_path, sizeof(agent_path), "%s/frdp-session-agent", agent_dir) >=
+	     (int)sizeof(agent_path)) ||
+	    (snprintf(config_path, sizeof(config_path), "%s/frdpd.toml", dir) >=
+	     (int)sizeof(config_path)) ||
+	    (snprintf(config, sizeof(config),
+	              "[auth]\npam_service = \"%s\"\n[session]\n"
+	              "systemd_scope = true\nmax_processes = 512\nmemory_max_mb = 64\n"
+	              "cpu_quota_percent = 25\n",
+	              pam_service) >= (int)sizeof(config)) ||
+	    (write_sesmand_config_body(config_path, config) != 0) ||
+	    (copy_test_executable(FRDP_SESSION_AGENT_BINARY, agent_path) != 0) ||
+	    (setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0) ||
+	    (prepend_binary_dirs_to_path(FRDP_SESSION_AGENT_BINARY, FRDP_XVFB_EXECUTABLE,
+	                                 &saved_path) != 0) ||
+	    (snprintf(updated_path, sizeof(updated_path), "%s:%s", agent_dir, getenv("PATH")) >=
+	     (int)sizeof(updated_path)) ||
+	    (setenv("PATH", updated_path, 1) != 0))
+		goto cleanup;
+	stage = "helper-start";
+	if (start_helper_with_config(FRDP_SESMAND_BINARY, "scope-runtime-limits", config_path,
+	                             &helper) != 0)
+		goto cleanup;
+	helper_started = 1;
+	restore_path(saved_path);
+	saved_path = NULL;
+	stage = "open";
+	if (request_live_session(helper.socket_path, user, "198.51.100.80", "scope-open", NULL, uid,
+	                         gid, groups, group_count, &opened, NULL) != 0)
+		goto cleanup;
+	if (snprintf(scope_name, sizeof(scope_name), "frdp-session-%s.scope", opened.session_id) >=
+	    (int)sizeof(scope_name))
+		goto cleanup;
+	stage = "initial-limits";
+	if ((read_scope_limits(bus, scope_name, &tasks_max, &memory_max, &cpu_quota) != 0) ||
+	    (tasks_max != 512U) || (memory_max != 64U * 1024U * 1024U) ||
+	    (cpu_quota != 250000U))
+		goto cleanup;
+	stage = "finite-update";
+	if ((update_session_limits(helper.socket_path, opened.session_id, 513U, 96U, 50U) != 0) ||
+	    (read_scope_limits(bus, scope_name, &tasks_max, &memory_max, &cpu_quota) != 0) ||
+	    (tasks_max != 513U) || (memory_max != 96U * 1024U * 1024U) ||
+	    (cpu_quota != 500000U))
+		goto cleanup;
+	stage = "unlimited-update";
+	if ((update_session_limits(helper.socket_path, opened.session_id, 0U, 0U, 0U) != 0) ||
+	    (read_scope_limits(bus, scope_name, &tasks_max, &memory_max, &cpu_quota) != 0) ||
+	    (tasks_max != UINT64_MAX) || (memory_max != UINT64_MAX) || (cpu_quota != UINT64_MAX))
+		goto cleanup;
+	stage = "reload-reset";
+	if ((test_sesmand_reload(helper.socket_path, 1, NULL, NULL) != 0) ||
+	    (read_scope_limits(bus, scope_name, &tasks_max, &memory_max, &cpu_quota) != 0) ||
+	    (tasks_max != 512U) || (memory_max != 64U * 1024U * 1024U) ||
+	    (cpu_quota != 250000U))
+		goto cleanup;
+	stage = "close";
+	if (request_session_control(helper.socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST, "scope-close",
+	                            opened.session_id, user, &closed) != 0)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (rc != 0)
+		fprintf(stderr, "scope runtime limits failed at stage: %s\n", stage);
+	if (helper_started)
+		(void)stop_helper(&helper);
+	restore_path(saved_path);
+	if (saved_key_path)
+	{
+		(void)setenv(FRDP_AUTH_TOKEN_KEY_ENV, saved_key_path, 1);
+		free(saved_key_path);
+	}
+	else
+		unsetenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	sd_bus_unref(bus);
+	unlink(config_path);
+	unlink(key_path);
+	unlink(agent_path);
+	if (agent_dir[0])
+		rmdir(agent_dir);
+	if (dir[0])
+		rmdir(dir);
+	SecureZeroMemory(groups, sizeof(groups));
+	return rc;
+#endif
+}
 
 static int request_session_control(const char* socket_path, frdpIpcMessageType type,
                                    const char* correlation_id, const char* session_id,
@@ -3597,6 +3859,10 @@ static int test_sesmand_live_reconnect_lifecycle(void)
 		goto cleanup;
 	stage = "list-active";
 	if (list_single_session(helper.socket_path, &opened, user, "active", -1, &agent_pid) != 0)
+		goto cleanup;
+	stage = "reject-limits-without-scope";
+	if (expect_session_limits_failure(helper.socket_path, opened.session_id,
+	                                  "session has no systemd scope") != 0)
 		goto cleanup;
 	stage = "detach";
 	if (request_session_control(helper.socket_path, FRDP_IPC_SESSION_DISCONNECT_REQUEST,
@@ -4213,6 +4479,8 @@ static int test_sesmand_component(void)
 	stage = "reload payload";
 	if (test_sesmand_rejects_reload_payload(helper.socket_path) != 0)
 		goto cleanup;
+	if (test_sesmand_rejects_unknown_session_limits(helper.socket_path) != 0)
+		goto cleanup;
 	stage = "reload";
 	if (test_sesmand_reload(helper.socket_path, 1, "accepted", NULL) != 0)
 		goto cleanup;
@@ -4573,6 +4841,8 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 {
 	if ((argc > 1) && (strcmp(argv[1], "login1-owner-crash") == 0))
 		return test_sesmand_logind_owner_crash_cleanup();
+	if ((argc > 1) && (strcmp(argv[1], "scope-runtime-limits") == 0))
+		return test_sesmand_scope_runtime_limits();
 
 	if (test_authd_component() != 0)
 	{

@@ -35,7 +35,9 @@ typedef enum {
     FRDP_IPC_AGENT_CLIPBOARD_SET_RESPONSE = 24,
     FRDP_IPC_AGENT_CLIPBOARD_GET_REQUEST = 25,
     FRDP_IPC_AGENT_CLIPBOARD_GET_RESPONSE = 26,
-    FRDP_IPC_AUTH_RESPONSE_V2 = 27
+    FRDP_IPC_AUTH_RESPONSE_V2 = 27,
+    FRDP_IPC_SESSION_LIMITS_REQUEST = 28,
+    FRDP_IPC_SESSION_LIMITS_RESPONSE = 29
 } frdpIpcMessageType;
 
 typedef enum {
@@ -76,6 +78,8 @@ typedef struct {
 #define FRDP_IPC_SESSION_LIST_RESPONSE_WIRE_SIZE \
     (4U + 4U + (FRDP_IPC_MAX_SESSION_LIST_ENTRIES * FRDP_IPC_SESSION_LIST_ENTRY_WIRE_SIZE) + 128U)
 #define FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE (4U + 128U + 128U)
+#define FRDP_IPC_SESSION_LIMITS_REQUEST_WIRE_SIZE (64U + 64U + 4U + 4U + 4U)
+#define FRDP_IPC_SESSION_LIMITS_RESPONSE_WIRE_SIZE FRDP_IPC_SESSION_RELOAD_RESPONSE_WIRE_SIZE
 #define FRDP_IPC_AGENT_INPUT_WIRE_SIZE (64U + 64U + 4U + 4U + 4U + 4U)
 #define FRDP_IPC_AGENT_FRAME_REQUEST_WIRE_SIZE (64U + 64U + 4U + 4U + 4U + 4U + 4U)
 #define FRDP_IPC_AGENT_FRAME_RESPONSE_WIRE_SIZE \
@@ -195,6 +199,14 @@ typedef struct {
 typedef struct {
     char correlation_id[64];
     char session_id[64];
+    uint32_t max_processes;
+    uint32_t memory_max_mb;
+    uint32_t cpu_quota_percent;
+} frdpSessionLimitsRequest;
+
+typedef struct {
+    char correlation_id[64];
+    char session_id[64];
     uint32_t event_type;
     uint32_t flags;
     int32_t param1;
@@ -296,6 +308,11 @@ int frdp_ipc_send_session_list_response(int fd, const frdpSessionListResponse *r
 int frdp_ipc_recv_session_list_response(int fd, frdpSessionListResponse *response);
 int frdp_ipc_send_session_reload_response(int fd, const frdpControlResponse *response);
 int frdp_ipc_recv_session_reload_response(int fd, frdpControlResponse *response);
+int frdp_ipc_send_session_limits_request(int fd, const frdpSessionLimitsRequest *request);
+int frdp_ipc_recv_session_limits_request_payload(int fd, frdpSessionLimitsRequest *request,
+                                                 uint32_t payload_len);
+int frdp_ipc_send_session_limits_response(int fd, const frdpControlResponse *response);
+int frdp_ipc_recv_session_limits_response(int fd, frdpControlResponse *response);
 int frdp_ipc_send_helper_health_request(int fd);
 int frdp_ipc_send_helper_health_response(int fd, const frdpControlResponse *response);
 int frdp_ipc_recv_helper_health_response(int fd, frdpControlResponse *response);
