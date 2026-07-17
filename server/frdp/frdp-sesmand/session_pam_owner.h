@@ -17,6 +17,8 @@ int frdp_sesmand_pam_owner_start(const char* runtime_dir, const char* session_id
                                  frdpSesmandPamOwner* owner);
 int frdp_sesmand_pam_owner_bind_agent(const char* runtime_dir, const char* session_id,
                                       frdpSesmandPamOwner* owner, pid_t agent_pid, pid_t pgid);
+int frdp_sesmand_pam_owner_bind_logind(const char* runtime_dir, const char* session_id,
+                                       frdpSesmandPamOwner* owner, int fifo_fd);
 int frdp_sesmand_pam_owner_close(const char* runtime_dir, const char* session_id,
                                  frdpSesmandPamOwner* owner);
 int frdp_sesmand_pam_owner_prepare_close(const char* runtime_dir, const char* session_id,

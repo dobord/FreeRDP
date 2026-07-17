@@ -30,6 +30,7 @@
 #define FRDP_PAM_OWNER_BIND 1U
 #define FRDP_PAM_OWNER_CLOSE 2U
 #define FRDP_PAM_OWNER_RESPONSE 3U
+#define FRDP_PAM_OWNER_BIND_LOGIND 4U
 #define FRDP_PAM_OWNER_WIRE_SIZE 24U
 #define FRDP_PAM_OWNER_START_TIMEOUT_MS 20000
 #define FRDP_PAM_OWNER_COMMAND_TIMEOUT_MS 10000
@@ -341,14 +342,84 @@ static int send_message(int fd, uint32_t type, pid_t pid, pid_t pgid, int status
 	return send(fd, wire, sizeof(wire), MSG_NOSIGNAL) == (ssize_t)sizeof(wire) ? 0 : -1;
 }
 
-static int receive_message(int fd, uint32_t* type, pid_t* pid, pid_t* pgid, int* status)
+static int send_message_fd(int fd, uint32_t type, int passed_fd)
 {
 	unsigned char wire[FRDP_PAM_OWNER_WIRE_SIZE] = { 0 };
-	const ssize_t count = recv(fd, wire, sizeof(wire), 0);
+	unsigned char control[CMSG_SPACE(sizeof(int))] = { 0 };
+	struct iovec iov = { .iov_base = wire, .iov_len = sizeof(wire) };
+	struct msghdr message = { 0 };
+	struct cmsghdr* cmsg = NULL;
 
-	if (count != (ssize_t)sizeof(wire))
+	if ((passed_fd < 0) || (encode_message(wire, type, 0, 0, 0) != 0))
 		return -1;
-	return decode_message(wire, type, pid, pgid, status);
+	message.msg_iov = &iov;
+	message.msg_iovlen = 1U;
+	message.msg_control = control;
+	message.msg_controllen = sizeof(control);
+	cmsg = CMSG_FIRSTHDR(&message);
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+	memcpy(CMSG_DATA(cmsg), &passed_fd, sizeof(passed_fd));
+	return sendmsg(fd, &message, MSG_NOSIGNAL) == (ssize_t)sizeof(wire) ? 0 : -1;
+}
+
+static int receive_message_fd(int fd, uint32_t* type, pid_t* pid, pid_t* pgid, int* status,
+                              int* passed_fd)
+{
+	unsigned char wire[FRDP_PAM_OWNER_WIRE_SIZE] = { 0 };
+	unsigned char control[CMSG_SPACE(sizeof(int))] = { 0 };
+	struct iovec iov = { .iov_base = wire, .iov_len = sizeof(wire) };
+	struct msghdr message = { 0 };
+	struct cmsghdr* cmsg = NULL;
+	int received_fd = -1;
+
+	if (!passed_fd)
+		return -1;
+	*passed_fd = -1;
+	message.msg_iov = &iov;
+	message.msg_iovlen = 1U;
+	message.msg_control = control;
+	message.msg_controllen = sizeof(control);
+	const ssize_t count = recvmsg(fd, &message, MSG_CMSG_CLOEXEC);
+
+	if ((count != (ssize_t)sizeof(wire)) || (message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)))
+		return -1;
+	cmsg = CMSG_FIRSTHDR(&message);
+	if (cmsg)
+	{
+		if ((cmsg->cmsg_level == SOL_SOCKET) && (cmsg->cmsg_type == SCM_RIGHTS) &&
+		    (cmsg->cmsg_len >= CMSG_LEN(sizeof(int))))
+			memcpy(&received_fd, CMSG_DATA(cmsg), sizeof(received_fd));
+		if ((received_fd < 0) || (cmsg->cmsg_len != CMSG_LEN(sizeof(int))) ||
+		    CMSG_NXTHDR(&message, cmsg))
+		{
+			if (received_fd >= 0)
+				close(received_fd);
+			return -1;
+		}
+	}
+	if (decode_message(wire, type, pid, pgid, status) != 0)
+	{
+		if (received_fd >= 0)
+			close(received_fd);
+		return -1;
+	}
+	*passed_fd = received_fd;
+	return 0;
+}
+
+static int receive_message(int fd, uint32_t* type, pid_t* pid, pid_t* pgid, int* status)
+{
+	int passed_fd = -1;
+	const int rc = receive_message_fd(fd, type, pid, pgid, status, &passed_fd);
+
+	if (passed_fd >= 0)
+	{
+		close(passed_fd);
+		return -1;
+	}
+	return rc;
 }
 
 static int open_process_pidfd(pid_t pid)
@@ -658,6 +729,7 @@ static int run_owner(const char* runtime_dir, const char* endpoint, const char* 
 	int listener = -1;
 	int manager_pidfd = -1;
 	int agent_pidfd = -1;
+	int logind_fifo_fd = -1;
 	pid_t agent_pid = -1;
 	pid_t agent_pgid = -1;
 	int credentials_established = 0;
@@ -757,18 +829,20 @@ static int run_owner(const char* runtime_dir, const char* endpoint, const char* 
 		pid_t requested_pid = -1;
 		pid_t requested_pgid = -1;
 		int requested_status = 0;
+		int passed_fd = -1;
 
 		if (client < 0)
 			continue;
 		if (!peer_is_manager(client, NULL) ||
-		    (receive_message(client, &type, &requested_pid, &requested_pgid, &requested_status) !=
-		     0))
+		    (receive_message_fd(client, &type, &requested_pid, &requested_pgid, &requested_status,
+		                        &passed_fd) != 0))
 		{
 			close(client);
 			continue;
 		}
 		if ((type == FRDP_PAM_OWNER_BIND) && (agent_pidfd < 0) && (requested_pid > 1) &&
-		    (requested_pgid == requested_pid) && (getpgid(requested_pid) == requested_pgid))
+		    (passed_fd < 0) && (requested_pgid == requested_pid) &&
+		    (getpgid(requested_pid) == requested_pgid))
 		{
 			agent_pidfd = open_process_pidfd(requested_pid);
 			if (agent_pidfd >= 0)
@@ -782,7 +856,26 @@ static int run_owner(const char* runtime_dir, const char* endpoint, const char* 
 			close(client);
 			continue;
 		}
-		if (type == FRDP_PAM_OWNER_CLOSE)
+		if ((type == FRDP_PAM_OWNER_BIND_LOGIND) && (passed_fd >= 0) &&
+		    (logind_fifo_fd < 0) && (requested_pid == 0) && (requested_pgid == 0))
+		{
+			struct stat fifo_stat = { 0 };
+
+			if ((fstat(passed_fd, &fifo_stat) == 0) && S_ISFIFO(fifo_stat.st_mode) &&
+			    (fcntl(passed_fd, F_SETFD, FD_CLOEXEC) == 0))
+			{
+				logind_fifo_fd = passed_fd;
+				passed_fd = -1;
+				(void)send_message(client, FRDP_PAM_OWNER_RESPONSE, 0, 0, 0);
+			}
+			else
+				(void)send_message(client, FRDP_PAM_OWNER_RESPONSE, 0, 0, -1);
+			if (passed_fd >= 0)
+				close(passed_fd);
+			close(client);
+			continue;
+		}
+		if ((type == FRDP_PAM_OWNER_CLOSE) && (passed_fd < 0))
 		{
 			if (process_group_exists(agent_pgid))
 			{
@@ -792,6 +885,11 @@ static int run_owner(const char* runtime_dir, const char* endpoint, const char* 
 			}
 			const int was_open = session_open;
 
+			if (logind_fifo_fd >= 0)
+			{
+				close(logind_fifo_fd);
+				logind_fifo_fd = -1;
+			}
 			close_status = finish_pam_session(pamh, credentials_established, session_open);
 			pamh = NULL;
 			credentials_established = 0;
@@ -808,11 +906,15 @@ static int run_owner(const char* runtime_dir, const char* endpoint, const char* 
 			close(client);
 			goto cleanup;
 		}
+		if (passed_fd >= 0)
+			close(passed_fd);
 		(void)send_message(client, FRDP_PAM_OWNER_RESPONSE, 0, 0, -1);
 		close(client);
 	}
 
 cleanup:
+	if (logind_fifo_fd >= 0)
+		close(logind_fifo_fd);
 	if (pamh)
 	{
 		const int was_open = session_open;
@@ -958,6 +1060,32 @@ int frdp_sesmand_pam_owner_bind_agent(const char* runtime_dir, const char* sessi
 	if (!owner || !owner->active || (owner->pid <= 1) || (agent_pid <= 1) || (pgid != agent_pid))
 		return -1;
 	return request_owner(runtime_dir, session_id, FRDP_PAM_OWNER_BIND, agent_pid, pgid);
+}
+
+int frdp_sesmand_pam_owner_bind_logind(const char* runtime_dir, const char* session_id,
+                                       frdpSesmandPamOwner* owner, int fifo_fd)
+{
+	uint32_t response_type = 0;
+	pid_t response_pid = -1;
+	pid_t response_pgid = -1;
+	int response_status = -1;
+	int fd = -1;
+	int rc = -1;
+
+	if (!owner || !owner->active || (owner->pid <= 1) || (fifo_fd < 0) ||
+	    (connect_owner(runtime_dir, session_id, &fd) != 0) ||
+	    (send_message_fd(fd, FRDP_PAM_OWNER_BIND_LOGIND, fifo_fd) != 0) ||
+	    (receive_message(fd, &response_type, &response_pid, &response_pgid, &response_status) !=
+	     0) ||
+	    (response_type != FRDP_PAM_OWNER_RESPONSE) || (response_pid != 0) ||
+	    (response_pgid != 0) || (response_status != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (fd >= 0)
+		close(fd);
+	return rc;
 }
 
 static int wait_owner_child(pid_t pid)
