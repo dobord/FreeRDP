@@ -390,6 +390,8 @@ static int validate_session_resource_policy(const frdpConfig *config)
     if ((config->session_resources.cpu_quota_percent > 0) &&
         !config->session_resources.systemd_scope)
         return -1;
+    if (config->session_resources.systemd_scope && config->session_resources.logind_session)
+        return -1;
     return 0;
 }
 
@@ -463,6 +465,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
     int seen_session_memory_max_mb = 0;
     int seen_session_cpu_quota_percent = 0;
     int seen_session_systemd_scope = 0;
+    int seen_session_logind_session = 0;
     int seen_session_heartbeat_interval_ms = 0;
     int seen_session_heartbeat_timeout_ms = 0;
     int seen_session_heartbeat_failures = 0;
@@ -603,6 +606,7 @@ int frdp_config_load(const char *path, frdpConfig *config)
                                        (strcmp(key, "memory_max_mb") == 0) ||
                                        (strcmp(key, "cpu_quota_percent") == 0) ||
                                        (strcmp(key, "systemd_scope") == 0) ||
+                                       (strcmp(key, "logind_session") == 0) ||
                                        (strcmp(key, "agent_heartbeat_interval_ms") == 0) ||
                                        (strcmp(key, "agent_heartbeat_timeout_ms") == 0) ||
                                        (strcmp(key, "agent_heartbeat_failures") == 0))) ||
@@ -869,6 +873,18 @@ int frdp_config_load(const char *path, frdpConfig *config)
                 }
                 seen_session_systemd_scope = 1;
                 if (parse_bool_value(val, &config->session_resources.systemd_scope) != 0) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            else if (strcmp(key, "logind_session") == 0)
+            {
+                if (seen_session_logind_session) {
+                    fclose(f);
+                    return -1;
+                }
+                seen_session_logind_session = 1;
+                if (parse_bool_value(val, &config->session_resources.logind_session) != 0) {
                     fclose(f);
                     return -1;
                 }

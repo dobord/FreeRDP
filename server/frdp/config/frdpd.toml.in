@@ -42,6 +42,9 @@ display_backend = "xvfb"
 # Place each new desktop agent and its descendants in a fail-closed transient
 # systemd scope before exec. Keep false without a usable system manager/bus.
 # systemd_scope = false
+# Register each new desktop as a remote login1 session. This is an alternative
+# to systemd_scope and requires pam_systemd.so to be absent from the PAM stack.
+# logind_session = false
 # Optional CPU capacity for that scope as a percentage. 100 is one CPU and
 # values above 100 permit multiple CPUs. Requires systemd_scope=true.
 # cpu_quota_percent = 100

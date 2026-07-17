@@ -70,6 +70,8 @@ static int test_default_blocklist(void)
 		return -1;
 	if (config.session_resources.systemd_scope != 0)
 		return -1;
+	if (config.session_resources.logind_session != 0)
+		return -1;
 	if (config.session_heartbeat.interval_ms != FRDP_SESSION_HEARTBEAT_DEFAULT_INTERVAL_MS)
 		return -1;
 	if (config.session_heartbeat.timeout_ms != FRDP_SESSION_HEARTBEAT_DEFAULT_TIMEOUT_MS)
@@ -234,6 +236,8 @@ static int test_server_auth_session_fields(void)
 		return -1;
 	if (config.session_resources.systemd_scope != 1)
 		return -1;
+	if (config.session_resources.logind_session != 0)
+		return -1;
 	return 0;
 }
 
@@ -259,6 +263,11 @@ static int test_session_resource_policy(void)
 		return -1;
 	if ((config.session_resources.systemd_scope != 1) ||
 	    (config.session_resources.cpu_quota_percent != 250))
+		return -1;
+	if (load_config_body("frdp-session-logind.toml", "[session]\nlogind_session = true\n",
+	                     &config) != 0 ||
+	    config.session_resources.logind_session != 1 ||
+	    config.session_resources.systemd_scope != 0)
 		return -1;
 	if (load_config_body("frdp-session-systemd-scope-max-cpu.toml",
 	                     "[session]\nsystemd_scope = true\ncpu_quota_percent = 10000\n",
@@ -944,6 +953,18 @@ static int test_invalid_channel_config(void)
 		return -1;
 	if (expect_load_failure("frdp-invalid-session-systemd-scope.toml",
 	                        "[session]\nsystemd_scope = required\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-duplicate-session-logind.toml",
+	                        "[session]\nlogind_session = true\nlogind_session = false\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-quoted-session-logind.toml",
+	                        "[session]\nlogind_session = \"true\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-invalid-session-logind.toml",
+	                        "[session]\nlogind_session = required\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-conflicting-systemd-ownership.toml",
+	                        "[session]\nsystemd_scope = true\nlogind_session = true\n") != 0)
 		return -1;
 	if (expect_load_failure("frdp-small-heartbeat-interval.toml",
 	                        "[session]\nagent_heartbeat_interval_ms = 999\n") != 0)
