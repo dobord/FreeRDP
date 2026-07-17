@@ -95,7 +95,15 @@ password  sufficient pam_sss.so use_authtok
 
 Normal startup requires both helper sockets: `frdp-authd` owns PAM authentication/account checks and
 `frdp-sesmand` launches one PAM-owner process per managed session plus the desktop agent. The owner retains
-the PAM handle if the manager exits and writes a synchronized close receipt before durable cleanup. The packaged helper units listen on
+the PAM handle if the manager exits. After confirming manager death through `pidfd`, it allows one
+same-UID replacement manager to take ownership within 10 seconds; concurrent takeover is rejected, and
+all later commands are pinned to the selected PID. Chained takeover is forbidden, while an ambiguous
+response can be retried idempotently by that same PID. Incomplete commands are bounded to
+250 ms while the owner monitors the manager, and expiry or death of the replacement starts retrying agent
+cleanup immediately before PAM close. Restart cleanup performs this takeover before stopping a scope or
+process group, so slow teardown cannot consume the takeover window. The current startup path still
+reconciles such sessions by cleanup rather than registry restoration. The owner writes a synchronized
+close receipt before durable cleanup. The packaged helper units listen on
 `/run/frdp-authd/authd.sock` and `/run/frdp-sesmand/sesmand.sock`. The old peer-worker direct PAM
 fallback has been removed; use `frdpd --pam-auth-test` for local PAM smoke checks without starting the
 full helper topology.

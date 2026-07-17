@@ -205,6 +205,8 @@ static int reconcile_session(const frdpSesmandSessionMetadata* metadata, uint64_
 	char scope_name[FRDP_SESMAND_SCOPE_NAME_SIZE] = { 0 };
 	const char* dir = recovery ? recovery->dir : NULL;
 	int scope_stopped = 0;
+	frdpSesmandPamOwner pam_owner = { .pid = -1, .active = 0 };
+	int pam_owner_taken = 0;
 
 	if (!metadata || !dir ||
 	    (snprintf(agent_socket, sizeof(agent_socket), "%s/agent-%s.sock", dir,
@@ -213,6 +215,9 @@ static int reconcile_session(const frdpSesmandSessionMetadata* metadata, uint64_
 	                                           sizeof(display_reservation), dir,
 	                                           metadata->display_number) != 0))
 		return -1;
+	if (metadata->pam_owner &&
+	    (frdp_sesmand_pam_owner_takeover(dir, metadata->session_id, &pam_owner) == 0))
+		pam_owner_taken = 1;
 	if (metadata->systemd_scope &&
 	    (!recovery->scope_manager ||
 	     ((frdp_sesmand_scope_name(metadata->session_id, scope_name, sizeof(scope_name)) != 0) ||
@@ -222,7 +227,11 @@ static int reconcile_session(const frdpSesmandSessionMetadata* metadata, uint64_
 	if (!scope_stopped && (metadata->agent_pid > 1) &&
 	    (stop_matching_process_group(metadata) != 0))
 		return -1;
-	if (metadata->pam_owner && (frdp_sesmand_pam_owner_recover(dir, metadata->session_id) != 0))
+	if (metadata->pam_owner &&
+	    ((pam_owner_taken &&
+	      (frdp_sesmand_pam_owner_prepare_close(dir, metadata->session_id, &pam_owner) != 0)) ||
+	     (!pam_owner_taken &&
+	      (frdp_sesmand_pam_owner_recover(dir, metadata->session_id) != 0))))
 		return -1;
 	if ((frdp_sesmand_session_unlink_artifact(agent_socket, metadata->agent_socket_dev,
 	                                          metadata->agent_socket_ino, S_IFSOCK) != 0) ||

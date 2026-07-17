@@ -31,10 +31,12 @@
 #define FRDP_PAM_OWNER_CLOSE 2U
 #define FRDP_PAM_OWNER_RESPONSE 3U
 #define FRDP_PAM_OWNER_BIND_LOGIND 4U
+#define FRDP_PAM_OWNER_TAKEOVER 5U
 #define FRDP_PAM_OWNER_WIRE_SIZE 24U
 #define FRDP_PAM_OWNER_START_TIMEOUT_MS 20000
 #define FRDP_PAM_OWNER_COMMAND_TIMEOUT_MS 10000
 #define FRDP_PAM_OWNER_ORPHAN_GRACE_MS 30000U
+#define FRDP_PAM_OWNER_TAKEOVER_GRACE_MS 10000U
 #define FRDP_PAM_OWNER_RECEIPT "FRDP-PAM-CLOSED-1\n"
 #define FRDP_PAM_OWNER_FAILURE "FRDP-PAM-CLOSE-FAILED-1\n"
 
@@ -263,15 +265,24 @@ static int check_failure_marker(const char* runtime_dir, const char* session_id)
 	return check_close_marker(runtime_dir, session_id, "failed", FRDP_PAM_OWNER_FAILURE, 0);
 }
 
-static int set_socket_timeouts(int fd)
+static int set_socket_timeout_ms(int fd, uint64_t timeout_ms)
 {
-	const struct timeval timeout = { .tv_sec = FRDP_PAM_OWNER_COMMAND_TIMEOUT_MS / 1000,
-		                             .tv_usec = 0 };
+	struct timeval timeout = { 0 };
+
+	if ((timeout_ms == 0) || (timeout_ms > FRDP_PAM_OWNER_COMMAND_TIMEOUT_MS))
+		timeout_ms = FRDP_PAM_OWNER_COMMAND_TIMEOUT_MS;
+	timeout.tv_sec = (time_t)(timeout_ms / 1000U);
+	timeout.tv_usec = (suseconds_t)((timeout_ms % 1000U) * 1000U);
 
 	return (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0) &&
 	               (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0)
 	           ? 0
 	           : -1;
+}
+
+static int set_socket_timeouts(int fd)
+{
+	return set_socket_timeout_ms(fd, FRDP_PAM_OWNER_COMMAND_TIMEOUT_MS);
 }
 
 static int peer_is_manager(int fd, pid_t* pid)
@@ -738,6 +749,10 @@ static int run_owner(const char* runtime_dir, const char* endpoint, const char* 
 	int close_evidence = 1;
 	int startup_sent = 0;
 	uint64_t agent_gone_at = 0;
+	uint64_t manager_gone_at = 0;
+	uint64_t cleanup_retry_at = 0;
+	pid_t current_manager_pid = manager_pid;
+	int takeover_consumed = 0;
 
 	g_owner_stop_requested = 0;
 	if ((protect_startup_from_parent_death(manager_pid, 1) != 0) ||
@@ -804,16 +819,30 @@ static int run_owner(const char* runtime_dir, const char* endpoint, const char* 
 			break;
 		const int manager_gone =
 		    (manager_index >= 0) && (descriptors[manager_index].revents & POLLIN);
-		if (g_owner_stop_requested || manager_gone)
+		if (manager_gone)
+		{
+			close(manager_pidfd);
+			manager_pidfd = -1;
+			if (takeover_consumed)
+				g_owner_stop_requested = 1;
+			else
+			{
+				manager_gone_at = monotonic_ms();
+				if (manager_gone_at == 0)
+					g_owner_stop_requested = 1;
+			}
+		}
+		const uint64_t now = monotonic_ms();
+		const int cleanup_due =
+		    g_owner_stop_requested ||
+		    ((manager_gone_at != 0) && (now >= manager_gone_at) &&
+		     ((now - manager_gone_at) >= FRDP_PAM_OWNER_TAKEOVER_GRACE_MS));
+
+		if (cleanup_due && ((cleanup_retry_at == 0) || (now >= cleanup_retry_at)))
 		{
 			if (terminate_agent_group(agent_pid, agent_pgid, agent_pidfd) == 0)
 				break;
-			g_owner_stop_requested = 0;
-			if (manager_gone)
-			{
-				close(manager_pidfd);
-				manager_pidfd = -1;
-			}
+			cleanup_retry_at = now + 250U;
 		}
 		if ((agent_index >= 0) && (descriptors[agent_index].revents & POLLIN) &&
 		    (agent_gone_at == 0))
@@ -833,10 +862,72 @@ static int run_owner(const char* runtime_dir, const char* endpoint, const char* 
 
 		if (client < 0)
 			continue;
-		if (!peer_is_manager(client, NULL) ||
+		pid_t peer_pid = -1;
+		uint64_t command_timeout_ms = 250U;
+		if (manager_gone_at != 0)
+		{
+			const uint64_t command_now = monotonic_ms();
+			const uint64_t elapsed =
+			    (command_now >= manager_gone_at) ? command_now - manager_gone_at : UINT64_MAX;
+
+			if ((command_now == 0) || (elapsed >= FRDP_PAM_OWNER_TAKEOVER_GRACE_MS))
+			{
+				close(client);
+				continue;
+			}
+			const uint64_t remaining = FRDP_PAM_OWNER_TAKEOVER_GRACE_MS - elapsed;
+			if (remaining < command_timeout_ms)
+				command_timeout_ms = remaining;
+		}
+		if (set_socket_timeout_ms(client, command_timeout_ms) != 0)
+		{
+			close(client);
+			continue;
+		}
+
+		if (!peer_is_manager(client, &peer_pid) ||
 		    (receive_message_fd(client, &type, &requested_pid, &requested_pgid, &requested_status,
 		                        &passed_fd) != 0))
 		{
+			close(client);
+			continue;
+		}
+		if ((type == FRDP_PAM_OWNER_TAKEOVER) && (passed_fd < 0) &&
+		    (requested_pid == 0) && (requested_pgid == 0) && (requested_status == 0))
+		{
+			if ((manager_pidfd >= 0) && (peer_pid == current_manager_pid))
+				(void)send_message(client, FRDP_PAM_OWNER_RESPONSE, 0, 0, 0);
+			else if ((manager_pidfd < 0) && (manager_gone_at != 0) && (agent_pidfd >= 0))
+			{
+				const uint64_t takeover_now = monotonic_ms();
+				const int replacement_pidfd =
+				    ((takeover_now != 0) && (takeover_now >= manager_gone_at) &&
+				     ((takeover_now - manager_gone_at) < FRDP_PAM_OWNER_TAKEOVER_GRACE_MS))
+				        ? open_process_pidfd(peer_pid)
+				        : -1;
+
+				if (replacement_pidfd >= 0)
+				{
+					manager_pidfd = replacement_pidfd;
+					current_manager_pid = peer_pid;
+					takeover_consumed = 1;
+					manager_gone_at = 0;
+					cleanup_retry_at = 0;
+					(void)send_message(client, FRDP_PAM_OWNER_RESPONSE, 0, 0, 0);
+				}
+				else
+					(void)send_message(client, FRDP_PAM_OWNER_RESPONSE, 0, 0, -1);
+			}
+			else
+				(void)send_message(client, FRDP_PAM_OWNER_RESPONSE, 0, 0, -1);
+			close(client);
+			continue;
+		}
+		if (peer_pid != current_manager_pid)
+		{
+			if (passed_fd >= 0)
+				close(passed_fd);
+			(void)send_message(client, FRDP_PAM_OWNER_RESPONSE, 0, 0, -1);
 			close(client);
 			continue;
 		}
@@ -1000,7 +1091,7 @@ int frdp_sesmand_pam_owner_start(const char* runtime_dir, const char* session_id
 	return 0;
 }
 
-static int connect_owner(const char* runtime_dir, const char* session_id, int* fd)
+static int connect_owner(const char* runtime_dir, const char* session_id, int* fd, pid_t* owner_pid)
 {
 	char endpoint[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
 	struct sockaddr_un address = { 0 };
@@ -1020,7 +1111,7 @@ static int connect_owner(const char* runtime_dir, const char* session_id, int* f
 	snprintf(address.sun_path, sizeof(address.sun_path), "%s", endpoint);
 	if ((set_socket_timeouts(client) != 0) ||
 	    (connect(client, (struct sockaddr*)&address, sizeof(address)) != 0) ||
-	    !peer_is_manager(client, NULL))
+	    !peer_is_manager(client, owner_pid))
 	{
 		close(client);
 		return -1;
@@ -1039,7 +1130,7 @@ static int request_owner(const char* runtime_dir, const char* session_id, uint32
 	int fd = -1;
 	int rc = -1;
 
-	if ((connect_owner(runtime_dir, session_id, &fd) != 0) ||
+	if ((connect_owner(runtime_dir, session_id, &fd, NULL) != 0) ||
 	    (send_message(fd, type, pid, pgid, 0) != 0) ||
 	    (receive_message(fd, &response_type, &response_pid, &response_pgid, &response_status) !=
 	     0) ||
@@ -1052,6 +1143,39 @@ cleanup:
 	if (fd >= 0)
 		close(fd);
 	return rc;
+}
+
+int frdp_sesmand_pam_owner_takeover(const char* runtime_dir, const char* session_id,
+                                    frdpSesmandPamOwner* owner)
+{
+	if (!owner || owner->active)
+		return -1;
+	for (unsigned int attempt = 0; attempt < 2U; attempt++)
+	{
+		uint32_t response_type = 0;
+		pid_t response_pid = -1;
+		pid_t response_pgid = -1;
+		pid_t owner_pid = -1;
+		int response_status = -1;
+		int fd = -1;
+
+		if ((connect_owner(runtime_dir, session_id, &fd, &owner_pid) == 0) &&
+		    (set_socket_timeout_ms(fd, 1000U) == 0) &&
+		    (send_message(fd, FRDP_PAM_OWNER_TAKEOVER, 0, 0, 0) == 0) &&
+		    (receive_message(fd, &response_type, &response_pid, &response_pgid,
+		                     &response_status) == 0) &&
+		    (response_type == FRDP_PAM_OWNER_RESPONSE) && (response_pid == 0) &&
+		    (response_pgid == 0) && (response_status == 0) && (owner_pid > 1))
+		{
+			close(fd);
+			owner->pid = owner_pid;
+			owner->active = 1;
+			return 0;
+		}
+		if (fd >= 0)
+			close(fd);
+	}
+	return -1;
 }
 
 int frdp_sesmand_pam_owner_bind_agent(const char* runtime_dir, const char* session_id,
@@ -1073,7 +1197,7 @@ int frdp_sesmand_pam_owner_bind_logind(const char* runtime_dir, const char* sess
 	int rc = -1;
 
 	if (!owner || !owner->active || (owner->pid <= 1) || (fifo_fd < 0) ||
-	    (connect_owner(runtime_dir, session_id, &fd) != 0) ||
+	    (connect_owner(runtime_dir, session_id, &fd, NULL) != 0) ||
 	    (send_message_fd(fd, FRDP_PAM_OWNER_BIND_LOGIND, fifo_fd) != 0) ||
 	    (receive_message(fd, &response_type, &response_pid, &response_pgid, &response_status) !=
 	     0) ||
@@ -1142,6 +1266,10 @@ int frdp_sesmand_pam_owner_prepare_close(const char* runtime_dir, const char* se
 
 int frdp_sesmand_pam_owner_recover(const char* runtime_dir, const char* session_id)
 {
+	frdpSesmandPamOwner owner = { .pid = -1, .active = 0 };
+
+	if (frdp_sesmand_pam_owner_takeover(runtime_dir, session_id, &owner) == 0)
+		return close_owner_common(runtime_dir, session_id, &owner, 0);
 	return close_owner_common(runtime_dir, session_id, NULL, 0);
 }
 

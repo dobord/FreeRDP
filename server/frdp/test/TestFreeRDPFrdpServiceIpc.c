@@ -14,6 +14,7 @@
 #include <grp.h>
 #include <inttypes.h>
 #include <pwd.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -232,15 +233,34 @@ static int restart_helper(const char* binary, frdpTestHelper* helper)
 	return restart_helper_internal(binary, NULL, helper);
 }
 
-static int wait_for_process_gone(pid_t pid)
+static int wait_for_process_gone_attempts(pid_t pid, unsigned int attempts)
 {
-	for (int attempt = 0; attempt < 50; attempt++)
+	for (unsigned int attempt = 0; attempt < attempts; attempt++)
 	{
 		if ((kill(pid, 0) != 0) && (errno == ESRCH))
 			return 0;
 		usleep(100000);
 	}
 	return -1;
+}
+
+static int wait_for_process_gone(pid_t pid)
+{
+	return wait_for_process_gone_attempts(pid, 50U);
+}
+
+static int read_byte_timeout(int fd, char* value, int timeout_ms)
+{
+	struct pollfd descriptor = { .fd = fd, .events = POLLIN };
+	int status = 0;
+
+	if ((fd < 0) || !value || (timeout_ms <= 0))
+		return -1;
+	do
+	{
+		status = poll(&descriptor, 1, timeout_ms);
+	} while ((status < 0) && (errno == EINTR));
+	return ((status == 1) && (descriptor.revents & POLLIN) && (read(fd, value, 1U) == 1)) ? 0 : -1;
 }
 
 static int wait_for_process_group_gone(pid_t pgid)
@@ -2794,11 +2814,19 @@ static int test_sesmand_crash_after_agent_launch(void)
 	frdpTestHelper helper = { .pid = -1 };
 	pid_t requester = -1;
 	pid_t agent_pid = -1;
+	pid_t takeover_manager = -1;
+	pid_t duplicate_manager = -1;
+	pid_t late_manager = -1;
+	pid_t slow_client = -1;
+	int takeover_pipe[2] = { -1, -1 };
+	int slow_pipe[2] = { -1, -1 };
 	char dir[1024] = { 0 };
 	char service_path[1024] = { 0 };
 	char audit_path[1024] = { 0 };
 	char key_path[1024] = { 0 };
 	char marker_path[1024] = { 0 };
+	char pam_endpoint[1024] = { 0 };
+	char session_id[FRDP_SESMAND_SESSION_ID_SIZE] = { 0 };
 	char agent_dir[1024] = { 0 };
 	char agent_path[1024] = { 0 };
 	char updated_path[4096] = { 0 };
@@ -2814,6 +2842,7 @@ static int test_sesmand_crash_after_agent_launch(void)
 	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
 	char* saved_path = current_path ? strdup(current_path) : NULL;
 	char* saved_marker = previous_marker ? strdup(previous_marker) : NULL;
+	const char* pam_name = NULL;
 	int helper_started = 0;
 	int status = 0;
 	int rc = -1;
@@ -2883,8 +2912,121 @@ static int test_sesmand_crash_after_agent_launch(void)
 	requester = -1;
 	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0))
 		goto cleanup;
+	stage = "owner-takeover";
+	if ((find_pam_endpoint(&helper, pam_endpoint, sizeof(pam_endpoint)) != 0) ||
+	    !(pam_name = strrchr(pam_endpoint, '/')) ||
+	    (sscanf(pam_name + 1, "pam-%36[0-9a-f-].sock", session_id) != 1) ||
+	    (strlen(session_id) != (FRDP_SESMAND_SESSION_ID_SIZE - 1U)) ||
+	    (pipe(takeover_pipe) != 0))
+		goto cleanup;
+	takeover_manager = fork();
+	if (takeover_manager < 0)
+		goto cleanup;
+	if (takeover_manager == 0)
+	{
+		frdpSesmandPamOwner adopted = { .pid = -1, .active = 0 };
+		frdpSesmandPamOwner repeated = { .pid = -1, .active = 0 };
+		char marker = '!';
+
+		close(takeover_pipe[0]);
+		for (unsigned int attempt = 0; attempt < 20U; attempt++)
+		{
+			if (frdp_sesmand_pam_owner_takeover(helper.dir, session_id, &adopted) == 0)
+			{
+				if (frdp_sesmand_pam_owner_takeover(helper.dir, session_id, &repeated) == 0)
+					marker = 'R';
+				break;
+			}
+			usleep(50000);
+		}
+		(void)write(takeover_pipe[1], &marker, 1U);
+		close(takeover_pipe[1]);
+		if (marker != 'R')
+			_exit(1);
+		for (;;)
+			pause();
+	}
+	close(takeover_pipe[1]);
+	takeover_pipe[1] = -1;
+	char marker = 0;
+	if ((read_byte_timeout(takeover_pipe[0], &marker, 30000) != 0) || (marker != 'R'))
+		goto cleanup;
+	close(takeover_pipe[0]);
+	takeover_pipe[0] = -1;
+	if (kill(agent_pid, 0) != 0)
+		goto cleanup;
+	duplicate_manager = fork();
+	if (duplicate_manager < 0)
+		goto cleanup;
+	if (duplicate_manager == 0)
+	{
+		frdpSesmandPamOwner duplicate = { .pid = -1, .active = 0 };
+		frdpSesmandPamOwner forged = { .pid = 2, .active = 1 };
+		int fifo[2] = { -1, -1 };
+		int duplicate_status = 0;
+
+		if ((pipe(fifo) != 0) ||
+		    (frdp_sesmand_pam_owner_bind_logind(helper.dir, session_id, &forged, fifo[0]) == 0) ||
+		    (frdp_sesmand_pam_owner_takeover(helper.dir, session_id, &duplicate) == 0))
+			duplicate_status = 1;
+		if (fifo[0] >= 0)
+			close(fifo[0]);
+		if (fifo[1] >= 0)
+			close(fifo[1]);
+		_exit(duplicate_status);
+	}
+	if ((wait_for_exit(duplicate_manager, &status) != 0) || !WIFEXITED(status) ||
+	    (WEXITSTATUS(status) != 0) || (pipe(slow_pipe) != 0))
+		goto cleanup;
+	duplicate_manager = -1;
+	slow_client = fork();
+	if (slow_client < 0)
+		goto cleanup;
+	if (slow_client == 0)
+	{
+		struct sockaddr_un address = { .sun_family = AF_UNIX };
+		const int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+		char ready = '!';
+
+		close(slow_pipe[0]);
+		if ((fd >= 0) && (strlen(pam_endpoint) < sizeof(address.sun_path)))
+		{
+			snprintf(address.sun_path, sizeof(address.sun_path), "%s", pam_endpoint);
+			if (connect(fd, (struct sockaddr*)&address, sizeof(address)) == 0)
+				ready = 'R';
+		}
+		(void)write(slow_pipe[1], &ready, 1U);
+		close(slow_pipe[1]);
+		if (ready == 'R')
+			sleep(15);
+		if (fd >= 0)
+			close(fd);
+		_exit(ready == 'R' ? 0 : 1);
+	}
+	close(slow_pipe[1]);
+	slow_pipe[1] = -1;
+	marker = 0;
+	if ((read_byte_timeout(slow_pipe[0], &marker, 5000) != 0) || (marker != 'R') ||
+	    (kill(takeover_manager, SIGKILL) != 0) ||
+	    (waitpid(takeover_manager, NULL, 0) != takeover_manager))
+		goto cleanup;
+	close(slow_pipe[0]);
+	slow_pipe[0] = -1;
+	takeover_manager = -1;
+	late_manager = fork();
+	if (late_manager < 0)
+		goto cleanup;
+	if (late_manager == 0)
+	{
+		frdpSesmandPamOwner late = { .pid = -1, .active = 0 };
+		_exit(frdp_sesmand_pam_owner_takeover(helper.dir, session_id, &late) == 0 ? 1 : 0);
+	}
+	if ((wait_for_exit(late_manager, &status) != 0) || !WIFEXITED(status) ||
+	    (WEXITSTATUS(status) != 0))
+		goto cleanup;
+	late_manager = -1;
 	stage = "agent-gone";
-	if (wait_for_process_gone(agent_pid) != 0)
+	if (wait_for_process_gone_attempts(agent_pid, 200U) != 0)
 		goto cleanup;
 	stage = "pam-closed";
 	if (wait_for_file_contents_attempts(audit_path, expected_audit, 200) != 0)
@@ -2903,6 +3045,34 @@ cleanup:
 		fprintf(stderr, "post-launch crash failed at stage: %s\n", stage);
 	if (agent_pid > 1)
 		(void)kill(-agent_pid, SIGKILL);
+	if (takeover_manager > 0)
+	{
+		kill(takeover_manager, SIGKILL);
+		(void)waitpid(takeover_manager, NULL, 0);
+	}
+	if (duplicate_manager > 0)
+	{
+		kill(duplicate_manager, SIGKILL);
+		(void)waitpid(duplicate_manager, NULL, 0);
+	}
+	if (late_manager > 0)
+	{
+		kill(late_manager, SIGKILL);
+		(void)waitpid(late_manager, NULL, 0);
+	}
+	if (slow_client > 0)
+	{
+		kill(slow_client, SIGKILL);
+		(void)waitpid(slow_client, NULL, 0);
+	}
+	if (takeover_pipe[0] >= 0)
+		close(takeover_pipe[0]);
+	if (takeover_pipe[1] >= 0)
+		close(takeover_pipe[1]);
+	if (slow_pipe[0] >= 0)
+		close(slow_pipe[0]);
+	if (slow_pipe[1] >= 0)
+		close(slow_pipe[1]);
 	if (requester > 0)
 	{
 		kill(requester, SIGKILL);
@@ -3427,7 +3597,7 @@ static int test_sesmand_logind_owner_crash_cleanup(void)
 	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0))
 		goto cleanup;
 	stage = "owner-cleanup";
-	if ((wait_for_process_gone(agent_pid) != 0) ||
+	if ((wait_for_process_gone_attempts(agent_pid, 200U) != 0) ||
 	    (wait_for_file_contents_attempts(audit_path, expected_audit, 200) != 0) ||
 	    (wait_for_login1_session_gone(bus, session_id) != 0))
 		goto cleanup;
