@@ -45,12 +45,12 @@ static int test_same_inode_artifact_cleanup(void)
 	    (unlink(regular_path) != 0) || (create_regular_file(regular_path) != 0) ||
 	    (lstat(regular_path, &replacement) != 0))
 		goto out;
-	if ((frdp_sesmand_session_unlink_artifact(
-	         regular_path, (uint64_t)original.st_dev, (uint64_t)original.st_ino, S_IFREG) == 0) ||
+	if ((frdp_sesmand_session_unlink_artifact(regular_path, (uint64_t)original.st_dev,
+	                                          (uint64_t)original.st_ino, S_IFREG) == 0) ||
 	    (access(regular_path, F_OK) != 0))
 		goto out;
-	if (frdp_sesmand_session_unlink_artifact(
-	        regular_path, (uint64_t)replacement.st_dev, (uint64_t)replacement.st_ino, S_IFREG) != 0)
+	if (frdp_sesmand_session_unlink_artifact(regular_path, (uint64_t)replacement.st_dev,
+	                                         (uint64_t)replacement.st_ino, S_IFREG) != 0)
 		goto out;
 
 	socket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -60,8 +60,8 @@ static int test_same_inode_artifact_cleanup(void)
 	snprintf(address.sun_path, sizeof(address.sun_path), "%s", socket_path);
 	if ((bind(socket_fd, (struct sockaddr*)&address, sizeof(address)) != 0) ||
 	    (chmod(socket_path, 0600) != 0) || (lstat(socket_path, &socket_stat) != 0) ||
-	    (frdp_sesmand_session_unlink_artifact(
-	         socket_path, (uint64_t)socket_stat.st_dev, (uint64_t)socket_stat.st_ino, S_IFSOCK) != 0))
+	    (frdp_sesmand_session_unlink_artifact(socket_path, (uint64_t)socket_stat.st_dev,
+	                                          (uint64_t)socket_stat.st_ino, S_IFSOCK) != 0))
 		goto out;
 	rc = 0;
 
@@ -140,6 +140,91 @@ out:
 	return rc;
 }
 
+static int test_failed_artifact_cleanup_preserves_pam_receipt(void)
+{
+	static const char session_id[] = "12345678-1234-1234-1234-123456789abc";
+	static const char receipt_content[] = "FRDP-PAM-CLOSED-1\n";
+	frdpSesmandSessionMetadata metadata = { 0 };
+	char dir[128] = "/tmp/frdp-session-receipt-XXXXXX";
+	char metadata_name[96] = { 0 };
+	char metadata_path[256] = { 0 };
+	char receipt_path[256] = { 0 };
+	char reservation_path[256] = { 0 };
+	char socket_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
+	struct sockaddr_un address = { 0 };
+	struct stat reservation_stat = { 0 };
+	struct stat socket_stat = { 0 };
+	uint64_t metadata_dev = 0;
+	uint64_t metadata_ino = 0;
+	int socket_fd = -1;
+	int receipt_fd = -1;
+	int rc = -1;
+
+	if (!mkdtemp(dir) || (chmod(dir, 0700) != 0) ||
+	    (snprintf(socket_path, sizeof(socket_path), "%s/agent-%s.sock", dir, session_id) >=
+	     (int)sizeof(socket_path)) ||
+	    (snprintf(reservation_path, sizeof(reservation_path), "%s/frdp-display-101.lock", dir) >=
+	     (int)sizeof(reservation_path)) ||
+	    (snprintf(receipt_path, sizeof(receipt_path), "%s/pam-%s.closed", dir, session_id) >=
+	     (int)sizeof(receipt_path)) ||
+	    (frdp_sesmand_session_metadata_filename(metadata_name, sizeof(metadata_name), session_id) !=
+	     0) ||
+	    (snprintf(metadata_path, sizeof(metadata_path), "%s/%s", dir, metadata_name) >=
+	     (int)sizeof(metadata_path)))
+		goto out;
+	socket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	if (socket_fd < 0)
+		goto out;
+	address.sun_family = AF_UNIX;
+	snprintf(address.sun_path, sizeof(address.sun_path), "%s", socket_path);
+	if ((bind(socket_fd, (struct sockaddr*)&address, sizeof(address)) != 0) ||
+	    (chmod(socket_path, 0600) != 0) || (create_regular_file(reservation_path) != 0) ||
+	    (lstat(socket_path, &socket_stat) != 0) ||
+	    (lstat(reservation_path, &reservation_stat) != 0))
+		goto out;
+	snprintf(metadata.session_id, sizeof(metadata.session_id), "%s", session_id);
+	metadata.uid = geteuid();
+	metadata.agent_pid = INT32_MAX;
+	metadata.pgid = INT32_MAX;
+	metadata.agent_start_ticks = 1;
+	metadata.state = FRDP_SESMAND_SESSION_STOPPING;
+	metadata.display_number = 101;
+	metadata.agent_socket_dev = (uint64_t)socket_stat.st_dev;
+	metadata.agent_socket_ino = (uint64_t)socket_stat.st_ino;
+	metadata.display_reservation_dev = (uint64_t)reservation_stat.st_dev;
+	metadata.display_reservation_ino = (uint64_t)reservation_stat.st_ino;
+	metadata.pam_owner = 1;
+	if ((frdp_sesmand_session_metadata_save(dir, &metadata, &metadata_dev, &metadata_ino) !=
+	     FRDP_SESMAND_SESSION_METADATA_SAVE_COMMITTED) ||
+	    ((receipt_fd = open(receipt_path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600)) < 0) ||
+	    (write(receipt_fd, receipt_content, sizeof(receipt_content) - 1U) !=
+	     (ssize_t)(sizeof(receipt_content) - 1U)) ||
+	    (close(receipt_fd) != 0))
+		goto out;
+	receipt_fd = -1;
+	close(socket_fd);
+	socket_fd = -1;
+	if ((unlink(socket_path) != 0) ||
+	    ((socket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0) ||
+	    (bind(socket_fd, (struct sockaddr*)&address, sizeof(address)) != 0) ||
+	    (chmod(socket_path, 0600) != 0) || (frdp_sesmand_session_reconcile_all(dir, NULL) == 0) ||
+	    (access(metadata_path, F_OK) != 0) || (access(receipt_path, F_OK) != 0))
+		goto out;
+	rc = 0;
+
+out:
+	if (receipt_fd >= 0)
+		close(receipt_fd);
+	if (socket_fd >= 0)
+		close(socket_fd);
+	unlink(metadata_path);
+	unlink(receipt_path);
+	unlink(socket_path);
+	unlink(reservation_path);
+	rmdir(dir);
+	return rc;
+}
+
 int TestFreeRDPFrdpSessionRecovery(int argc, char* argv[])
 {
 	(void)argc;
@@ -153,6 +238,11 @@ int TestFreeRDPFrdpSessionRecovery(int argc, char* argv[])
 	if (test_reused_pid_metadata_does_not_signal_current_process() != 0)
 	{
 		fprintf(stderr, "session recovery PID reuse test failed\n");
+		return -1;
+	}
+	if (test_failed_artifact_cleanup_preserves_pam_receipt() != 0)
+	{
+		fprintf(stderr, "session recovery PAM receipt preservation test failed\n");
 		return -1;
 	}
 	return 0;

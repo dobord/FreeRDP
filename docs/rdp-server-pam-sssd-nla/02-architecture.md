@@ -58,12 +58,12 @@ Responsibilities:
 
 ## frdp-sesmand
 
-The session manager is similar in role to xrdp-sesman, but it is more tightly bound to PAM/logind/cgroups. It decides whether to create a new session or reconnect to an existing one, opens the PAM session, creates runtime state, starts the desktop agent, and controls cleanup.
+The session manager is similar in role to xrdp-sesman, but it is more tightly bound to PAM/logind/cgroups. It decides whether to create a new session or reconnect to an existing one, starts a per-session PAM-owner process, creates runtime state, starts the desktop agent, and controls cleanup. The owner retains the `pam_handle_t` across a manager crash and records a synchronized close receipt before recovery may remove durable session metadata.
 
 Responsibilities:
 
 - session registry;
-- `pam_open_session` / `pam_close_session`;
+- per-session `pam_open_session` / `pam_close_session` ownership and crash reconciliation;
 - systemd-logind integration;
 - cgroup slices and resource limits;
 - reconnect by user/session id;

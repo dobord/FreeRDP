@@ -24,6 +24,7 @@ typedef struct
 	uint64_t display_reservation_dev;
 	uint64_t display_reservation_ino;
 	int systemd_scope;
+	int pam_owner;
 } frdpSesmandSessionMetadata;
 
 typedef int (*frdpSesmandSessionMetadataVisitor)(const frdpSesmandSessionMetadata* metadata,

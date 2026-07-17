@@ -94,7 +94,8 @@ password  sufficient pam_sss.so use_authtok
 ```
 
 Normal startup requires both helper sockets: `frdp-authd` owns PAM authentication/account checks and
-`frdp-sesmand` owns PAM sessions plus desktop agent launch. The packaged helper units listen on
+`frdp-sesmand` launches one PAM-owner process per managed session plus the desktop agent. The owner retains
+the PAM handle if the manager exits and writes a synchronized close receipt before durable cleanup. The packaged helper units listen on
 `/run/frdp-authd/authd.sock` and `/run/frdp-sesmand/sesmand.sock`. The old peer-worker direct PAM
 fallback has been removed; use `frdpd --pam-auth-test` for local PAM smoke checks without starting the
 full helper topology.
@@ -205,8 +206,14 @@ existing scoped sessions; a rollback failure stops the manager so normal cleanup
 Existing non-scoped sessions retain their POSIX limits, and scope ownership itself remains a launch-time
 choice. Durable metadata drives restart cleanup; stale bus handles reconnect, and bounded stop falls back
 to cgroup-v2 `cgroup.kill` plus the process-group guard. Leave the setting disabled without a system
-manager/system bus. systemd-logind registration, lost-PAM-handle reconciliation, and an individual
-per-session runtime quota API remain open.
+manager/system bus. Metadata V3 records per-session PAM ownership; restart recovery requests close from
+the surviving owner and consumes its synchronized receipt before removing session artifacts. A live or
+uncertain owner blocks startup, while proven-stale owner sockets are removed after metadata reconciliation.
+Valid orphan close receipts also authorize same-inode removal of the corresponding dead agent socket, and
+display reservations are globally reconciled against their recorded manager PID/start time on startup. A
+durable `pam-<session>.failed` marker or a stale owner endpoint without a valid close receipt blocks startup
+for operator investigation; neither is interpreted as successful PAM cleanup.
+systemd-logind registration and an individual per-session runtime quota API remain open.
 
 SELinux and AppArmor draft profiles install as inactive examples under `/usr/share/frdpd/security`. They are
 not loaded automatically and must be reviewed, adapted, and validated for the target distribution before use.

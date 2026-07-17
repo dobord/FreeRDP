@@ -1,9 +1,12 @@
+#define _GNU_SOURCE
+
 #include "ipc/frdp-auth-token.h"
 #include "ipc/frdp-ipc.h"
 #include "frdp-authd/auth_failure_limit.h"
 #include "frdp-sesmand/display_policy.h"
 #include "frdp-sesmand/process_identity.h"
 #include "frdp-sesmand/session_metadata.h"
+#include "frdp-sesmand/session_pam_owner.h"
 
 #include <errno.h>
 #include <dirent.h>
@@ -39,6 +42,9 @@
 #endif
 #ifndef FRDP_SESMAND_BINARY
 #error "FRDP_SESMAND_BINARY is not defined"
+#endif
+#ifndef FRDP_SESSION_AGENT_BLOCKING_BINARY
+#error "FRDP_SESSION_AGENT_BLOCKING_BINARY is not defined"
 #endif
 
 #define FRDP_IPC_SLOW_SEND_DELAY_US 1000U
@@ -97,9 +103,9 @@ static int wait_for_socket(const char* path)
 	return -1;
 }
 
-static int wait_for_exit(pid_t pid, int* status)
+static int wait_for_exit_attempts(pid_t pid, int* status, int attempts)
 {
-	for (int attempt = 0; attempt < 50; attempt++)
+	for (int attempt = 0; attempt < attempts; attempt++)
 	{
 		const pid_t rc = waitpid(pid, status, WNOHANG);
 
@@ -114,6 +120,11 @@ static int wait_for_exit(pid_t pid, int* status)
 		usleep(100000);
 	}
 	return -1;
+}
+
+static int wait_for_exit(pid_t pid, int* status)
+{
+	return wait_for_exit_attempts(pid, status, 50);
 }
 
 static int start_helper_with_config(const char* binary, const char* name, const char* config_path,
@@ -898,35 +909,48 @@ static int test_authd_component(void)
 {
 	frdpTestHelper helper;
 	int rc = -1;
+	const char* stage = "start";
 
 	if (start_helper(FRDP_AUTHD_BINARY, "frdp-authd-component", &helper) != 0)
 		return -1;
+	stage = "health";
 	if (test_helper_health(helper.socket_path, "frdp-authd") != 0)
 		goto cleanup;
+	stage = "bad-length";
 	if (test_authd_rejects_bad_length(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "unknown-type";
 	if (test_authd_rejects_unknown_type(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "oversized";
 	if (test_authd_rejects_oversized_payload(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "unterminated";
 	if (test_authd_rejects_unterminated_request(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "truncated";
 	if (test_authd_survives_truncated_clients(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "slow-complete";
 	if (test_authd_handles_slow_complete_client(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "concurrent";
 	if (run_concurrent_requests(helper.socket_path, test_authd_rejects_bad_length,
 	                            FRDP_IPC_CONCURRENT_CLIENTS) != 0)
 		goto cleanup;
 	/* A final request proves that malformed clients did not stop the service loop. */
+	stage = "final-request";
 	if (test_authd_rejects_bad_length(helper.socket_path) != 0)
 		goto cleanup;
+	stage = "health-limit";
 	if ((test_helper_health_rate_limit(helper.socket_path, "frdp-authd") != 0) ||
 	    (test_authd_rejects_bad_length(helper.socket_path) != 0))
 		goto cleanup;
 	rc = 0;
 
 cleanup:
+	if (rc != 0)
+		fprintf(stderr, "authd component test failed at stage: %s\n", stage);
 	if (stop_helper(&helper) != 0)
 		rc = -1;
 	return rc;
@@ -2120,7 +2144,8 @@ static int verify_stopping_metadata(const frdpSesmandSessionMetadata* metadata,
 	    (metadata->agent_socket_dev != expected->agent_socket_dev) ||
 	    (metadata->agent_socket_ino != expected->agent_socket_ino) ||
 	    (metadata->display_reservation_dev != expected->display_reservation_dev) ||
-	    (metadata->display_reservation_ino != expected->display_reservation_ino))
+	    (metadata->display_reservation_ino != expected->display_reservation_ino) ||
+	    (metadata->pam_owner != 1))
 		return -1;
 	expected->count++;
 	return 0;
@@ -2145,13 +2170,45 @@ static int file_contents_equal(const char* path, const char* expected)
 	return rc;
 }
 
-static int wait_for_file_contents(const char* path, const char* expected)
+static int wait_for_file_contents_attempts(const char* path, const char* expected, int attempts)
 {
-	for (int attempt = 0; attempt < 100; attempt++)
+	for (int attempt = 0; attempt < attempts; attempt++)
 	{
 		if (file_contents_equal(path, expected) == 0)
 			return 0;
 		usleep(50000);
+	}
+	return -1;
+}
+
+static int wait_for_file_contents(const char* path, const char* expected)
+{
+	return wait_for_file_contents_attempts(path, expected, 100);
+}
+
+static int wait_for_pid_file(const char* path, pid_t* pid)
+{
+	for (int attempt = 0; attempt < 100; attempt++)
+	{
+		FILE* fp = fopen(path, "r");
+
+		if (fp)
+		{
+			long value = 0;
+			char trailing = 0;
+			const int valid = (fscanf(fp, "%ld", &value) == 1) && (value > 1) &&
+			                  (value <= INT32_MAX) && (fscanf(fp, " %c", &trailing) != 1);
+
+			fclose(fp);
+			if (valid)
+			{
+				*pid = (pid_t)value;
+				return 0;
+			}
+		}
+		else if (errno != ENOENT)
+			return -1;
+		usleep(100000);
 	}
 	return -1;
 }
@@ -2277,6 +2334,117 @@ cleanup:
 	return rc;
 }
 
+static int helper_dir_contains_listener_and_pam_endpoint(const frdpTestHelper* helper)
+{
+	const char* listener_name = NULL;
+	DIR* dir = NULL;
+	struct dirent* entry = NULL;
+	int found_listener = 0;
+	int found_pam = 0;
+	int rc = -1;
+
+	if (!helper)
+		return -1;
+	listener_name = strrchr(helper->socket_path, '/');
+	if (!listener_name || !listener_name[1] || !(dir = opendir(helper->dir)))
+		return -1;
+	listener_name++;
+	errno = 0;
+	while ((entry = readdir(dir)) != NULL)
+	{
+		const size_t length = strlen(entry->d_name);
+
+		if ((strcmp(entry->d_name, ".") == 0) || (strcmp(entry->d_name, "..") == 0))
+			continue;
+		if (strcmp(entry->d_name, listener_name) == 0)
+		{
+			if (found_listener)
+				goto cleanup;
+			found_listener = 1;
+		}
+		else if ((length == 45U) && (memcmp(entry->d_name, "pam-", 4U) == 0) &&
+		         (memcmp(&entry->d_name[length - 5U], ".sock", 5U) == 0))
+		{
+			char path[1024] = { 0 };
+			struct stat st = { 0 };
+
+			if (found_pam ||
+			    (snprintf(path, sizeof(path), "%s/%s", helper->dir, entry->d_name) >=
+			     (int)sizeof(path)) ||
+			    (lstat(path, &st) != 0) || !S_ISSOCK(st.st_mode) || ((st.st_mode & 0777) != 0600))
+				goto cleanup;
+			found_pam = 1;
+		}
+		else
+			goto cleanup;
+	}
+	if ((errno == 0) && found_listener && found_pam)
+		rc = 0;
+
+cleanup:
+	closedir(dir);
+	return rc;
+}
+
+static int find_pam_endpoint(const frdpTestHelper* helper, char* path, size_t path_size)
+{
+	DIR* directory = NULL;
+	struct dirent* entry = NULL;
+	int found = 0;
+
+	if (!helper || !path || (path_size == 0) || !(directory = opendir(helper->dir)))
+		return -1;
+	while ((entry = readdir(directory)) != NULL)
+	{
+		const size_t length = strlen(entry->d_name);
+
+		if ((length != 45U) || (memcmp(entry->d_name, "pam-", 4U) != 0) ||
+		    (memcmp(&entry->d_name[length - 5U], ".sock", 5U) != 0))
+			continue;
+		if (found ||
+		    (snprintf(path, path_size, "%s/%s", helper->dir, entry->d_name) >= (int)path_size))
+		{
+			closedir(directory);
+			return -1;
+		}
+		found = 1;
+	}
+	closedir(directory);
+	return found ? 0 : -1;
+}
+
+static int pam_owner_peer_pid(const char* endpoint, pid_t* pid)
+{
+#if defined(__linux__) && defined(SO_PEERCRED)
+	struct sockaddr_un address = { 0 };
+	struct ucred credentials = { 0 };
+	socklen_t size = sizeof(credentials);
+	int fd = -1;
+	int rc = -1;
+
+	if (!endpoint || !pid || (strlen(endpoint) >= sizeof(address.sun_path)))
+		return -1;
+	fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+	if (fd < 0)
+		return -1;
+	address.sun_family = AF_UNIX;
+	snprintf(address.sun_path, sizeof(address.sun_path), "%s", endpoint);
+	if ((connect(fd, (struct sockaddr*)&address, sizeof(address)) == 0) &&
+	    (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &size) == 0) &&
+	    (size == sizeof(credentials)) && (credentials.pid > 1))
+	{
+		*pid = credentials.pid;
+		rc = 0;
+	}
+	close(fd);
+	return rc;
+#else
+	(void)endpoint;
+	(void)pid;
+	return -1;
+#endif
+}
+
 static int test_sesmand_pam_session_open_failure(void)
 {
 	static const char service[] = "frdp-session-deny";
@@ -2363,6 +2531,7 @@ static int test_sesmand_crash_during_pam_open(void)
 	char service_path[1024] = { 0 };
 	char audit_path[1024] = { 0 };
 	char key_path[1024] = { 0 };
+	char pam_endpoint[1024] = { 0 };
 	char contents[4096] = { 0 };
 	char user[64] = { 0 };
 	uint64_t uid = 0;
@@ -2412,7 +2581,8 @@ static int test_sesmand_crash_during_pam_open(void)
 		_exit(request_rc != 0 ? 0 : 1);
 	}
 	if ((wait_for_file_contents(audit_path, expected_audit) != 0) ||
-	    (helper_dir_contains_only_listener(&helper) != 0))
+	    (helper_dir_contains_listener_and_pam_endpoint(&helper) != 0) ||
+	    (find_pam_endpoint(&helper, pam_endpoint, sizeof(pam_endpoint)) != 0))
 		goto cleanup;
 	if ((kill(helper.pid, SIGKILL) != 0) || (wait_for_exit(helper.pid, &status) != 0))
 		goto cleanup;
@@ -2423,8 +2593,10 @@ static int test_sesmand_crash_during_pam_open(void)
 		goto cleanup;
 	requester = -1;
 	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0) ||
-	    (helper_dir_contains_only_listener(&helper) != 0) ||
-	    (test_helper_health(helper.socket_path, "frdp-sesmand") == 0))
+	    (test_helper_health(helper.socket_path, "frdp-sesmand") == 0) ||
+	    (restart_helper(FRDP_SESMAND_BINARY, &helper) == 0))
+		goto cleanup;
+	if ((helper.pid > 0) || (access(pam_endpoint, F_OK) != 0))
 		goto cleanup;
 	rc = 0;
 
@@ -2442,6 +2614,7 @@ cleanup:
 			(void)waitpid(helper.pid, NULL, 0);
 		}
 		unlink(helper.socket_path);
+		unlink(pam_endpoint);
 		rmdir(helper.dir);
 	}
 	if (saved_key_path)
@@ -2451,6 +2624,169 @@ cleanup:
 	}
 	else
 		unsetenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	unlink(key_path);
+	unlink(audit_path);
+	unlink(service_path);
+	if (dir[0])
+		rmdir(dir);
+	SecureZeroMemory(groups, sizeof(groups));
+	return rc;
+}
+
+static int test_sesmand_crash_after_agent_launch(void)
+{
+	static const char service[] = "frdp-session-launch-crash";
+	static const char expected_audit[] = "account\nsetcred-establish\nopen-session-start\n"
+	                                     "close-session-start\nclose-session\nsetcred-delete\n";
+	frdpTestHelper helper = { .pid = -1 };
+	pid_t requester = -1;
+	pid_t agent_pid = -1;
+	char dir[1024] = { 0 };
+	char service_path[1024] = { 0 };
+	char audit_path[1024] = { 0 };
+	char key_path[1024] = { 0 };
+	char marker_path[1024] = { 0 };
+	char agent_dir[1024] = { 0 };
+	char agent_path[1024] = { 0 };
+	char updated_path[4096] = { 0 };
+	char contents[4096] = { 0 };
+	char user[64] = { 0 };
+	uint64_t uid = 0;
+	uint64_t gid = 0;
+	uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+	uint32_t group_count = 0;
+	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	const char* current_path = getenv("PATH");
+	const char* previous_marker = getenv("FRDP_AGENT_TEST_MARKER");
+	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
+	char* saved_path = current_path ? strdup(current_path) : NULL;
+	char* saved_marker = previous_marker ? strdup(previous_marker) : NULL;
+	int helper_started = 0;
+	int status = 0;
+	int rc = -1;
+	const char* stage = "prerequisites";
+
+	if (!saved_path || (previous_key_path && !saved_key_path) || (previous_marker && !saved_marker))
+		goto cleanup;
+	if ((make_runtime_dir(dir, sizeof(dir), "pam-session-launch-crash") != 0) ||
+	    (make_runtime_dir(agent_dir, sizeof(agent_dir), "blocking-agent") != 0) ||
+	    (snprintf(service_path, sizeof(service_path), "%s/%s", dir, service) >=
+	     (int)sizeof(service_path)) ||
+	    (snprintf(audit_path, sizeof(audit_path), "%s/pam-audit.log", dir) >=
+	     (int)sizeof(audit_path)) ||
+	    (snprintf(key_path, sizeof(key_path), "%s/auth-token.key", dir) >=
+	     (int)sizeof(key_path)) ||
+	    (snprintf(marker_path, sizeof(marker_path), "%s/agent.pid", agent_dir) >=
+	     (int)sizeof(marker_path)) ||
+	    (snprintf(agent_path, sizeof(agent_path), "%s/frdp-session-agent", agent_dir) >=
+	     (int)sizeof(agent_path)) ||
+	    (snprintf(contents, sizeof(contents),
+	              "auth required %s\naccount required %s\nsession required %s\n",
+	              FRDP_PAM_SESSION_ALLOW_TEST_MODULE, FRDP_PAM_SESSION_ALLOW_TEST_MODULE,
+	              FRDP_PAM_SESSION_ALLOW_TEST_MODULE) >= (int)sizeof(contents)) ||
+	    (write_pam_fixture_file(service_path, contents) != 0) ||
+	    (write_pam_fixture_file(audit_path, "") != 0) ||
+	    (symlink(FRDP_SESSION_AGENT_BLOCKING_BINARY, agent_path) != 0) ||
+	    (snprintf(updated_path, sizeof(updated_path), "%s:%s", agent_dir, saved_path) >=
+	     (int)sizeof(updated_path)) ||
+	    (setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0) ||
+	    (setenv("PATH", updated_path, 1) != 0) ||
+	    (setenv("FRDP_AGENT_TEST_MARKER", marker_path, 1) != 0) ||
+	    (lookup_current_user(user, sizeof(user), &uid, &gid, groups, &group_count) != 0))
+		goto cleanup;
+	stage = "helper-start";
+	if (start_helper_with_pam_wrapper(FRDP_SESMAND_BINARY, "pam-session-launch-crash", dir,
+	                                  service, key_path, NULL, audit_path, 0, &helper) != 0)
+		goto cleanup;
+	helper_started = 1;
+	(void)setenv("PATH", saved_path, 1);
+	if (saved_marker)
+		(void)setenv("FRDP_AGENT_TEST_MARKER", saved_marker, 1);
+	else
+		unsetenv("FRDP_AGENT_TEST_MARKER");
+	stage = "request";
+	requester = fork();
+	if (requester < 0)
+		goto cleanup;
+	if (requester == 0)
+	{
+		frdpSessionResponse response = { 0 };
+		const int request_rc = request_live_session(
+		    helper.socket_path, user, "198.51.100.78", "pam-session-launch-crash", NULL, uid, gid,
+		    groups, group_count, &response, "unused after manager crash");
+
+		SecureZeroMemory(&response, sizeof(response));
+		_exit(request_rc != 0 ? 0 : 1);
+	}
+	stage = "agent-marker";
+	if ((wait_for_pid_file(marker_path, &agent_pid) != 0) || (getpgid(agent_pid) != agent_pid) ||
+	    (kill(helper.pid, SIGKILL) != 0) || (wait_for_exit(helper.pid, &status) != 0))
+		goto cleanup;
+	helper.pid = -1;
+	stage = "manager-killed";
+	if (!WIFSIGNALED(status) || (WTERMSIG(status) != SIGKILL) ||
+	    (wait_for_exit(requester, &status) != 0))
+		goto cleanup;
+	requester = -1;
+	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0))
+		goto cleanup;
+	stage = "agent-gone";
+	if (wait_for_process_gone(agent_pid) != 0)
+		goto cleanup;
+	stage = "pam-closed";
+	if (wait_for_file_contents_attempts(audit_path, expected_audit, 200) != 0)
+		goto cleanup;
+	stage = "manager-restart";
+	if (restart_helper(FRDP_SESMAND_BINARY, &helper) != 0)
+		goto cleanup;
+	stage = "stale-cleanup";
+	if ((helper_dir_contains_only_listener(&helper) != 0) ||
+	    (test_helper_health(helper.socket_path, "frdp-sesmand") != 0))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (rc != 0)
+		fprintf(stderr, "post-launch crash failed at stage: %s\n", stage);
+	if (agent_pid > 1)
+		(void)kill(-agent_pid, SIGKILL);
+	if (requester > 0)
+	{
+		kill(requester, SIGKILL);
+		(void)waitpid(requester, NULL, 0);
+	}
+	if (helper_started)
+	{
+		if (helper.pid > 0)
+		{
+			kill(helper.pid, SIGKILL);
+			(void)waitpid(helper.pid, NULL, 0);
+		}
+		unlink(helper.socket_path);
+		rmdir(helper.dir);
+	}
+	if (saved_path)
+	{
+		(void)setenv("PATH", saved_path, 1);
+		free(saved_path);
+	}
+	if (saved_marker)
+	{
+		(void)setenv("FRDP_AGENT_TEST_MARKER", saved_marker, 1);
+		free(saved_marker);
+	}
+	else
+		unsetenv("FRDP_AGENT_TEST_MARKER");
+	if (saved_key_path)
+	{
+		(void)setenv(FRDP_AUTH_TOKEN_KEY_ENV, saved_key_path, 1);
+		free(saved_key_path);
+	}
+	else
+		unsetenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	unlink(marker_path);
+	unlink(agent_path);
+	rmdir(agent_dir);
 	unlink(key_path);
 	unlink(audit_path);
 	unlink(service_path);
@@ -2476,19 +2812,20 @@ static int test_sesmand_crash_during_pam_close(void)
 	    "account\nsetcred-establish\nopen-session-start\nclose-session-start\n";
 	frdpTestHelper helper = { .pid = -1 };
 	frdpSessionResponse opened = { 0 };
-	frdpSessionListResponse final_list = { 0 };
 	frdpStoppingMetadataExpectation metadata_expected = { 0 };
 	struct stat agent_socket_st = { 0 };
 	struct stat reservation_st = { 0 };
 	pid_t requester = -1;
 	pid_t agent_pgid = -1;
 	pid_t backend_pid = -1;
+	pid_t pam_owner_pid = -1;
 	char dir[1024] = { 0 };
 	char service_path[1024] = { 0 };
 	char audit_path[1024] = { 0 };
 	char key_path[1024] = { 0 };
 	char metadata_name[96] = { 0 };
 	char metadata_path[1024] = { 0 };
+	char pam_owner_endpoint[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
 	char reservation_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
 	char contents[4096] = { 0 };
 	char user[64] = { 0 };
@@ -2506,9 +2843,6 @@ static int test_sesmand_crash_during_pam_close(void)
 	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
 	char* saved_path = NULL;
 	int helper_started = 0;
-	int open_attempted = 0;
-	int preserve_session_artifacts = 0;
-	int recovery_complete = 0;
 	int status = 0;
 	int rc = -1;
 	const char* stage = "prerequisites";
@@ -2550,17 +2884,19 @@ static int test_sesmand_crash_during_pam_close(void)
 	restore_path(saved_path);
 	saved_path = NULL;
 	stage = "open";
-	open_attempted = 1;
-	if ((request_live_session(helper.socket_path, user, "127.0.0.1", "pam-close-crash-open",
-	                          NULL, uid, gid, groups, group_count, &opened, NULL) != 0) ||
+	if ((request_live_session(helper.socket_path, user, "127.0.0.1", "pam-close-crash-open", NULL,
+	                          uid, gid, groups, group_count, &opened, NULL) != 0) ||
 	    (list_single_session(helper.socket_path, &opened, user, "active", -1, &agent_pid) != 0) ||
 	    (sscanf(opened.display, ":%d", &display_number) != 1) ||
 	    (frdp_sesmand_session_metadata_filename(metadata_name, sizeof(metadata_name),
-	                                             opened.session_id) != 0) ||
+	                                            opened.session_id) != 0) ||
 	    (snprintf(metadata_path, sizeof(metadata_path), "%s/%s", helper.dir, metadata_name) >=
 	     (int)sizeof(metadata_path)) ||
 	    (frdp_sesmand_display_reservation_path(reservation_path, sizeof(reservation_path),
 	                                           helper.dir, display_number) != 0) ||
+	    (frdp_sesmand_pam_owner_endpoint(pam_owner_endpoint, sizeof(pam_owner_endpoint), helper.dir,
+	                                     opened.session_id) != 0) ||
+	    (pam_owner_peer_pid(pam_owner_endpoint, &pam_owner_pid) != 0) ||
 	    (lstat(opened.agent_socket, &agent_socket_st) != 0) ||
 	    (lstat(reservation_path, &reservation_st) != 0) || (access(metadata_path, F_OK) != 0) ||
 	    ((agent_pgid = getpgid((pid_t)agent_pid)) <= 1) ||
@@ -2615,14 +2951,16 @@ static int test_sesmand_crash_during_pam_close(void)
 	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0))
 		goto cleanup;
 	stage = "manager-restart";
-	if (restart_helper(FRDP_SESMAND_BINARY, &helper) != 0)
+	if ((restart_helper(FRDP_SESMAND_BINARY, &helper) != 0) ||
+	    (wait_for_exit_attempts(helper.pid, &status, 150) != 0))
 		goto cleanup;
-	helper_started = 1;
-	stage = "reconciled";
-	if ((receive_sesmand_list(helper.socket_path, &final_list) != 0) ||
-	    (final_list.count != 0) || (access(metadata_path, F_OK) == 0) || (errno != ENOENT) ||
-	    (access(opened.agent_socket, F_OK) == 0) || (errno != ENOENT) ||
-	    (access(reservation_path, F_OK) == 0) || (errno != ENOENT))
+	helper.pid = -1;
+	if (!WIFEXITED(status) || (WEXITSTATUS(status) == 0))
+		goto cleanup;
+	stage = "preserved";
+	if ((access(metadata_path, F_OK) != 0) || (access(opened.agent_socket, F_OK) != 0) ||
+	    (access(reservation_path, F_OK) != 0) || (access(pam_owner_endpoint, F_OK) != 0) ||
+	    (kill(pam_owner_pid, 0) != 0))
 		goto cleanup;
 	rc = 0;
 
@@ -2636,31 +2974,22 @@ cleanup:
 		kill(requester, SIGKILL);
 		(void)waitpid(requester, NULL, 0);
 	}
-	if ((rc != 0) && open_attempted)
+	if (helper.pid > 0)
 	{
-		if (helper.pid > 0)
-		{
-			kill(helper.pid, SIGKILL);
-			(void)waitpid(helper.pid, NULL, 0);
-			helper.pid = -1;
-			helper_started = 0;
-		}
-		if ((helper.pid <= 0) && (restart_helper(FRDP_SESMAND_BINARY, &helper) == 0))
-		{
-			helper_started = 1;
-			SecureZeroMemory(&final_list, sizeof(final_list));
-			recovery_complete = (receive_sesmand_list(helper.socket_path, &final_list) == 0) &&
-			                    (final_list.count == 0);
-		}
-		if (!recovery_complete && (agent_pidfd >= 0) && (backend_pidfd >= 0))
-		{
-			(void)signal_process_pidfd(backend_pidfd, SIGKILL);
-			(void)signal_process_pidfd(agent_pidfd, SIGKILL);
-		}
-		if (agent_pgid > 1)
-			preserve_session_artifacts = wait_for_process_group_gone(agent_pgid) != 0;
-		else
-			preserve_session_artifacts = !recovery_complete;
+		kill(helper.pid, SIGKILL);
+		(void)waitpid(helper.pid, NULL, 0);
+		helper.pid = -1;
+		helper_started = 0;
+	}
+	if (pam_owner_pid > 1)
+	{
+		(void)kill(pam_owner_pid, SIGKILL);
+		(void)wait_for_process_gone(pam_owner_pid);
+	}
+	if ((agent_pidfd >= 0) && (backend_pidfd >= 0))
+	{
+		(void)signal_process_pidfd(backend_pidfd, SIGKILL);
+		(void)signal_process_pidfd(agent_pidfd, SIGKILL);
 	}
 	if (helper_started && (stop_helper(&helper) != 0))
 		rc = -1;
@@ -2682,15 +3011,13 @@ cleanup:
 	}
 	else
 		unsetenv(FRDP_AUTH_TOKEN_KEY_ENV);
-	if (!preserve_session_artifacts)
-	{
-		unlink(metadata_path);
-		unlink(opened.agent_socket);
-		unlink(reservation_path);
-		unlink(helper.socket_path);
-		if (helper.dir[0])
-			rmdir(helper.dir);
-	}
+	unlink(metadata_path);
+	unlink(opened.agent_socket);
+	unlink(reservation_path);
+	unlink(pam_owner_endpoint);
+	unlink(helper.socket_path);
+	if (helper.dir[0])
+		rmdir(helper.dir);
 	unlink(key_path);
 	unlink(audit_path);
 	unlink(service_path);
@@ -2698,7 +3025,6 @@ cleanup:
 		rmdir(dir);
 	SecureZeroMemory(groups, sizeof(groups));
 	SecureZeroMemory(&opened, sizeof(opened));
-	SecureZeroMemory(&final_list, sizeof(final_list));
 	return rc;
 #endif
 }
@@ -2719,6 +3045,11 @@ static int test_sesmand_crash_during_pam_open(void)
 }
 
 static int test_sesmand_crash_during_pam_close(void)
+{
+	return 0;
+}
+
+static int test_sesmand_crash_after_agent_launch(void)
 {
 	return 0;
 }
@@ -3878,6 +4209,11 @@ int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 	if (test_sesmand_crash_during_pam_open() != 0)
 	{
 		printf("frdp-sesmand in-flight PAM open crash test failed\n");
+		return -1;
+	}
+	if (test_sesmand_crash_after_agent_launch() != 0)
+	{
+		printf("frdp-sesmand post-launch crash test failed\n");
 		return -1;
 	}
 	if (test_sesmand_crash_during_pam_close() != 0)

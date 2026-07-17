@@ -5,6 +5,7 @@
 #include "display_policy.h"
 #include "process_identity.h"
 #include "session_metadata.h"
+#include "session_pam_owner.h"
 #include "session_scope.h"
 
 #include <errno.h>
@@ -218,7 +219,10 @@ static int reconcile_session(const frdpSesmandSessionMetadata* metadata, uint64_
 	      (frdp_sesmand_scope_stop(recovery->scope_manager, scope_name) != 0))))
 		return -1;
 	scope_stopped = metadata->systemd_scope;
-	if (!scope_stopped && (stop_matching_process_group(metadata) != 0))
+	if (!scope_stopped && (metadata->agent_pid > 1) &&
+	    (stop_matching_process_group(metadata) != 0))
+		return -1;
+	if (metadata->pam_owner && (frdp_sesmand_pam_owner_recover(dir, metadata->session_id) != 0))
 		return -1;
 	if ((frdp_sesmand_session_unlink_artifact(agent_socket, metadata->agent_socket_dev,
 	                                          metadata->agent_socket_ino, S_IFSOCK) != 0) ||
@@ -227,7 +231,11 @@ static int reconcile_session(const frdpSesmandSessionMetadata* metadata, uint64_
 	                                          metadata->display_reservation_ino, S_IFREG) != 0) ||
 	    (sync_directory(dir) != 0))
 		return -1;
-	return frdp_sesmand_session_metadata_remove(dir, metadata->session_id, file_dev, file_ino);
+	if (frdp_sesmand_session_metadata_remove(dir, metadata->session_id, file_dev, file_ino) != 0)
+		return -1;
+	if (metadata->pam_owner)
+		(void)frdp_sesmand_pam_owner_finalize(dir, metadata->session_id);
+	return 0;
 }
 
 int frdp_sesmand_session_reconcile_all(const char* dir, frdpSesmandScopeManager* scope_manager)

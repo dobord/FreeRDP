@@ -159,8 +159,21 @@ finite and unlimited property updates, the cgroup of both the agent and a
 detached descendant, metadata-driven restart cleanup, and unit collection.
 Config reload updates all existing scoped sessions as a rollback-protected
 batch; inability to restore the previous limits stops the manager for normal
-session cleanup. systemd-logind registration, PAM-handle reconciliation, and
-an individual per-session runtime quota API remain open.
+session cleanup. Per-session PAM owners retain `pam_handle_t` across a manager
+crash, authenticate same-UID control peers on root-only `SOCK_SEQPACKET`
+endpoints, monitor manager and agent pidfds, and persist a synchronized close
+receipt. A failed close is persisted separately and never accepted as a receipt;
+an endpoint without either proof remains an uncertainty. Metadata V3 recovery fails closed unless close is confirmed; startup
+removes only inode-matched stale endpoints after metadata reconciliation. A
+provisional `STARTING` record binds artifact ownership before `fork()`, then is
+atomically replaced with PID/start-time identity while the child remains behind
+the launch barrier. The complete process group is held stopped while the owner
+applies TERM grace and KILL escalation, so a descendant cannot destroy the pidfd
+anchor. Receipt-backed orphan socket cleanup and PID/start-time
+display-reservation reconciliation cover the earlier artifact-creation window.
+The close receipt is consumed only after artifact plus metadata removal succeeds.
+systemd-logind registration and an individual per-session runtime quota API
+remain open.
 
 ## Package signing and reproducible builds
 

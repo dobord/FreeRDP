@@ -23,7 +23,6 @@
 #ifdef __linux__
 #include <sys/prctl.h>
 #endif
-#include <security/pam_appl.h>
 #include <pwd.h>
 #include <syslog.h>
 #include <uuid/uuid.h>
@@ -44,21 +43,20 @@
 #include "../ipc/frdp-ipc.h"
 #include "display_policy.h"
 #include "process_identity.h"
-#include "sesmand_pam.h"
 #include "session_cleanup.h"
 #include "session_disconnect.h"
 #include "session_identity.h"
 #include "session_metadata.h"
+#include "session_pam_owner.h"
 #include "session_reconnect.h"
 #include "session_recovery.h"
 #include "session_resources.h"
 #include "session_scope.h"
 #include "session_state.h"
 
-/* Session registry entry.  Each session retains its PAM handle and the
- * process group of the launched agent/backend so that cleanup can terminate
- * all descendants.  A per-session display number is allocated for headless
- * X servers. */
+/* Session registry entry.  Each session retains its PAM-owner identity and
+ * agent process group so cleanup can close PAM and terminate all descendants.
+ * A per-session display number is allocated for headless X servers. */
 typedef struct {
     char user[64];
     uid_t uid;
@@ -67,9 +65,8 @@ typedef struct {
     pid_t pgid;
     unsigned long long agent_start_ticks;
     time_t start_time;
-    pam_handle_t *pamh;
-    int credentials_established;
-    frdpSesmandSessionState state;
+	frdpSesmandPamOwner pam_owner;
+	frdpSesmandSessionState state;
     int display_number;
     int display_reservation_fd;
     char display_reservation[sizeof(((struct sockaddr_un *)0)->sun_path)];
@@ -126,7 +123,6 @@ typedef struct {
 static consumedAuthToken consumed_auth_tokens[MAX_CONSUMED_AUTH_TOKENS];
 
 static int create_agent_socket(const char *socket_path);
-static void destroy_agent_socket(int *fd, const char *socket_path);
 static int configure_agent_display_environment(const frdpSessionDisplayPolicy* policy);
 static int cleanup_session(int idx);
 
@@ -464,6 +460,7 @@ static int persist_session_metadata(session* s)
     metadata.display_reservation_dev = s->display_reservation_dev;
     metadata.display_reservation_ino = s->display_reservation_ino;
 	metadata.systemd_scope = s->scope_name[0] != '\0';
+	metadata.pam_owner = s->pam_owner.active;
 	result =
 	    frdp_sesmand_session_metadata_save(g_agent_socket_dir, &metadata, &file_dev, &file_ino);
 	if ((file_dev != 0) && (file_ino != 0)) {
@@ -649,6 +646,18 @@ static int allocate_display_number(int *display, int *reservation_fd, char *rese
     return -1;
 }
 
+static int reconcile_stale_display_reservations(void)
+{
+	const char* dir = (g_agent_socket_dir[0] != '\0') ? g_agent_socket_dir : "/tmp";
+
+	for (int display = FRDP_SESMAND_DISPLAY_MIN; display <= FRDP_SESMAND_DISPLAY_MAX; display++)
+	{
+		if (frdp_sesmand_display_reservation_reconcile_stale(dir, display) < 0)
+			return -1;
+	}
+	return 0;
+}
+
 static void release_display_reservation(int *reservation_fd, const char *reservation_path)
 {
     frdp_sesmand_display_reservation_release(reservation_fd, reservation_path);
@@ -693,80 +702,82 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 	int heartbeat_pair[2] = { -1, -1 };
 	int agent_fd = -1;
 	int display_reservation_fd = -1;
-    gid_t native_groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
+	frdpSesmandPamOwner pam_owner = { .pid = -1, .active = 0 };
+	const char* pam_runtime_dir = (g_agent_socket_dir[0] != '\0') ? g_agent_socket_dir : "/tmp";
+	gid_t native_groups[FRDP_IPC_MAX_AUTH_GROUPS] = {0};
+	session* s = NULL;
 
     if ((uint32_t)session_count >= FRDP_CONFIG_MAX_SESSIONS)
         return -1;
     if (copy_groups_to_native(groups, group_count, native_groups,
-                              sizeof(native_groups) / sizeof(native_groups[0])) != 0)
+                              sizeof(native_groups) / sizeof(native_groups[0])) != 0) {
         return -1;
-    struct pam_conv conv = {frdp_sesmand_pam_conversation, NULL};
-    pam_handle_t *pamh = NULL;
-    int credentials_established = 0;
-    int ret = pam_start(g_pam_service, user, &conv, &pamh);
-    if (ret != PAM_SUCCESS)
-        return -1;
-    if (rhost && rhost[0])
-        ret = pam_set_item(pamh, PAM_RHOST, rhost);
-    if (ret == PAM_SUCCESS)
-        ret = pam_set_item(pamh, PAM_TTY, "rdp");
-    if (ret == PAM_SUCCESS)
-        ret = pam_set_item(pamh, PAM_RUSER, user);
-    if (ret != PAM_SUCCESS) {
-        pam_end(pamh, ret);
-        return -1;
-    }
-    ret = pam_acct_mgmt(pamh, 0);
-    if (ret != PAM_SUCCESS) {
-        pam_end(pamh, ret);
-        return -1;
-    }
-    ret = pam_setcred(pamh, PAM_ESTABLISH_CRED);
-    if (ret != PAM_SUCCESS) {
-        pam_end(pamh, ret);
-        return -1;
-    }
-    credentials_established = 1;
-    ret = pam_open_session(pamh, 0);
-    if (ret != PAM_SUCCESS) {
-        pam_setcred(pamh, PAM_DELETE_CRED);
-        pam_end(pamh, ret);
-        return -1;
-    }
+	}
+	uuid_generate(new_id);
+	uuid_unparse_lower(new_id, new_session_id);
+	if (frdp_sesmand_pam_owner_start(pam_runtime_dir, new_session_id, g_pam_service, user, rhost,
+	                                 &pam_owner) != 0)
+		return -1;
 
-    /* Allocate display number and build display string */
+	/* Allocate display number and build display string */
     int display = 0;
     if (allocate_display_number(&display, &display_reservation_fd, display_reservation_path,
                                 sizeof(display_reservation_path)) != 0) {
-        pam_close_session(pamh, 0);
-        pam_setcred(pamh, PAM_DELETE_CRED);
-        pam_end(pamh, PAM_SUCCESS);
-        return -1;
-    }
-    char display_str[16];
-    snprintf(display_str, sizeof display_str, ":%d", display);
-    uuid_generate(new_id);
-    uuid_unparse_lower(new_id, new_session_id);
-    if (build_agent_socket_path(agent_socket_path, sizeof(agent_socket_path), new_session_id) != 0) {
+		(void)frdp_sesmand_pam_owner_close(pam_runtime_dir, new_session_id, &pam_owner);
+		return -1;
+	}
+	char display_str[16];
+	snprintf(display_str, sizeof display_str, ":%d", display);
+	if (build_agent_socket_path(agent_socket_path, sizeof(agent_socket_path), new_session_id) != 0) {
         release_display_reservation(&display_reservation_fd, display_reservation_path);
-        pam_close_session(pamh, 0);
-        pam_setcred(pamh, PAM_DELETE_CRED);
-        pam_end(pamh, PAM_SUCCESS);
-        return -1;
-    }
-    if (agent_socket_path[0] != '\0') {
+		(void)frdp_sesmand_pam_owner_close(pam_runtime_dir, new_session_id, &pam_owner);
+		return -1;
+	}
+	if (agent_socket_path[0] != '\0') {
         agent_fd = create_agent_socket(agent_socket_path);
         if (agent_fd < 0) {
             release_display_reservation(&display_reservation_fd, display_reservation_path);
-            pam_close_session(pamh, 0);
-            pam_setcred(pamh, PAM_DELETE_CRED);
-            pam_end(pamh, PAM_SUCCESS);
-            return -1;
-        }
-    }
+			(void)frdp_sesmand_pam_owner_close(pam_runtime_dir, new_session_id, &pam_owner);
+			return -1;
+		}
+	}
     snprintf(geometry_str, sizeof(geometry_str), "%ux%ux%u",
              normalize_dimension(desktop_width, 1024),
              normalize_dimension(desktop_height, 768), normalize_color_depth(color_depth));
+
+	/* Persist artifact ownership before any process can outlive the manager. */
+	s = &sessions[session_count];
+	memset(s, 0, sizeof(*s));
+	s->display_reservation_fd = display_reservation_fd;
+	display_reservation_fd = -1;
+	s->heartbeat_fd = -1;
+	strncpy(s->user, user, sizeof(s->user) - 1);
+	s->user[sizeof(s->user) - 1] = '\0';
+	s->uid = uid;
+	uuid_copy(s->id, new_id);
+	s->start_time = time(NULL);
+	s->pam_owner = pam_owner;
+	s->state = FRDP_SESMAND_SESSION_STARTING;
+	s->display_number = display;
+	s->heartbeat_next_ms = monotonic_time_ms() + g_session_heartbeat_policy.interval_ms;
+	snprintf(s->display_reservation, sizeof(s->display_reservation), "%s", display_reservation_path);
+	snprintf(s->agent_socket, sizeof(s->agent_socket), "%s", agent_socket_path);
+	session_count++;
+	if ((capture_artifact_identity(s->agent_socket, S_IFSOCK, &s->agent_socket_dev,
+	                               &s->agent_socket_ino) != 0) ||
+	    (capture_artifact_identity(s->display_reservation, S_IFREG,
+	                               &s->display_reservation_dev,
+	                               &s->display_reservation_ino) != 0) ||
+	    (persist_session_metadata(s) != 0))
+	{
+		if (agent_fd >= 0)
+		{
+			close(agent_fd);
+			agent_fd = -1;
+		}
+		cleanup_session(session_count - 1);
+		return -1;
+	}
 
 	if ((create_cloexec_pipe(exec_pipe) != 0) || (create_cloexec_socketpair(launch_pair) != 0) ||
 	    (create_cloexec_socketpair(heartbeat_pair) != 0))
@@ -779,12 +790,10 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 			close(launch_pair[0]);
 		if (launch_pair[1] >= 0)
 			close(launch_pair[1]);
-		destroy_agent_socket(&agent_fd, agent_socket_path);
-		release_display_reservation(&display_reservation_fd, display_reservation_path);
-		pam_close_session(pamh, 0);
-        pam_setcred(pamh, PAM_DELETE_CRED);
-        pam_end(pamh, PAM_SUCCESS);
-        return -1;
+		if (agent_fd >= 0)
+			close(agent_fd);
+		cleanup_session(session_count - 1);
+		return -1;
 	}
 	pid_t pid = fork();
 	if (pid < 0)
@@ -795,12 +804,10 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 		close(launch_pair[1]);
 		close(heartbeat_pair[0]);
 		close(heartbeat_pair[1]);
-		destroy_agent_socket(&agent_fd, agent_socket_path);
-        release_display_reservation(&display_reservation_fd, display_reservation_path);
-        pam_close_session(pamh, 0);
-        pam_setcred(pamh, PAM_DELETE_CRED);
-        pam_end(pamh, PAM_SUCCESS);
-        return -1;
+		if (agent_fd >= 0)
+			close(agent_fd);
+		cleanup_session(session_count - 1);
+		return -1;
 	}
 	if (pid == 0) {
 		char child_launch_marker = 0;
@@ -862,30 +869,59 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 	launch_pair[0] = -1;
 	close(heartbeat_pair[1]);
 	heartbeat_pair[1] = -1;
+	s->agent_pid = pid;
+	s->pgid = pid;
+	s->heartbeat_fd = heartbeat_pair[0];
+	heartbeat_pair[0] = -1;
 	if (agent_fd >= 0) {
         close(agent_fd);
         agent_fd = -1;
     }
-	if ((g_session_resource_policy.systemd_scope &&
-	     (frdp_sesmand_scope_start(&g_scope_manager, new_session_id, pid,
-	                               &g_session_resource_policy, scope_name,
-	                               sizeof(scope_name)) != 0)) ||
-	    (send(launch_pair[1], &launch_marker, sizeof(launch_marker), MSG_NOSIGNAL) !=
-	     (ssize_t)sizeof(launch_marker)))
+	if ((setpgid(pid, pid) != 0) ||
+	    (frdp_sesmand_pam_owner_bind_agent(pam_runtime_dir, new_session_id, &pam_owner, pid, pid) !=
+	     0))
 	{
 		close(launch_pair[1]);
 		launch_pair[1] = -1;
-		if (scope_name[0] != '\0')
-			(void)frdp_sesmand_scope_stop(&g_scope_manager, scope_name);
-		(void)kill(-pid, SIGTERM);
-		(void)waitpid(pid, NULL, 0);
 		close(exec_pipe[0]);
-		close(heartbeat_pair[0]);
-		destroy_agent_socket(&agent_fd, agent_socket_path);
-		release_display_reservation(&display_reservation_fd, display_reservation_path);
-		pam_close_session(pamh, 0);
-		pam_setcred(pamh, PAM_DELETE_CRED);
-		pam_end(pamh, PAM_SUCCESS);
+		cleanup_session(session_count - 1);
+		return -1;
+	}
+
+	/* Bind the blocked child to the owner and replace provisional metadata. */
+	uid_t agent_effective_uid = (uid_t)-1;
+
+	if ((frdp_sesmand_process_identity_read(s->agent_pid, &s->agent_start_ticks, NULL) !=
+	     FRDP_SESMAND_PROCESS_IDENTITY_OK) ||
+	    (persist_session_metadata(s) != 0))
+	{
+		close(launch_pair[1]);
+		close(exec_pipe[0]);
+		cleanup_session(session_count - 1);
+		return -1;
+	}
+	if (g_session_resource_policy.systemd_scope)
+	{
+		const int scope_status = frdp_sesmand_scope_start(
+		    &g_scope_manager, new_session_id, pid, &g_session_resource_policy, scope_name,
+		    sizeof(scope_name));
+
+		if ((snprintf(s->scope_name, sizeof(s->scope_name), "%s", scope_name) >=
+		     (int)sizeof(s->scope_name)) ||
+		    (scope_status != 0) || (persist_session_metadata(s) != 0))
+		{
+			close(launch_pair[1]);
+			close(exec_pipe[0]);
+			cleanup_session(session_count - 1);
+			return -1;
+		}
+	}
+	if (send(launch_pair[1], &launch_marker, sizeof(launch_marker), MSG_NOSIGNAL) !=
+	    (ssize_t)sizeof(launch_marker))
+	{
+		close(launch_pair[1]);
+		close(exec_pipe[0]);
+		cleanup_session(session_count - 1);
 		return -1;
 	}
 	close(launch_pair[1]);
@@ -893,60 +929,20 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 	if (wait_for_agent_ready(exec_pipe[0], pid, pid) != 0)
 	{
 		close(exec_pipe[0]);
-		close(heartbeat_pair[0]);
-		if (scope_name[0] != '\0')
-			(void)frdp_sesmand_scope_stop(&g_scope_manager, scope_name);
-		destroy_agent_socket(&agent_fd, agent_socket_path);
-		release_display_reservation(&display_reservation_fd, display_reservation_path);
-		pam_close_session(pamh, 0);
-        pam_setcred(pamh, PAM_DELETE_CRED);
-        pam_end(pamh, PAM_SUCCESS);
-        return -1;
+		cleanup_session(session_count - 1);
+		return -1;
 	}
 	close(exec_pipe[0]);
 
-	/* Parent: record and durably persist session metadata before reporting success. */
-    session *s = &sessions[session_count];
-    uid_t agent_effective_uid = (uid_t)-1;
-
-    memset(s, 0, sizeof(*s));
-    s->display_reservation_fd = -1;
-    s->heartbeat_fd = heartbeat_pair[0];
-    heartbeat_pair[0] = -1;
-    strncpy(s->user, user, sizeof(s->user) - 1);
-    s->user[sizeof(s->user) - 1] = '\0';
-    s->uid = uid;
-    uuid_copy(s->id, new_id);
-    s->agent_pid = pid;
-    s->pgid = pid; /* child's pgid equals pid since setpgid called with 0 */
-    s->start_time = time(NULL);
-    s->pamh = pamh;
-    s->credentials_established = credentials_established;
-    s->state = FRDP_SESMAND_SESSION_ACTIVE;
-    s->display_number = display;
-    s->heartbeat_next_ms = monotonic_time_ms() + g_session_heartbeat_policy.interval_ms;
-    s->display_reservation_fd = display_reservation_fd;
-    display_reservation_fd = -1;
-    snprintf(s->display_reservation, sizeof(s->display_reservation), "%s",
-             display_reservation_path);
-    snprintf(s->agent_socket, sizeof(s->agent_socket), "%s", agent_socket_path);
-	snprintf(s->scope_name, sizeof(s->scope_name), "%s", scope_name);
-	session_count++;
-	if (durable_session_metadata_enabled())
+	/* Confirm the post-exec identity and commit ACTIVE before reporting success. */
+	if ((frdp_sesmand_process_identity_read(s->agent_pid, &s->agent_start_ticks,
+	                                        &agent_effective_uid) !=
+	     FRDP_SESMAND_PROCESS_IDENTITY_OK) ||
+	    (agent_effective_uid != s->uid) ||
+	    (persist_session_state(s, FRDP_SESMAND_SESSION_ACTIVE) != 0))
 	{
-		if ((frdp_sesmand_process_identity_read(s->agent_pid, &s->agent_start_ticks,
-                                                &agent_effective_uid) !=
-             FRDP_SESMAND_PROCESS_IDENTITY_OK) ||
-            (agent_effective_uid != s->uid) ||
-            (capture_artifact_identity(s->agent_socket, S_IFSOCK, &s->agent_socket_dev,
-                                       &s->agent_socket_ino) != 0) ||
-            (capture_artifact_identity(s->display_reservation, S_IFREG,
-                                       &s->display_reservation_dev,
-                                       &s->display_reservation_ino) != 0) ||
-            (persist_session_metadata(s) != 0)) {
-            cleanup_session(session_count - 1);
-            return -1;
-        }
+		cleanup_session(session_count - 1);
+		return -1;
 	}
 	snprintf(session_id, session_id_size, "%s", new_session_id);
     snprintf(display_out, display_out_size, "%s", display_str);
@@ -979,17 +975,21 @@ static int cleanup_session(int idx)
 {
     session *s = &sessions[idx];
     int durable_cleanup_complete = 1;
+	int pam_receipt_preserved = 0;
+	char pam_session_id[FRDP_SESMAND_SESSION_ID_SIZE] = { 0 };
+	const char* pam_runtime_dir =
+	    (g_agent_socket_dir[0] != '\0') ? g_agent_socket_dir : "/tmp";
     frdpSesmandSessionCleanupPlan cleanup = {0};
-    frdpSesmandSessionCleanupContext cleanup_context = {
-        .state = s->state,
-        .has_process_group = s->pgid > 0,
-        .has_pam_handle = s->pamh != NULL,
-        .credentials_established = s->credentials_established,
-        .has_agent_socket = s->agent_socket[0] != '\0',
-        .has_display_reservation = (s->display_reservation_fd >= 0) ||
-                                   (s->display_reservation[0] != '\0')
-    };
-    if (frdp_sesmand_session_cleanup_plan(&cleanup_context, &cleanup) != 0) {
+	frdpSesmandSessionCleanupContext cleanup_context = {
+		.state = s->state,
+		.has_process_group = s->pgid > 0,
+		.has_pam_handle = s->pam_owner.active,
+		.credentials_established = s->pam_owner.active,
+		.has_agent_socket = s->agent_socket[0] != '\0',
+		.has_display_reservation =
+		    (s->display_reservation_fd >= 0) || (s->display_reservation[0] != '\0')
+	};
+	if (frdp_sesmand_session_cleanup_plan(&cleanup_context, &cleanup) != 0) {
         cleanup.terminate_process_group = cleanup_context.has_process_group;
         cleanup.close_pam_session = cleanup_context.has_pam_handle;
         cleanup.delete_pam_credentials = cleanup_context.has_pam_handle &&
@@ -1016,17 +1016,21 @@ static int cleanup_session(int idx)
 		kill(-s->pgid, SIGTERM);
 		wait_for_agent_exit(s->agent_pid, s->pgid);
 	}
-	/* Close PAM session and end handle. */
-	if (cleanup.close_pam_session) {
-        int status = pam_close_session(s->pamh, 0);
-        if (cleanup.delete_pam_credentials) {
-            int cred_status = pam_setcred(s->pamh, PAM_DELETE_CRED);
-            if (status == PAM_SUCCESS && cred_status != PAM_SUCCESS)
-                status = cred_status;
-        }
-        pam_end(s->pamh, status);
-    }
-    if (cleanup.unlink_agent_socket) {
+	/* The per-session owner closes PAM after the agent process group is gone. */
+	if (cleanup.close_pam_session)
+	{
+		session_id_to_string(s, pam_session_id, sizeof(pam_session_id));
+		pam_receipt_preserved = (s->metadata_dev != 0) && (s->metadata_ino != 0);
+		const int pam_status = pam_receipt_preserved
+		                           ? frdp_sesmand_pam_owner_prepare_close(
+		                                 pam_runtime_dir, pam_session_id, &s->pam_owner)
+		                           : frdp_sesmand_pam_owner_close(pam_runtime_dir, pam_session_id,
+		                                                          &s->pam_owner);
+
+		if (pam_status != 0)
+			durable_cleanup_complete = 0;
+	}
+	if (cleanup.unlink_agent_socket) {
 		if ((s->agent_socket_dev != 0) && (s->agent_socket_ino != 0))
 		{
 			if (frdp_sesmand_session_unlink_artifact(s->agent_socket, s->agent_socket_dev,
@@ -1058,6 +1062,8 @@ static int cleanup_session(int idx)
 		                                         s->metadata_ino) != 0)
 			durable_cleanup_complete = 0;
 	}
+	if (durable_cleanup_complete && pam_receipt_preserved)
+		(void)frdp_sesmand_pam_owner_finalize(pam_runtime_dir, pam_session_id);
     if (idx < session_count - 1) {
         sessions[idx] = sessions[session_count - 1];
     }
@@ -1199,16 +1205,6 @@ static int create_agent_socket(const char *socket_path)
         return -1;
     }
     return fd;
-}
-
-static void destroy_agent_socket(int *fd, const char *socket_path)
-{
-    if (fd && *fd >= 0) {
-        close(*fd);
-        *fd = -1;
-    }
-    if (socket_path && socket_path[0] != '\0')
-        unlink(socket_path);
 }
 
 static int set_client_timeouts(int fd)
@@ -1704,14 +1700,17 @@ static void reap_exited_sessions(void)
     int status = 0;
     pid_t pid = 0;
 
-    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        for (int x = 0; x < session_count; x++) {
-            if (sessions[x].agent_pid == pid) {
-                cleanup_session(x);
-                break;
-            }
-        }
-    }
+	while ((pid = waitpid(-1, &status, WNOHANG)) > 0)
+	{
+		for (int x = 0; x < session_count; x++)
+		{
+			if ((sessions[x].agent_pid == pid) || (sessions[x].pam_owner.pid == pid))
+			{
+				cleanup_session(x);
+				break;
+			}
+		}
+	}
 }
 
 static int handle_session_request(int fd, frdpIpcMessageType type, uint32_t payload_len)
@@ -2026,6 +2025,20 @@ static int run_ipc_server(const char *socket_path, const char *pam_service, cons
         unlink(socket_path);
         return -1;
 	}
+	if (frdp_sesmand_pam_owner_reconcile_stale(g_agent_socket_dir) != 0)
+	{
+		fprintf(stderr, "failed to reconcile PAM session owners\n");
+		close(fd);
+		unlink(socket_path);
+		return -1;
+	}
+	if (reconcile_stale_display_reservations() != 0)
+	{
+		fprintf(stderr, "failed to reconcile display reservations\n");
+		close(fd);
+		unlink(socket_path);
+		return -1;
+	}
 
 	char escaped_socket[512] = { 0 };
 
@@ -2317,13 +2330,15 @@ int main(int argc, char **argv)
             wait_error = 1;
             break;
         }
-        for (int i = 0; i < session_count; i++) {
-            if (sessions[i].agent_pid == pid) {
-                cleanup_session(i);
-                break;
-            }
-        }
-    }
+		for (int i = 0; i < session_count; i++)
+		{
+			if ((sessions[i].agent_pid == pid) || (sessions[i].pam_owner.pid == pid))
+			{
+				cleanup_session(i);
+				break;
+			}
+		}
+	}
     if ((session_count > 0) && (g_stop_requested || wait_error))
         cleanup_all_sessions();
     syslog(LOG_INFO, "no more sessions, shutting down");
