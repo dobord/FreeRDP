@@ -200,6 +200,10 @@ jobs:
             "$artifacts/systemd-lifecycle.txt"
           grep -Fxq "active_transition=upgrade,rollback" \
             "$artifacts/systemd-lifecycle.txt"
+          grep -Fxq "login1_session=enabled" \
+            "$artifacts/systemd-lifecycle.txt"
+          grep -Fxq "login1_crash_cleanup=pass" \
+            "$artifacts/systemd-lifecycle.txt"
           FRDP_LIFECYCLE_PROVIDER=samba \
             server/frdp/test/TestFreeRDPFrdpDebianLifecycle.sh "$deb_path" |
             tee "$artifacts/systemd-lifecycle-samba.txt"
@@ -216,6 +220,10 @@ jobs:
           grep -Fxq "helper_outage=frdp-authd,frdp-sesmand" \
             "$artifacts/systemd-lifecycle-samba.txt"
           grep -Fxq "active_transition=upgrade,rollback" \
+            "$artifacts/systemd-lifecycle-samba.txt"
+          grep -Fxq "login1_session=enabled" \
+            "$artifacts/systemd-lifecycle-samba.txt"
+          grep -Fxq "login1_crash_cleanup=pass" \
             "$artifacts/systemd-lifecycle-samba.txt"
 
       - name: Upload Debian artifacts

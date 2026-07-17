@@ -179,7 +179,7 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
   }
 
   assert_real_services() {
-    local attempt argv0 binary comm entry pid unit
+    local attempt argv0 binary comm entry listen_ready=0 pid unit
 
     for entry in \
       "frdp-authd.service:/usr/bin/frdp-authd" \
@@ -219,7 +219,14 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
     test "$(systemctl is-enabled frdp-sesmand.service 2>/dev/null || true)" = disabled
     frdpctl status --socket /run/frdp-sesmand/sesmand.sock | \
       grep -Fxq "Session manager: reachable"
-    timeout 5 bash -c "</dev/tcp/127.0.0.1/3389"
+    for attempt in $(seq 1 50); do
+      if timeout 1 bash -c "</dev/tcp/127.0.0.1/3389" 2>/dev/null; then
+        listen_ready=1
+        break
+      fi
+      sleep 0.1
+    done
+    test "$listen_ready" = 1
     if [[ "$FRDP_LIFECYCLE_PROVIDER" == samba ]]; then
       systemctl --quiet is-active sssd.service
       test "$(systemctl show --property=InvocationID --value sssd.service)" = \
@@ -229,6 +236,47 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
       id -nG "$test_user" | tr " " "\n" | grep -Fxq rdp-users
       assert_samba_gpo_policy
     fi
+  }
+
+  login1_session_id_for_pid() {
+    local pid=$1
+    local session_id
+
+    session_id=$(tr "\0" "\n" < "/proc/$pid/environ" |
+      sed -n "s/^XDG_SESSION_ID=//p") || return 1
+    test -n "$session_id" || return 1
+    test "$(tr "\0" "\n" < "/proc/$pid/environ" |
+      grep -c "^XDG_SESSION_ID=")" = 1 || return 1
+    printf "%s\n" "$session_id"
+  }
+
+  assert_transition_login1_active() {
+    local expected_runtime expected_uid runtime
+
+    transition_login1_session_id=$(login1_session_id_for_pid "$transition_agent_pid") || return 1
+    runtime=$(tr "\0" "\n" < "/proc/$transition_agent_pid/environ" |
+      sed -n "s/^XDG_RUNTIME_DIR=//p") || return 1
+    test -n "$runtime" || return 1
+    test "$(tr "\0" "\n" < "/proc/$transition_agent_pid/environ" |
+      grep -c "^XDG_RUNTIME_DIR=")" = 1 || return 1
+    expected_uid=$(id -u "$test_user") || return 1
+    expected_runtime=$(loginctl show-user "$expected_uid" --property=RuntimePath --value) || return 1
+    test -n "$expected_runtime" || return 1
+    test "$runtime" = "$expected_runtime" || return 1
+    test "$(loginctl show-session "$transition_login1_session_id" --property=Leader --value)" = \
+      "$transition_agent_pid" || return 1
+    test "$(loginctl show-session "$transition_login1_session_id" --property=User --value)" = \
+      "$expected_uid" || return 1
+    test "$(loginctl show-session "$transition_login1_session_id" --property=Remote --value)" = yes ||
+      return 1
+    test "$(loginctl show-session "$transition_login1_session_id" --property=Type --value)" = x11 ||
+      return 1
+    test "$(loginctl show-session "$transition_login1_session_id" --property=Class --value)" = user ||
+      return 1
+    test "$(loginctl show-session "$transition_login1_session_id" --property=Service --value)" = frdpd ||
+      return 1
+    loginctl show-session "$transition_login1_session_id" --no-pager \
+      > "$transition_artifacts/login1-session-before.txt"
   }
 
   run_session_smoke() {
@@ -424,6 +472,7 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
     transition_client_pid=$!
     transition_session_id=
     transition_agent_pid=
+    transition_login1_session_id=
     for i in $(seq 1 30); do
       kill -0 "$transition_client_pid"
       frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
@@ -444,12 +493,12 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
   assert_transition_session_active() {
     local state
 
-    kill -0 "$transition_xvfb_pid"
-    kill -0 "$transition_client_pid"
-    state=$(ps -o stat= -p "$transition_agent_pid" | tr -d "[:space:]")
-    [[ -n "$state" && "$state" != Z* ]]
+    kill -0 "$transition_xvfb_pid" || return 1
+    kill -0 "$transition_client_pid" || return 1
+    state=$(ps -o stat= -p "$transition_agent_pid" | tr -d "[:space:]") || return 1
+    [[ -n "$state" && "$state" != Z* ]] || return 1
     frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
-      > "$transition_artifacts/session-list-before-transition.txt"
+      > "$transition_artifacts/session-list-before-transition.txt" || return 1
     awk -v id="$transition_session_id" -v pid="$transition_agent_pid" \
       -v user="$test_user" '\''
       NR > 1 && $2 == user { count++ }
@@ -457,7 +506,8 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
         matched++
       }
       END { exit (count == 1 && matched == 1) ? 0 : 1 }
-    '\'' "$transition_artifacts/session-list-before-transition.txt"
+    '\'' "$transition_artifacts/session-list-before-transition.txt" || return 1
+    assert_transition_login1_active || return 1
   }
 
   assert_transition_session_closed() {
@@ -487,6 +537,17 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
       sleep 0.1
     done
     ! kill -0 "$transition_agent_pid" 2>/dev/null
+    test -n "$transition_login1_session_id"
+    for i in $(seq 1 30); do
+      if ! loginctl show-session "$transition_login1_session_id" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+    ! loginctl show-session "$transition_login1_session_id" >/dev/null 2>&1
+    test ! -e "/run/systemd/sessions/$transition_login1_session_id"
+    printf "session_id=%s\nresult=removed\n" "$transition_login1_session_id" \
+      > "$transition_artifacts/login1-session-after.txt"
     kill -TERM "$transition_xvfb_pid" 2>/dev/null || true
     wait "$transition_xvfb_pid" || true
   }
@@ -745,6 +806,8 @@ EOF
     ! systemctl --quiet is-active "$unit"
   done
   rm -f /usr/sbin/policy-rc.d
+  systemctl start systemd-logind.service
+  systemctl --quiet is-active systemd-logind.service
   if [[ "$FRDP_LIFECYCLE_PROVIDER" == samba ]]; then
     configure_samba_identity
     sssd_invocation=$(systemctl show --property=InvocationID --value sssd.service)
@@ -760,7 +823,12 @@ EOF
       "session required pam_mkhomedir.so skel=/etc/skel umask=0077" \
       "session optional pam_unix.so" > /etc/pam.d/frdpd
   fi
+  ! grep -Eq "^[[:space:]]*session[[:space:]].*pam_systemd[.]so" /etc/pam.d/frdpd
+  sed -i "/^session_socket[[:space:]]*=/a logind_session = true" /etc/frdpd/frdpd.toml
+  test "$(grep -Ec "^[[:space:]]*logind_session[[:space:]]*=[[:space:]]*true[[:space:]]*$" \
+    /etc/frdpd/frdpd.toml)" = 1
   pam_hash=$(sha256sum /etc/pam.d/frdpd | cut -d" " -f1)
+  config_hash=$(sha256sum /etc/frdpd/frdpd.toml | cut -d" " -f1)
 
   echo "stage=start"
   openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
@@ -822,6 +890,7 @@ EOF
   test "$(cat /usr/share/frdpd/lifecycle-version)" = "$upgrade_version"
   test "$(sha256sum /etc/frdpd/frdpd.env | cut -d" " -f1)" = "$modified_env_hash"
   test "$(sha256sum /etc/pam.d/frdpd | cut -d" " -f1)" = "$pam_hash"
+  test "$(sha256sum /etc/frdpd/frdpd.toml | cut -d" " -f1)" = "$config_hash"
   test "$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)" = \
     "$secret_hashes"
   assert_real_services
@@ -847,6 +916,7 @@ EOF
   test ! -e /usr/share/frdpd/lifecycle-version
   test "$(sha256sum /etc/frdpd/frdpd.env | cut -d" " -f1)" = "$modified_env_hash"
   test "$(sha256sum /etc/pam.d/frdpd | cut -d" " -f1)" = "$pam_hash"
+  test "$(sha256sum /etc/frdpd/frdpd.toml | cut -d" " -f1)" = "$config_hash"
   test "$(sha256sum /etc/frdpd/tls.crt /etc/frdpd/tls.key /etc/frdpd/ntlm.sam)" = \
     "$secret_hashes"
   assert_real_services
@@ -889,7 +959,7 @@ EOF
     "$secret_hashes"
   rm -rf /etc/frdpd
 
-  printf "provider=%s\nbase=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback\ngpo_policy=%s\nactive_helper_crash=frdp-sesmand\ninflight_helper_crash=frdp-authd\nhelper_outage=frdp-authd,frdp-sesmand\nactive_transition=upgrade,rollback\nresult=pass\n" \
+  printf "provider=%s\nbase=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback\ngpo_policy=%s\nactive_helper_crash=frdp-sesmand\ninflight_helper_crash=frdp-authd\nhelper_outage=frdp-authd,frdp-sesmand\nactive_transition=upgrade,rollback\nlogin1_session=enabled\nlogin1_crash_cleanup=pass\nresult=pass\n" \
     "$FRDP_LIFECYCLE_PROVIDER" "$base_version" "$upgrade_version" "$base_version" \
     "$gpo_policy"
 '

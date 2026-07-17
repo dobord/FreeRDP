@@ -109,6 +109,10 @@ login1 is unavailable. Normal close calls `ReleaseSession`; manager-crash recove
 owner-held FIFO after process termination and before PAM close. This mode requires a PAM stack
 without `pam_systemd.so`.
 
+The installed Ubuntu lifecycle gate exercises this mode with both local PAM and Samba AD/SSSD. It
+checks the exact login1 leader, UID, remote-X11 class/type/service, and runtime directory before
+killing `frdp-sesmand`, then requires the session record to disappear before recovery completes.
+
 ## SSSD operations
 
 Baseline checks:
@@ -222,7 +226,7 @@ Valid orphan close receipts also authorize same-inode removal of the correspondi
 display reservations are globally reconciled against their recorded manager PID/start time on startup. A
 durable `pam-<session>.failed` marker or a stale owner endpoint without a valid close receipt blocks startup
 for operator investigation; neither is interpreted as successful PAM cleanup.
-Installed/provider login1 crash evidence and an individual per-session runtime quota API remain open.
+An individual per-session runtime quota API remains open.
 
 SELinux and AppArmor draft profiles install as inactive examples under `/usr/share/frdpd/security`. They are
 not loaded automatically and must be reviewed, adapted, and validated for the target distribution before use.
