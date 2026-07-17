@@ -112,6 +112,8 @@ add_executable(frdp-sesmand
     frdp-sesmand/session_disconnect.h
     frdp-sesmand/session_identity.c
     frdp-sesmand/session_identity.h
+    frdp-sesmand/session_logind.c
+    frdp-sesmand/session_logind.h
     frdp-sesmand/session_metadata.c
     frdp-sesmand/session_metadata.h
     frdp-sesmand/session_pam_owner.c

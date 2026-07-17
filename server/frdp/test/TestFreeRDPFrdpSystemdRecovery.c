@@ -5,6 +5,7 @@
 #include "ipc/frdp-ipc.h"
 #include "frdp-sesmand/display_policy.h"
 #include "frdp-sesmand/process_identity.h"
+#include "frdp-sesmand/session_logind.h"
 #include "frdp-sesmand/session_metadata.h"
 #include "frdp-sesmand/session_recovery.h"
 #include "frdp-sesmand/session_scope.h"
@@ -346,6 +347,96 @@ static int wait_for_process_gone(pid_t pid)
 	return -1;
 }
 
+static int logind_session_exists(frdpSesmandLogindManager* manager, const char* session_id)
+{
+	sd_bus_error error = SD_BUS_ERROR_NULL;
+	sd_bus_message* reply = NULL;
+	int rc = -1;
+
+	if (!manager || !manager->bus || !session_id || (session_id[0] == '\0'))
+		return -1;
+	rc = sd_bus_call_method((sd_bus*)manager->bus, "org.freedesktop.login1",
+	                        "/org/freedesktop/login1", "org.freedesktop.login1.Manager",
+	                        "GetSession", &error, &reply, "s", session_id);
+	if ((rc < 0) && sd_bus_error_has_name(&error, "org.freedesktop.login1.NoSuchSession"))
+		rc = 0;
+	else
+		rc = (rc < 0) ? -1 : 1;
+	sd_bus_error_free(&error);
+	sd_bus_message_unref(reply);
+	return rc;
+}
+
+static int child_is_running(pid_t* child)
+{
+	pid_t waited = -1;
+
+	if (!child || (*child <= 0))
+		return 0;
+	do
+	{
+		waited = waitpid(*child, NULL, WNOHANG);
+	} while ((waited < 0) && (errno == EINTR));
+	if (waited == 0)
+		return 1;
+	if (waited == *child)
+		*child = -1;
+	return 0;
+}
+
+static int test_logind_session(void)
+{
+	frdpSesmandLogindManager manager = { 0 };
+	frdpSesmandLogindSession session = { .fifo_fd = -1 };
+	char session_id[FRDP_SESMAND_LOGIND_ID_SIZE] = { 0 };
+	pid_t child = -1;
+	int rc = -1;
+
+	child = fork();
+	if (child < 0)
+		goto cleanup;
+	if (child == 0)
+	{
+		for (;;)
+			pause();
+	}
+	if (frdp_sesmand_logind_create(&manager, getuid(), child, "frdpd-test", "frdp-test",
+	                               "127.0.0.1", ":99", &session) != 0)
+		goto cleanup;
+	if ((session.id[0] == '\0') || (session.runtime_path[0] != '/') || (session.fifo_fd < 0))
+		goto cleanup;
+	if ((snprintf(session_id, sizeof(session_id), "%s", session.id) >= (int)sizeof(session_id)) ||
+	    (logind_session_exists(&manager, session_id) != 1))
+		goto cleanup;
+	if ((frdp_sesmand_logind_release(&manager, &session) != 0) || !child_is_running(&child))
+		goto cleanup;
+	for (int attempt = 0; attempt < 100; attempt++)
+	{
+		const int exists = logind_session_exists(&manager, session_id);
+
+		if (exists == 0)
+			break;
+		if ((exists < 0) || (attempt == 99))
+			goto cleanup;
+		usleep(10000);
+	}
+	if (!child_is_running(&child))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	frdp_sesmand_logind_session_close(&session);
+	frdp_sesmand_logind_manager_uninit(&manager);
+	if (child > 0)
+	{
+		kill(child, SIGKILL);
+		while ((waitpid(child, NULL, 0) < 0) && (errno == EINTR))
+		{
+		}
+	}
+	return rc;
+}
+
 static int test_session_scope(void)
 {
 	frdpSesmandScopeManager manager = { 0 };
@@ -684,6 +775,7 @@ cleanup:
 
 int TestFreeRDPFrdpSystemdRecovery(int argc, char* argv[])
 {
+	frdpSesmandLogindManager logind_manager = { 0 };
 	char manager_version[64] = { 0 };
 	char* running_argv[] = { (char*)FRDP_SYSTEMCTL_BINARY, "show", "--property=Version", "--value",
 		                     NULL };
@@ -700,6 +792,14 @@ int TestFreeRDPFrdpSystemdRecovery(int argc, char* argv[])
 	{
 		printf("systemd helper recovery skipped: system manager unavailable\n");
 		return FRDP_SYSTEMD_SKIP;
+	}
+	if (frdp_sesmand_logind_manager_init(&logind_manager) != 0)
+		printf("login1 session lifecycle skipped: login1 unavailable\n");
+	else
+	{
+		frdp_sesmand_logind_manager_uninit(&logind_manager);
+		if (test_logind_session() != 0)
+			return 1;
 	}
 	if (test_session_scope() != 0)
 	{
