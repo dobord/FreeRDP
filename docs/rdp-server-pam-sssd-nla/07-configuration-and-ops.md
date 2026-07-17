@@ -101,12 +101,13 @@ fallback has been removed; use `frdpd --pam-auth-test` for local PAM smoke check
 full helper topology.
 
 For host login1 integration, set `logind_session = true` in `[session]` and keep
-`systemd_scope = false`. The manager registers the blocked agent as a remote X11 session before
-privilege drop, passes `XDG_SESSION_ID` and `XDG_RUNTIME_DIR` through the launch barrier, and gives
-the login1 FIFO to the durable PAM owner. Startup/reload and session creation fail closed when
+`systemd_scope = false`. The blocked child first applies its POSIX limits, drops to the final
+UID/GID/group vector, and acknowledges that identity. The manager then registers its PID as a remote
+X11 session, passes `XDG_SESSION_ID` and `XDG_RUNTIME_DIR` through the remaining launch barrier, and
+gives the login1 FIFO to the durable PAM owner. Startup/reload and session creation fail closed when
 login1 is unavailable. Normal close calls `ReleaseSession`; manager-crash recovery closes the
-owner-held FIFO after process termination and before PAM close. This mode requires a PAM stack without
-`pam_systemd.so`.
+owner-held FIFO after process termination and before PAM close. This mode requires a PAM stack
+without `pam_systemd.so`.
 
 ## SSSD operations
 
