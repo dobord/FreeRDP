@@ -29,6 +29,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <systemd/sd-bus.h>
 #include <winpr/crt.h>
 
 #ifndef FRDPD_BINARY
@@ -50,6 +51,7 @@
 #define FRDP_IPC_SLOW_SEND_DELAY_US 1000U
 #define FRDP_IPC_CONCURRENT_CLIENTS 8U
 #define FRDP_TEST_HELPER_TIMEOUT_MS "200"
+#define FRDP_TEST_SKIP 77
 
 typedef struct
 {
@@ -707,8 +709,8 @@ static int group_list_contains(const uint64_t* groups, uint32_t group_count, uin
 	return 0;
 }
 
-static int lookup_current_user(char* user, size_t user_size, uint64_t* uid, uint64_t* gid,
-                               uint64_t* groups, uint32_t* group_count)
+static int lookup_user(const char* requested_user, char* user, size_t user_size, uint64_t* uid,
+                       uint64_t* gid, uint64_t* groups, uint32_t* group_count)
 {
 	gid_t native_groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
 	int native_group_count = (int)FRDP_IPC_MAX_AUTH_GROUPS;
@@ -716,7 +718,7 @@ static int lookup_current_user(char* user, size_t user_size, uint64_t* uid, uint
 
 	if (!user || !uid || !gid || !groups || !group_count)
 		return -1;
-	pwd = getpwuid(geteuid());
+	pwd = requested_user ? getpwnam(requested_user) : getpwuid(geteuid());
 	if (!pwd || !pwd->pw_name)
 		return -1;
 	if (snprintf(user, user_size, "%s", pwd->pw_name) >= (int)user_size)
@@ -733,6 +735,12 @@ static int lookup_current_user(char* user, size_t user_size, uint64_t* uid, uint
 		groups[x] = (uint64_t)native_groups[x];
 	qsort(groups, *group_count, sizeof(groups[0]), compare_uint64);
 	return 0;
+}
+
+static int lookup_current_user(char* user, size_t user_size, uint64_t* uid, uint64_t* gid,
+                               uint64_t* groups, uint32_t* group_count)
+{
+	return lookup_user(NULL, user, user_size, uid, gid, groups, group_count);
 }
 
 static int make_wrong_groups(const uint64_t* groups, uint32_t group_count, uint64_t* wrong_groups)
@@ -1077,11 +1085,66 @@ static int write_pam_fixture_file(const char* path, const char* contents)
 	return -1;
 }
 
-static int start_helper_with_pam_wrapper(const char* binary, const char* name,
-	                                     const char* service_dir, const char* service,
-	                                     const char* key_path, const char* pam_user,
-	                                     const char* audit_path, int block_auth,
-	                                     frdpTestHelper* helper)
+static int copy_test_executable(const char* source, const char* destination)
+{
+	char buffer[16384] = { 0 };
+	int source_fd = -1;
+	int destination_fd = -1;
+	int rc = -1;
+
+	if (!source || !destination)
+		return -1;
+	source_fd = open(source, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (source_fd < 0)
+		goto cleanup;
+	destination_fd = open(destination, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0755);
+	if (destination_fd < 0)
+		goto cleanup;
+	for (;;)
+	{
+		ssize_t count = read(source_fd, buffer, sizeof(buffer));
+
+		if (count == 0)
+			break;
+		if (count < 0)
+		{
+			if (errno == EINTR)
+				continue;
+			goto cleanup;
+		}
+		for (ssize_t offset = 0; offset < count;)
+		{
+			const ssize_t written =
+			    write(destination_fd, &buffer[offset], (size_t)(count - offset));
+
+			if (written < 0)
+			{
+				if (errno == EINTR)
+					continue;
+				goto cleanup;
+			}
+			offset += written;
+		}
+	}
+	if (fsync(destination_fd) != 0)
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (destination_fd >= 0)
+		close(destination_fd);
+	if (source_fd >= 0)
+		close(source_fd);
+	if (rc != 0)
+		unlink(destination);
+	return rc;
+}
+
+static int start_helper_with_pam_wrapper_config(const char* binary, const char* name,
+                                                const char* service_dir, const char* service,
+                                                const char* config_path, const char* key_path,
+                                                const char* pam_user, const char* audit_path,
+                                                int block_auth, frdpTestHelper* helper)
 {
 	if (!binary || !name || !service_dir || !service || !key_path || !helper)
 		return -1;
@@ -1106,8 +1169,12 @@ static int start_helper_with_pam_wrapper(const char* binary, const char* name,
 		    (audit_path && (setenv("FRDP_PAM_TEST_AUDIT_FILE", audit_path, 1) != 0)) ||
 		    (block_auth && (setenv("FRDP_PAM_TEST_BLOCK_AUTH", "1", 1) != 0)))
 			_exit(127);
-		execl(binary, binary, "--pam-service", service, "--socket", helper->socket_path,
-		      (char*)NULL);
+		if (config_path)
+			execl(binary, binary, "--config", config_path, "--socket", helper->socket_path,
+			      (char*)NULL);
+		else
+			execl(binary, binary, "--pam-service", service, "--socket", helper->socket_path,
+			      (char*)NULL);
 		_exit(127);
 	}
 	if (wait_for_socket(helper->socket_path) != 0)
@@ -1125,6 +1192,16 @@ fail:
 	memset(helper, 0, sizeof(*helper));
 	helper->pid = -1;
 	return -1;
+}
+
+static int start_helper_with_pam_wrapper(const char* binary, const char* name,
+                                         const char* service_dir, const char* service,
+                                         const char* key_path, const char* pam_user,
+                                         const char* audit_path, int block_auth,
+                                         frdpTestHelper* helper)
+{
+	return start_helper_with_pam_wrapper_config(binary, name, service_dir, service, NULL, key_path,
+	                                            pam_user, audit_path, block_auth, helper);
 }
 
 static int exchange_authd_login_from(const char* socket_path, const char* user,
@@ -3028,6 +3105,337 @@ cleanup:
 	return rc;
 #endif
 }
+
+static int login1_session_for_pid(sd_bus* bus, pid_t pid, char* session_id, size_t session_id_size)
+{
+	if (!bus || (pid <= 1) || !session_id || (session_id_size == 0) || ((uint64_t)pid > UINT32_MAX))
+		return -1;
+	for (int attempt = 0; attempt < 50; attempt++)
+	{
+		sd_bus_error error = SD_BUS_ERROR_NULL;
+		sd_bus_message* reply = NULL;
+		const char* object_path = NULL;
+		char* value = NULL;
+		int rc = sd_bus_call_method(bus, "org.freedesktop.login1", "/org/freedesktop/login1",
+		                            "org.freedesktop.login1.Manager", "GetSessionByPID", &error,
+		                            &reply, "u", (uint32_t)pid);
+
+		if ((rc >= 0) && (sd_bus_message_read(reply, "o", &object_path) >= 0) && object_path &&
+		    (sd_bus_get_property_string(bus, "org.freedesktop.login1", object_path,
+		                                "org.freedesktop.login1.Session", "Id", &error,
+		                                &value) >= 0) &&
+		    (snprintf(session_id, session_id_size, "%s", value) < (int)session_id_size))
+		{
+			free(value);
+			sd_bus_message_unref(reply);
+			sd_bus_error_free(&error);
+			return 0;
+		}
+		free(value);
+		sd_bus_message_unref(reply);
+		sd_bus_error_free(&error);
+		usleep(100000);
+	}
+	return -1;
+}
+
+static int wait_for_login1_session_gone(sd_bus* bus, const char* session_id)
+{
+	if (!bus || !session_id || (session_id[0] == '\0'))
+		return -1;
+	for (int attempt = 0; attempt < 50; attempt++)
+	{
+		sd_bus_error error = SD_BUS_ERROR_NULL;
+		sd_bus_message* reply = NULL;
+		const int rc = sd_bus_call_method(bus, "org.freedesktop.login1", "/org/freedesktop/login1",
+		                                  "org.freedesktop.login1.Manager", "GetSession", &error,
+		                                  &reply, "s", session_id);
+		const int gone =
+		    (rc < 0) && sd_bus_error_has_name(&error, "org.freedesktop.login1.NoSuchSession");
+
+		sd_bus_message_unref(reply);
+		sd_bus_error_free(&error);
+		if (gone)
+			return 0;
+		usleep(100000);
+	}
+	return -1;
+}
+
+static int process_environment_has(pid_t pid, const char* expected)
+{
+	char path[64] = { 0 };
+	char contents[16384] = { 0 };
+	const size_t expected_length = expected ? strlen(expected) : 0;
+	ssize_t count = 0;
+	int fd = -1;
+
+	if ((pid <= 1) || (expected_length == 0) ||
+	    (snprintf(path, sizeof(path), "/proc/%ld/environ", (long)pid) >= (int)sizeof(path)))
+		return -1;
+	fd = open(path, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return -1;
+	do
+	{
+		count = read(fd, contents, sizeof(contents) - 1U);
+	} while ((count < 0) && (errno == EINTR));
+	close(fd);
+	if (count <= 0)
+		return -1;
+	for (size_t offset = 0; offset < (size_t)count;)
+	{
+		const size_t available = (size_t)count - offset;
+		const size_t length = strnlen(&contents[offset], available);
+
+		if ((length == expected_length) && (memcmp(&contents[offset], expected, length) == 0))
+			return 0;
+		if (length == available)
+			break;
+		offset += length + 1U;
+	}
+	return -1;
+}
+
+static int process_is_in_user_slice(void)
+{
+	char contents[4096] = { 0 };
+	FILE* fp = fopen("/proc/self/cgroup", "r");
+
+	if (!fp)
+		return 0;
+	const size_t length = fread(contents, 1, sizeof(contents) - 1U, fp);
+	const int read_ok = !ferror(fp) && feof(fp);
+	fclose(fp);
+	return read_ok && (length > 0) && (strstr(contents, "/user.slice/") != NULL);
+}
+
+static int test_sesmand_logind_owner_crash_cleanup(void)
+{
+	static const char service[] = "frdp-logind-owner-crash";
+	static const char expected_audit[] = "account\nsetcred-establish\nopen-session-start\n"
+	                                     "close-session-start\nclose-session\nsetcred-delete\n";
+	frdpTestHelper helper = { .pid = -1 };
+	sd_bus_error bus_error = SD_BUS_ERROR_NULL;
+	sd_bus* bus = NULL;
+	pid_t requester = -1;
+	pid_t agent_pid = -1;
+	pid_t backend_pid = -1;
+	pid_t agent_pgid = -1;
+	char dir[1024] = { 0 };
+	char agent_dir[1024] = { 0 };
+	char service_path[1024] = { 0 };
+	char audit_path[1024] = { 0 };
+	char key_path[1024] = { 0 };
+	char config_path[1024] = { 0 };
+	char marker_path[1024] = { 0 };
+	char agent_path[1024] = { 0 };
+	char config[512] = { 0 };
+	char contents[4096] = { 0 };
+	char updated_path[4096] = { 0 };
+	char session_id[64] = { 0 };
+	char expected_session_env[96] = { 0 };
+	char user[64] = { 0 };
+	uint64_t uid = 0;
+	uint64_t gid = 0;
+	uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
+	uint32_t group_count = 0;
+	unsigned long long agent_start_ticks = 0;
+	unsigned long long backend_start_ticks = 0;
+	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	const char* current_path = getenv("PATH");
+	const char* previous_marker = getenv("FRDP_AGENT_TEST_MARKER");
+	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
+	char* saved_path = current_path ? strdup(current_path) : NULL;
+	char* saved_marker = previous_marker ? strdup(previous_marker) : NULL;
+	int helper_started = 0;
+	int agent_pidfd = -1;
+	int backend_pidfd = -1;
+	int status = 0;
+	int rc = -1;
+	const char* stage = "prerequisites";
+
+	if (geteuid() != 0)
+	{
+		printf("frdp-sesmand login1 owner crash cleanup skipped: root required\n");
+		return FRDP_TEST_SKIP;
+	}
+	if ((sd_bus_open_system(&bus) < 0) ||
+	    (sd_bus_call_method(bus, "org.freedesktop.login1", "/org/freedesktop/login1",
+	                        "org.freedesktop.DBus.Peer", "Ping", &bus_error, NULL, NULL) < 0))
+	{
+		printf("frdp-sesmand login1 owner crash cleanup skipped: login1 unavailable\n");
+		rc = FRDP_TEST_SKIP;
+		goto cleanup;
+	}
+	if (process_is_in_user_slice())
+	{
+		printf("frdp-sesmand login1 owner crash cleanup skipped: system service required\n");
+		rc = FRDP_TEST_SKIP;
+		goto cleanup;
+	}
+	if (!saved_path || (previous_key_path && !saved_key_path) || (previous_marker && !saved_marker))
+		goto cleanup;
+	if ((lookup_user("nobody", user, sizeof(user), &uid, &gid, groups, &group_count) != 0) ||
+	    (uid == 0))
+	{
+		printf("frdp-sesmand login1 owner crash cleanup skipped: test account unavailable\n");
+		rc = FRDP_TEST_SKIP;
+		goto cleanup;
+	}
+	if ((make_runtime_dir(dir, sizeof(dir), "logind-owner-crash") != 0) ||
+	    (make_runtime_dir(agent_dir, sizeof(agent_dir), "logind-blocking-agent") != 0) ||
+	    (chown(agent_dir, (uid_t)uid, (gid_t)gid) != 0) ||
+	    (snprintf(service_path, sizeof(service_path), "%s/%s", dir, service) >=
+	     (int)sizeof(service_path)) ||
+	    (snprintf(audit_path, sizeof(audit_path), "%s/pam-audit.log", dir) >=
+	     (int)sizeof(audit_path)) ||
+	    (snprintf(key_path, sizeof(key_path), "%s/auth-token.key", dir) >= (int)sizeof(key_path)) ||
+	    (snprintf(config_path, sizeof(config_path), "%s/frdpd.toml", dir) >=
+	     (int)sizeof(config_path)) ||
+	    (snprintf(marker_path, sizeof(marker_path), "%s/agent.pid", agent_dir) >=
+	     (int)sizeof(marker_path)) ||
+	    (snprintf(agent_path, sizeof(agent_path), "%s/frdp-session-agent", agent_dir) >=
+	     (int)sizeof(agent_path)) ||
+	    (snprintf(contents, sizeof(contents),
+	              "auth required %s\naccount required %s\nsession required %s\n",
+	              FRDP_PAM_SESSION_ALLOW_TEST_MODULE, FRDP_PAM_SESSION_ALLOW_TEST_MODULE,
+	              FRDP_PAM_SESSION_ALLOW_TEST_MODULE) >= (int)sizeof(contents)) ||
+	    (snprintf(config, sizeof(config),
+	              "[auth]\npam_service = \"%s\"\n[session]\nlogind_session = true\n",
+	              service) >= (int)sizeof(config)) ||
+	    (write_pam_fixture_file(service_path, contents) != 0) ||
+	    (write_pam_fixture_file(audit_path, "") != 0) ||
+	    (write_sesmand_config_body(config_path, config) != 0) ||
+	    (copy_test_executable(FRDP_SESSION_AGENT_BLOCKING_BINARY, agent_path) != 0) ||
+	    (snprintf(updated_path, sizeof(updated_path), "%s:%s", agent_dir, saved_path) >=
+	     (int)sizeof(updated_path)) ||
+	    (setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0) ||
+	    (setenv("PATH", updated_path, 1) != 0) ||
+	    (setenv("FRDP_AGENT_TEST_MARKER", marker_path, 1) != 0))
+		goto cleanup;
+	stage = "helper-start";
+	if (start_helper_with_pam_wrapper_config(FRDP_SESMAND_BINARY, "logind-owner-crash", dir,
+	                                         service, config_path, key_path, NULL, audit_path, 0,
+	                                         &helper) != 0)
+		goto cleanup;
+	helper_started = 1;
+	(void)setenv("PATH", saved_path, 1);
+	if (saved_marker)
+		(void)setenv("FRDP_AGENT_TEST_MARKER", saved_marker, 1);
+	else
+		unsetenv("FRDP_AGENT_TEST_MARKER");
+	stage = "request";
+	requester = fork();
+	if (requester < 0)
+		goto cleanup;
+	if (requester == 0)
+	{
+		frdpSessionResponse response = { 0 };
+		const int request_rc = request_live_session(
+		    helper.socket_path, user, "198.51.100.79", "logind-owner-crash", NULL, uid, gid, groups,
+		    group_count, &response, "unused after manager crash");
+
+		SecureZeroMemory(&response, sizeof(response));
+		_exit(request_rc != 0 ? 0 : 1);
+	}
+	stage = "login1-session";
+	if ((wait_for_pid_file(marker_path, &agent_pid) != 0) ||
+	    ((agent_pgid = getpgid(agent_pid)) <= 1) ||
+	    (pin_process_identity(agent_pid, (uid_t)uid, agent_pgid, &agent_pidfd,
+	                          &agent_start_ticks) != 0) ||
+	    (read_single_child_pid(agent_pid, &backend_pid) != 0) ||
+	    (pin_process_identity(backend_pid, (uid_t)uid, agent_pgid, &backend_pidfd,
+	                          &backend_start_ticks) != 0) ||
+	    (login1_session_for_pid(bus, agent_pid, session_id, sizeof(session_id)) != 0) ||
+	    (snprintf(expected_session_env, sizeof(expected_session_env), "XDG_SESSION_ID=%s",
+	              session_id) >= (int)sizeof(expected_session_env)) ||
+	    (process_environment_has(agent_pid, expected_session_env) != 0))
+		goto cleanup;
+	stage = "manager-killed";
+	if ((kill(helper.pid, SIGKILL) != 0) || (wait_for_exit(helper.pid, &status) != 0))
+		goto cleanup;
+	helper.pid = -1;
+	helper_started = 0;
+	if (!WIFSIGNALED(status) || (WTERMSIG(status) != SIGKILL) ||
+	    (wait_for_exit(requester, &status) != 0))
+		goto cleanup;
+	requester = -1;
+	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0))
+		goto cleanup;
+	stage = "owner-cleanup";
+	if ((wait_for_process_gone(agent_pid) != 0) ||
+	    (wait_for_file_contents_attempts(audit_path, expected_audit, 200) != 0) ||
+	    (wait_for_login1_session_gone(bus, session_id) != 0))
+		goto cleanup;
+	stage = "manager-restart";
+	if ((restart_helper_with_config(FRDP_SESMAND_BINARY, config_path, &helper) != 0) ||
+	    (test_sesmand_list_empty(helper.socket_path) != 0) ||
+	    (helper_dir_contains_only_listener(&helper) != 0))
+		goto cleanup;
+	helper_started = 1;
+	rc = 0;
+
+cleanup:
+	if (rc != 0)
+		fprintf(stderr, "login1 owner crash cleanup failed at stage: %s\n", stage);
+	if (requester > 0)
+	{
+		kill(requester, SIGKILL);
+		(void)waitpid(requester, NULL, 0);
+	}
+	if (backend_pidfd >= 0)
+		(void)signal_process_pidfd(backend_pidfd, SIGKILL);
+	if (agent_pidfd >= 0)
+		(void)signal_process_pidfd(agent_pidfd, SIGKILL);
+	if (helper_started && (stop_helper(&helper) != 0))
+		rc = -1;
+	else if (helper.pid > 0)
+	{
+		kill(helper.pid, SIGKILL);
+		(void)waitpid(helper.pid, NULL, 0);
+	}
+	if (backend_pidfd >= 0)
+		close(backend_pidfd);
+	if (agent_pidfd >= 0)
+		close(agent_pidfd);
+	if (saved_key_path)
+	{
+		(void)setenv(FRDP_AUTH_TOKEN_KEY_ENV, saved_key_path, 1);
+		free(saved_key_path);
+	}
+	else
+		unsetenv(FRDP_AUTH_TOKEN_KEY_ENV);
+	if (saved_path)
+	{
+		(void)setenv("PATH", saved_path, 1);
+		free(saved_path);
+	}
+	if (saved_marker)
+	{
+		(void)setenv("FRDP_AGENT_TEST_MARKER", saved_marker, 1);
+		free(saved_marker);
+	}
+	else
+		unsetenv("FRDP_AGENT_TEST_MARKER");
+	sd_bus_error_free(&bus_error);
+	sd_bus_unref(bus);
+	unlink(helper.socket_path);
+	if (helper.dir[0])
+		rmdir(helper.dir);
+	unlink(agent_path);
+	unlink(marker_path);
+	if (agent_dir[0])
+		rmdir(agent_dir);
+	unlink(config_path);
+	unlink(key_path);
+	unlink(audit_path);
+	unlink(service_path);
+	if (dir[0])
+		rmdir(dir);
+	SecureZeroMemory(groups, sizeof(groups));
+	return rc;
+}
 #else
 static int test_authd_crash_during_pam(void)
 {
@@ -3050,6 +3458,11 @@ static int test_sesmand_crash_during_pam_close(void)
 }
 
 static int test_sesmand_crash_after_agent_launch(void)
+{
+	return 0;
+}
+
+static int test_sesmand_logind_owner_crash_cleanup(void)
 {
 	return 0;
 }
@@ -4158,8 +4571,8 @@ cleanup:
 
 int TestFreeRDPFrdpServiceIpc(int argc, char* argv[])
 {
-	(void)argc;
-	(void)argv;
+	if ((argc > 1) && (strcmp(argv[1], "login1-owner-crash") == 0))
+		return test_sesmand_logind_owner_crash_cleanup();
 
 	if (test_authd_component() != 0)
 	{

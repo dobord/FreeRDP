@@ -222,6 +222,21 @@ if(PAM_WRAPPER_LIBRARY AND PAM_WRAPPER_MODULE_DIR AND NOT WITH_SANITIZE_ADDRESS)
       FRDP_PAM_SESSION_CLOSE_BLOCK_TEST_MODULE="$<TARGET_FILE:frdp-pam-session-close-block-test>"
       FRDP_PAM_AUTH_CANONICAL_DENY_TEST_MODULE="$<TARGET_FILE:frdp-pam-auth-canonical-deny-test>")
 endif()
+if(SYSTEMD_RUN_EXECUTABLE AND SYSTEMCTL_EXECUTABLE AND PAM_WRAPPER_LIBRARY
+   AND PAM_WRAPPER_MODULE_DIR AND NOT WITH_SANITIZE_ADDRESS)
+  add_executable(frdp-sesmand-login1-test-runner EXCLUDE_FROM_ALL
+                 TestFreeRDPFrdpSesmandLogindRunner.c)
+  target_compile_definitions(frdp-sesmand-login1-test-runner PRIVATE
+      FRDP_SYSTEMD_RUN_BINARY="${SYSTEMD_RUN_EXECUTABLE}"
+      FRDP_TEST_BINARY="$<TARGET_FILE:${MODULE_NAME}>")
+  add_dependencies(${MODULE_NAME} frdp-sesmand-login1-test-runner)
+  frdp_apply_strict_warnings(frdp-sesmand-login1-test-runner)
+  set_property(TARGET frdp-sesmand-login1-test-runner PROPERTY FOLDER "Server/frdp/Test")
+  add_test(NAME TestFreeRDPFrdpSesmandLogindLifecycle
+           COMMAND frdp-sesmand-login1-test-runner)
+  set_tests_properties(TestFreeRDPFrdpSesmandLogindLifecycle
+                       PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+endif()
 if(XVFB_EXECUTABLE)
   target_compile_definitions(${MODULE_NAME} PRIVATE FRDP_XVFB_EXECUTABLE="${XVFB_EXECUTABLE}")
   target_include_directories(${MODULE_NAME} SYSTEM PRIVATE ${X11_INCLUDE_DIR})

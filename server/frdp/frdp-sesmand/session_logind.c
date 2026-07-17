@@ -199,6 +199,13 @@ int frdp_sesmand_logind_create(frdpSesmandLogindManager* manager, uid_t uid, pid
 	success = 1;
 
 cleanup:
+	if (!success && sd_bus_error_is_set(&error))
+		fprintf(stderr, "login1 %s failed: %s: %s\n", create_method ? create_method : "request",
+		        error.name ? error.name : "unknown error",
+		        error.message ? error.message : "no details");
+	else if (!success)
+		fprintf(stderr, "login1 %s returned an invalid response\n",
+		        create_method ? create_method : "request");
 	if (pidfd >= 0)
 		close(pidfd);
 	sd_bus_error_free(&error);

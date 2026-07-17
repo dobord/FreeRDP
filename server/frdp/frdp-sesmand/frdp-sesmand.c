@@ -86,6 +86,7 @@ typedef struct {
 } session;
 
 #define FRDP_AGENT_READY_MARKER 'R'
+#define FRDP_AGENT_IDENTITY_READY_MARKER 'I'
 typedef struct
 {
 	char marker;
@@ -280,7 +281,7 @@ static void terminate_agent_start_failure(pid_t pid, pid_t pgid)
     }
 }
 
-static int wait_for_agent_ready(int fd, pid_t pid, pid_t pgid)
+static int wait_for_child_marker(int fd, char expected_marker, pid_t pid, pid_t pgid)
 {
     struct pollfd pfd;
     char marker = 0;
@@ -295,11 +296,16 @@ static int wait_for_agent_ready(int fd, pid_t pid, pid_t pgid)
     }
 
     const ssize_t rc = read(fd, &marker, sizeof(marker));
-    if (rc == (ssize_t)sizeof(marker) && marker == FRDP_AGENT_READY_MARKER)
-        return 0;
+	if (rc == (ssize_t)sizeof(marker) && marker == expected_marker)
+		return 0;
 
-    terminate_agent_start_failure(pid, pgid);
-    return -1;
+	terminate_agent_start_failure(pid, pgid);
+	return -1;
+}
+
+static int wait_for_agent_ready(int fd, pid_t pid, pid_t pgid)
+{
+	return wait_for_child_marker(fd, FRDP_AGENT_READY_MARKER, pid, pgid);
 }
 
 static void close_child_fds_except(int keep_a, int keep_b, int keep_c)
@@ -821,6 +827,7 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 	}
 	if (pid == 0) {
 		frdpSesmandLaunchMessage child_launch = { 0 };
+		char identity_ready = FRDP_AGENT_IDENTITY_READY_MARKER;
 		ssize_t launch_status = 0;
 
 		close(exec_pipe[0]);
@@ -833,6 +840,13 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
         /* Child: create a new process group for the session and drop privileges. */
         if (setpgid(0, 0) != 0)
             child_exec_failed(exec_pipe[1]);
+		if (frdp_sesmand_apply_session_resource_policy(&g_session_resource_policy) != 0)
+			child_exec_failed(exec_pipe[1]);
+		if ((frdp_sesmand_apply_session_identity(uid, gid, native_groups, (size_t)group_count) !=
+		     0) ||
+		    (send(launch_pair[0], &identity_ready, sizeof(identity_ready), MSG_NOSIGNAL) !=
+		     (ssize_t)sizeof(identity_ready)))
+			child_exec_failed(exec_pipe[1]);
 		do
 		{
 			launch_status = recv(launch_pair[0], &child_launch, sizeof(child_launch), 0);
@@ -843,8 +857,6 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 		     (child_launch.logind_runtime_path[0] == '\0')))
 			child_exec_failed(exec_pipe[1]);
 		close_child_fds_except(exec_pipe[1], agent_fd, heartbeat_pair[1]);
-		if (frdp_sesmand_apply_session_resource_policy(&g_session_resource_policy) != 0)
-			child_exec_failed(exec_pipe[1]);
 		/* Set environment variables for the display */
         setenv("DISPLAY", display_str, 1);
         setenv("FRDP_DISPLAY", display_str, 1);
@@ -872,15 +884,10 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
             snprintf(agent_fd_str, sizeof(agent_fd_str), "%d", agent_fd);
             setenv("FRDP_AGENT_CONTROL_FD", agent_fd_str, 1);
             setenv("FRDP_AGENT_SOCKET", agent_socket_path, 1);
-        }
-        /* Root drops privileges; same-user development runs verify their existing identity. */
-        if (frdp_sesmand_apply_session_identity(uid, gid, native_groups,
-                                                (size_t)group_count) != 0) {
-            child_exec_failed(exec_pipe[1]);
-        }
-        execlp("frdp-session-agent", "frdp-session-agent", (char *)NULL);
-        /* If exec fails, exit with error. */
-        child_exec_failed(exec_pipe[1]);
+		}
+		execlp("frdp-session-agent", "frdp-session-agent", (char*)NULL);
+		/* If exec fails, exit with error. */
+		child_exec_failed(exec_pipe[1]);
     }
 
     close(exec_pipe[1]);
@@ -907,13 +914,21 @@ static int open_session(const char *user, uid_t uid, gid_t gid, const uint64_t *
 		cleanup_session(session_count - 1);
 		return -1;
 	}
+	if (wait_for_child_marker(launch_pair[1], FRDP_AGENT_IDENTITY_READY_MARKER, pid, pid) != 0)
+	{
+		close(launch_pair[1]);
+		close(exec_pipe[0]);
+		cleanup_session(session_count - 1);
+		return -1;
+	}
 
 	/* Bind the blocked child to the owner and replace provisional metadata. */
 	uid_t agent_effective_uid = (uid_t)-1;
 
-	if ((frdp_sesmand_process_identity_read(s->agent_pid, &s->agent_start_ticks, NULL) !=
+	if ((frdp_sesmand_process_identity_read(s->agent_pid, &s->agent_start_ticks,
+	                                        &agent_effective_uid) !=
 	     FRDP_SESMAND_PROCESS_IDENTITY_OK) ||
-	    (persist_session_metadata(s) != 0))
+	    (agent_effective_uid != s->uid) || (persist_session_metadata(s) != 0))
 	{
 		close(launch_pair[1]);
 		close(exec_pipe[0]);
