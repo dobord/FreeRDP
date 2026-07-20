@@ -24,6 +24,9 @@ void frdp_sesmand_logind_manager_uninit(frdpSesmandLogindManager* manager);
 int frdp_sesmand_logind_create(frdpSesmandLogindManager* manager, uid_t uid, pid_t pid,
                                const char* service, const char* user, const char* remote_host,
                                const char* display, frdpSesmandLogindSession* session);
+int frdp_sesmand_logind_recover(frdpSesmandLogindManager* manager, uid_t uid, pid_t pid,
+                                const char* service, const char* user, const char* display,
+                                int fifo_fd, frdpSesmandLogindSession* session);
 int frdp_sesmand_logind_release(frdpSesmandLogindManager* manager,
                                 frdpSesmandLogindSession* session);
 void frdp_sesmand_logind_session_close(frdpSesmandLogindSession* session);

@@ -5,6 +5,7 @@
 #include "frdp-authd/auth_failure_limit.h"
 #include "frdp-sesmand/display_policy.h"
 #include "frdp-sesmand/process_identity.h"
+#include "frdp-sesmand/session_logind.h"
 #include "frdp-sesmand/session_metadata.h"
 #include "frdp-sesmand/session_pam_owner.h"
 
@@ -3450,46 +3451,47 @@ static int process_environment_has(pid_t pid, const char* expected)
 
 static int test_sesmand_logind_owner_crash_cleanup(void)
 {
+#ifndef FRDP_XVFB_EXECUTABLE
+	printf("frdp-sesmand login1 restart recovery skipped: Xvfb unavailable\n");
+	return FRDP_TEST_SKIP;
+#else
 	static const char service[] = "frdp-logind-owner-crash";
 	static const char expected_audit[] = "account\nsetcred-establish\nopen-session-start\n"
 	                                     "close-session-start\nclose-session\nsetcred-delete\n";
 	frdpTestHelper helper = { .pid = -1 };
+	frdpSessionResponse opened = { 0 };
+	frdpSessionResponse detached = { 0 };
+	frdpSessionResponse reconnected = { 0 };
+	frdpSessionResponse closed = { 0 };
+	frdpSesmandLogindManager recovery_manager = { 0 };
+	frdpSesmandLogindSession recovered_logind = { .fifo_fd = -1 };
 	sd_bus_error bus_error = SD_BUS_ERROR_NULL;
 	sd_bus* bus = NULL;
-	pid_t requester = -1;
-	pid_t agent_pid = -1;
-	pid_t backend_pid = -1;
-	pid_t agent_pgid = -1;
 	char dir[1024] = { 0 };
 	char agent_dir[1024] = { 0 };
 	char service_path[1024] = { 0 };
 	char audit_path[1024] = { 0 };
 	char key_path[1024] = { 0 };
 	char config_path[1024] = { 0 };
-	char marker_path[1024] = { 0 };
 	char agent_path[1024] = { 0 };
 	char config[512] = { 0 };
 	char contents[4096] = { 0 };
 	char updated_path[4096] = { 0 };
 	char session_id[64] = { 0 };
+	char recovered_session_id[64] = { 0 };
 	char expected_session_env[96] = { 0 };
 	char user[64] = { 0 };
 	uint64_t uid = 0;
 	uint64_t gid = 0;
 	uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
 	uint32_t group_count = 0;
-	unsigned long long agent_start_ticks = 0;
-	unsigned long long backend_start_ticks = 0;
+	int32_t agent_pid = -1;
 	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
-	const char* current_path = getenv("PATH");
-	const char* previous_marker = getenv("FRDP_AGENT_TEST_MARKER");
 	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
-	char* saved_path = current_path ? strdup(current_path) : NULL;
-	char* saved_marker = previous_marker ? strdup(previous_marker) : NULL;
+	char* saved_path = NULL;
 	int helper_started = 0;
-	int agent_pidfd = -1;
-	int backend_pidfd = -1;
 	int status = 0;
+	int recovery_fifo[2] = { -1, -1 };
 	int rc = -1;
 	const char* stage = "prerequisites";
 
@@ -3512,7 +3514,7 @@ static int test_sesmand_logind_owner_crash_cleanup(void)
 		rc = FRDP_TEST_SKIP;
 		goto cleanup;
 	}
-	if (!saved_path || (previous_key_path && !saved_key_path) || (previous_marker && !saved_marker))
+	if (previous_key_path && !saved_key_path)
 		goto cleanup;
 	if ((lookup_user("nobody", user, sizeof(user), &uid, &gid, groups, &group_count) != 0) ||
 	    (uid == 0))
@@ -3531,8 +3533,6 @@ static int test_sesmand_logind_owner_crash_cleanup(void)
 	    (snprintf(key_path, sizeof(key_path), "%s/auth-token.key", dir) >= (int)sizeof(key_path)) ||
 	    (snprintf(config_path, sizeof(config_path), "%s/frdpd.toml", dir) >=
 	     (int)sizeof(config_path)) ||
-	    (snprintf(marker_path, sizeof(marker_path), "%s/agent.pid", agent_dir) >=
-	     (int)sizeof(marker_path)) ||
 	    (snprintf(agent_path, sizeof(agent_path), "%s/frdp-session-agent", agent_dir) >=
 	     (int)sizeof(agent_path)) ||
 	    (snprintf(contents, sizeof(contents),
@@ -3545,12 +3545,13 @@ static int test_sesmand_logind_owner_crash_cleanup(void)
 	    (write_pam_fixture_file(service_path, contents) != 0) ||
 	    (write_pam_fixture_file(audit_path, "") != 0) ||
 	    (write_sesmand_config_body(config_path, config) != 0) ||
-	    (copy_test_executable(FRDP_SESSION_AGENT_BLOCKING_BINARY, agent_path) != 0) ||
-	    (snprintf(updated_path, sizeof(updated_path), "%s:%s", agent_dir, saved_path) >=
+	    (copy_test_executable(FRDP_SESSION_AGENT_BINARY, agent_path) != 0) ||
+	    (prepend_binary_dirs_to_path(FRDP_SESSION_AGENT_BINARY, FRDP_XVFB_EXECUTABLE,
+	                                 &saved_path) != 0) ||
+	    (snprintf(updated_path, sizeof(updated_path), "%s:%s", agent_dir, getenv("PATH")) >=
 	     (int)sizeof(updated_path)) ||
 	    (setenv(FRDP_AUTH_TOKEN_KEY_ENV, key_path, 1) != 0) ||
-	    (setenv("PATH", updated_path, 1) != 0) ||
-	    (setenv("FRDP_AGENT_TEST_MARKER", marker_path, 1) != 0))
+	    (setenv("PATH", updated_path, 1) != 0))
 		goto cleanup;
 	stage = "helper-start";
 	if (start_helper_with_pam_wrapper_config(FRDP_SESMAND_BINARY, "logind-owner-crash", dir,
@@ -3558,74 +3559,94 @@ static int test_sesmand_logind_owner_crash_cleanup(void)
 	                                         &helper) != 0)
 		goto cleanup;
 	helper_started = 1;
-	(void)setenv("PATH", saved_path, 1);
-	if (saved_marker)
-		(void)setenv("FRDP_AGENT_TEST_MARKER", saved_marker, 1);
-	else
-		unsetenv("FRDP_AGENT_TEST_MARKER");
+	restore_path(saved_path);
+	saved_path = NULL;
 	stage = "request";
-	requester = fork();
-	if (requester < 0)
+	if (request_live_session(helper.socket_path, user, "198.51.100.79", "logind-owner-crash",
+	                         NULL, uid, gid, groups, group_count, &opened, NULL) != 0)
 		goto cleanup;
-	if (requester == 0)
-	{
-		frdpSessionResponse response = { 0 };
-		const int request_rc = request_live_session(
-		    helper.socket_path, user, "198.51.100.79", "logind-owner-crash", NULL, uid, gid, groups,
-		    group_count, &response, "unused after manager crash");
-
-		SecureZeroMemory(&response, sizeof(response));
-		_exit(request_rc != 0 ? 0 : 1);
-	}
 	stage = "login1-session";
-	if ((wait_for_pid_file(marker_path, &agent_pid) != 0) ||
-	    ((agent_pgid = getpgid(agent_pid)) <= 1) ||
-	    (pin_process_identity(agent_pid, (uid_t)uid, agent_pgid, &agent_pidfd,
-	                          &agent_start_ticks) != 0) ||
-	    (read_single_child_pid(agent_pid, &backend_pid) != 0) ||
-	    (pin_process_identity(backend_pid, (uid_t)uid, agent_pgid, &backend_pidfd,
-	                          &backend_start_ticks) != 0) ||
+	if ((list_single_session(helper.socket_path, &opened, user, "active", -1, &agent_pid) != 0) ||
 	    (login1_session_for_pid(bus, agent_pid, session_id, sizeof(session_id)) != 0) ||
 	    (snprintf(expected_session_env, sizeof(expected_session_env), "XDG_SESSION_ID=%s",
 	              session_id) >= (int)sizeof(expected_session_env)) ||
 	    (process_environment_has(agent_pid, expected_session_env) != 0))
+		goto cleanup;
+	stage = "login1-validation";
+	if ((pipe(recovery_fifo) != 0) ||
+	    (frdp_sesmand_logind_recover(&recovery_manager, (uid_t)uid, agent_pid, "wrong-service",
+	                                 user, opened.display, recovery_fifo[0], &recovered_logind) ==
+	     0) ||
+	    (frdp_sesmand_logind_recover(&recovery_manager, (uid_t)(uid - 1U), agent_pid, service, user,
+	                                 opened.display, recovery_fifo[0], &recovered_logind) == 0) ||
+	    (frdp_sesmand_logind_recover(&recovery_manager, (uid_t)uid, agent_pid, service, user,
+	                                 opened.display, recovery_fifo[0], &recovered_logind) != 0) ||
+	    (strcmp(recovered_logind.id, session_id) != 0) ||
+	    (recovered_logind.runtime_path[0] != '/'))
+		goto cleanup;
+	recovery_fifo[0] = -1;
+	frdp_sesmand_logind_session_close(&recovered_logind);
+	close(recovery_fifo[1]);
+	recovery_fifo[1] = -1;
+	frdp_sesmand_logind_manager_uninit(&recovery_manager);
+	stage = "detach";
+	if ((request_session_control(helper.socket_path, FRDP_IPC_SESSION_DISCONNECT_REQUEST,
+	                             "logind-detach", opened.session_id, user, &detached) != 0) ||
+	    (strcmp(detached.session_id, opened.session_id) != 0) ||
+	    (list_single_session(helper.socket_path, &opened, user, "disconnected", agent_pid, NULL) !=
+	     0))
 		goto cleanup;
 	stage = "manager-killed";
 	if ((kill(helper.pid, SIGKILL) != 0) || (wait_for_exit(helper.pid, &status) != 0))
 		goto cleanup;
 	helper.pid = -1;
 	helper_started = 0;
-	if (!WIFSIGNALED(status) || (WTERMSIG(status) != SIGKILL) ||
-	    (wait_for_exit(requester, &status) != 0))
-		goto cleanup;
-	requester = -1;
-	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0))
-		goto cleanup;
-	stage = "owner-cleanup";
-	if ((wait_for_process_gone_attempts(agent_pid, 200U) != 0) ||
-	    (wait_for_file_contents_attempts(audit_path, expected_audit, 200) != 0) ||
-	    (wait_for_login1_session_gone(bus, session_id) != 0))
+	if (!WIFSIGNALED(status) || (WTERMSIG(status) != SIGKILL) || (kill(agent_pid, 0) != 0))
 		goto cleanup;
 	stage = "manager-restart";
-	if ((restart_helper_with_config(FRDP_SESMAND_BINARY, config_path, &helper) != 0) ||
+	if (restart_helper_with_config(FRDP_SESMAND_BINARY, config_path, &helper) != 0)
+		goto cleanup;
+	helper_started = 1;
+	stage = "restored-login1";
+	if ((list_single_session(helper.socket_path, &opened, user, "disconnected", agent_pid, NULL) !=
+	     0) ||
+	    (login1_session_for_pid(bus, agent_pid, recovered_session_id,
+	                            sizeof(recovered_session_id)) != 0) ||
+	    (strcmp(recovered_session_id, session_id) != 0))
+		goto cleanup;
+	stage = "reconnect";
+	if ((request_live_session(helper.socket_path, user, "198.51.100.79", "logind-reconnect",
+	                          opened.session_id, uid, gid, groups, group_count, &reconnected,
+	                          NULL) != 0) ||
+	    (strcmp(reconnected.session_id, opened.session_id) != 0) ||
+	    (strcmp(reconnected.display, opened.display) != 0) ||
+	    (strcmp(reconnected.agent_socket, opened.agent_socket) != 0) ||
+	    (list_single_session(helper.socket_path, &opened, user, "active", agent_pid, NULL) != 0))
+		goto cleanup;
+	stage = "close";
+	if (request_session_control(helper.socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST, "logind-close",
+	                            opened.session_id, user, &closed) != 0)
+		goto cleanup;
+	stage = "post-close-cleanup";
+	if ((wait_for_process_gone_attempts(agent_pid, 200U) != 0) ||
+	    (wait_for_file_contents_attempts(audit_path, expected_audit, 200) != 0) ||
+	    (wait_for_login1_session_gone(bus, session_id) != 0) ||
 	    (test_sesmand_list_empty(helper.socket_path) != 0) ||
 	    (helper_dir_contains_only_listener(&helper) != 0))
 		goto cleanup;
-	helper_started = 1;
 	rc = 0;
 
 cleanup:
 	if (rc != 0)
 		fprintf(stderr, "login1 owner crash cleanup failed at stage: %s\n", stage);
-	if (requester > 0)
-	{
-		kill(requester, SIGKILL);
-		(void)waitpid(requester, NULL, 0);
-	}
-	if (backend_pidfd >= 0)
-		(void)signal_process_pidfd(backend_pidfd, SIGKILL);
-	if (agent_pidfd >= 0)
-		(void)signal_process_pidfd(agent_pidfd, SIGKILL);
+	if ((agent_pid > 1) && (kill(agent_pid, 0) == 0))
+		kill(-agent_pid, SIGKILL);
+	frdp_sesmand_logind_session_close(&recovered_logind);
+	frdp_sesmand_logind_manager_uninit(&recovery_manager);
+	if (recovery_fifo[0] >= 0)
+		close(recovery_fifo[0]);
+	if (recovery_fifo[1] >= 0)
+		close(recovery_fifo[1]);
 	if (helper_started && (stop_helper(&helper) != 0))
 		rc = -1;
 	else if (helper.pid > 0)
@@ -3633,10 +3654,6 @@ cleanup:
 		kill(helper.pid, SIGKILL);
 		(void)waitpid(helper.pid, NULL, 0);
 	}
-	if (backend_pidfd >= 0)
-		close(backend_pidfd);
-	if (agent_pidfd >= 0)
-		close(agent_pidfd);
 	if (saved_key_path)
 	{
 		(void)setenv(FRDP_AUTH_TOKEN_KEY_ENV, saved_key_path, 1);
@@ -3644,25 +3661,13 @@ cleanup:
 	}
 	else
 		unsetenv(FRDP_AUTH_TOKEN_KEY_ENV);
-	if (saved_path)
-	{
-		(void)setenv("PATH", saved_path, 1);
-		free(saved_path);
-	}
-	if (saved_marker)
-	{
-		(void)setenv("FRDP_AGENT_TEST_MARKER", saved_marker, 1);
-		free(saved_marker);
-	}
-	else
-		unsetenv("FRDP_AGENT_TEST_MARKER");
+	restore_path(saved_path);
 	sd_bus_error_free(&bus_error);
 	sd_bus_unref(bus);
 	unlink(helper.socket_path);
 	if (helper.dir[0])
 		rmdir(helper.dir);
 	unlink(agent_path);
-	unlink(marker_path);
 	if (agent_dir[0])
 		rmdir(agent_dir);
 	unlink(config_path);
@@ -3672,7 +3677,12 @@ cleanup:
 	if (dir[0])
 		rmdir(dir);
 	SecureZeroMemory(groups, sizeof(groups));
+	SecureZeroMemory(&opened, sizeof(opened));
+	SecureZeroMemory(&detached, sizeof(detached));
+	SecureZeroMemory(&reconnected, sizeof(reconnected));
+	SecureZeroMemory(&closed, sizeof(closed));
 	return rc;
+#endif
 }
 
 #else

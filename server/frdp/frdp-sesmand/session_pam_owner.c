@@ -32,6 +32,7 @@
 #define FRDP_PAM_OWNER_RESPONSE 3U
 #define FRDP_PAM_OWNER_BIND_LOGIND 4U
 #define FRDP_PAM_OWNER_TAKEOVER 5U
+#define FRDP_PAM_OWNER_GET_LOGIND 6U
 #define FRDP_PAM_OWNER_WIRE_SIZE 24U
 #define FRDP_PAM_OWNER_START_TIMEOUT_MS 20000
 #define FRDP_PAM_OWNER_COMMAND_TIMEOUT_MS 10000
@@ -961,6 +962,14 @@ static int run_owner(const char* runtime_dir, const char* endpoint, const char* 
 			close(client);
 			continue;
 		}
+		if ((type == FRDP_PAM_OWNER_GET_LOGIND) && (passed_fd < 0) &&
+		    (logind_fifo_fd >= 0) && (requested_pid == 0) && (requested_pgid == 0) &&
+		    (requested_status == 0))
+		{
+			(void)send_message_fd(client, FRDP_PAM_OWNER_RESPONSE, logind_fifo_fd);
+			close(client);
+			continue;
+		}
 		if ((type == FRDP_PAM_OWNER_CLOSE) && (passed_fd < 0))
 		{
 			if (process_group_exists(agent_pgid))
@@ -1222,6 +1231,42 @@ int frdp_sesmand_pam_owner_bind_logind(const char* runtime_dir, const char* sess
 	rc = 0;
 
 cleanup:
+	if (fd >= 0)
+		close(fd);
+	return rc;
+}
+
+int frdp_sesmand_pam_owner_get_logind(const char* runtime_dir, const char* session_id,
+                                      frdpSesmandPamOwner* owner, int* fifo_fd)
+{
+	uint32_t response_type = 0;
+	pid_t response_pid = -1;
+	pid_t response_pgid = -1;
+	struct stat fifo_stat = { 0 };
+	int response_status = -1;
+	int received_fd = -1;
+	int fd = -1;
+	int rc = -1;
+
+	if (fifo_fd)
+		*fifo_fd = -1;
+	if (!owner || !owner->active || (owner->pid <= 1) || !fifo_fd ||
+	    (connect_owner(runtime_dir, session_id, &fd, NULL) != 0) ||
+	    (send_message(fd, FRDP_PAM_OWNER_GET_LOGIND, 0, 0, 0) != 0) ||
+	    (receive_message_fd(fd, &response_type, &response_pid, &response_pgid, &response_status,
+	                        &received_fd) != 0) ||
+	    (response_type != FRDP_PAM_OWNER_RESPONSE) || (response_pid != 0) ||
+	    (response_pgid != 0) || (response_status != 0) || (received_fd < 0) ||
+	    (fstat(received_fd, &fifo_stat) != 0) || !S_ISFIFO(fifo_stat.st_mode) ||
+	    (fcntl(received_fd, F_SETFD, FD_CLOEXEC) != 0))
+		goto cleanup;
+	*fifo_fd = received_fd;
+	received_fd = -1;
+	rc = 0;
+
+cleanup:
+	if (received_fd >= 0)
+		close(received_fd);
 	if (fd >= 0)
 		close(fd);
 	return rc;

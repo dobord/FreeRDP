@@ -749,7 +749,7 @@ static int recovered_agent_identity_matches(const frdpSesmandSessionMetadata* me
 static int metadata_is_import_candidate(const frdpSesmandSessionMetadata* metadata)
 {
 	return metadata && (metadata->state == FRDP_SESMAND_SESSION_DISCONNECTED) &&
-	       !metadata->logind_session && metadata->pam_owner &&
+	       !(metadata->logind_session && metadata->systemd_scope) && metadata->pam_owner &&
 	       (metadata->user[0] != '\0') &&
 	       (memchr(metadata->user, '\0', sizeof(metadata->user)) != NULL);
 }
@@ -792,12 +792,14 @@ static frdpSesmandSessionRestoreResult restore_disconnected_session(
     void* context)
 {
 	char agent_socket[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
+	char display[32] = { 0 };
 	char reservation[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
 	frdpSesmandPamOwner pam_owner = { .pid = -1, .active = 0 };
 	session restored = { 0 };
 	uint64_t socket_dev = 0;
 	uint64_t socket_ino = 0;
 	int reservation_fd = -1;
+	int logind_fifo_fd = -1;
 	pendingSessionRecovery* pending = NULL;
 
 	(void)context;
@@ -846,6 +848,7 @@ static frdpSesmandSessionRestoreResult restore_disconnected_session(
 	restored.heartbeat_fd = -1;
 	restored.heartbeat_via_control = 1;
 	restored.resource_policy = g_session_resource_policy;
+	restored.logind_session.fifo_fd = -1;
 	if (metadata->systemd_scope)
 	{
 		if (frdp_sesmand_scope_recover(&g_scope_manager, metadata->session_id,
@@ -853,19 +856,35 @@ static frdpSesmandSessionRestoreResult restore_disconnected_session(
 		                                restored.scope_name, sizeof(restored.scope_name)) != 0)
 			goto cleanup;
 	}
+	else if (metadata->logind_session)
+	{
+		if ((snprintf(display, sizeof(display), ":%d", metadata->display_number) >=
+		     (int)sizeof(display)) ||
+		    (frdp_sesmand_pam_owner_get_logind(g_agent_socket_dir, metadata->session_id,
+		                                       &pam_owner, &logind_fifo_fd) != 0) ||
+		    (frdp_sesmand_logind_recover(&g_logind_manager, metadata->uid, metadata->agent_pid,
+		                                 g_pam_service, metadata->user, display, logind_fifo_fd,
+		                                 &restored.logind_session) != 0))
+			goto cleanup;
+		logind_fifo_fd = -1;
+		restored.resource_policy.systemd_scope = 0;
+		restored.resource_policy.logind_session = 1;
+	}
 	else
 	{
 		restored.resource_policy.systemd_scope = 0;
 		restored.resource_policy.logind_session = 0;
 	}
-	restored.logind_session.fifo_fd = -1;
-	if (restored.heartbeat_next_ms == 0)
+	if ((restored.heartbeat_next_ms == 0) || !recovered_agent_identity_matches(metadata))
 		goto cleanup;
 	sessions[session_count++] = restored;
 	pending->pam_owner.active = 0;
 	return FRDP_SESMAND_SESSION_RESTORE_IMPORTED;
 
 cleanup:
+	frdp_sesmand_logind_session_close(&restored.logind_session);
+	if (logind_fifo_fd >= 0)
+		close(logind_fifo_fd);
 	if (reservation_fd >= 0)
 		close(reservation_fd);
 	return FRDP_SESMAND_SESSION_RESTORE_CLEANUP;

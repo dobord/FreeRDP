@@ -4,12 +4,14 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
 #include <systemd/sd-bus.h>
+#include <systemd/sd-login.h>
 
 #define FRDP_LOGIND_BUS_TIMEOUT_USEC 5000000ULL
 #define FRDP_LOGIND_DESTINATION "org.freedesktop.login1"
@@ -218,6 +220,111 @@ cleanup:
 		return -1;
 	}
 	return 0;
+}
+
+int frdp_sesmand_logind_recover(frdpSesmandLogindManager* manager, uid_t uid, pid_t pid,
+                                const char* service, const char* user, const char* display,
+                                int fifo_fd, frdpSesmandLogindSession* session)
+{
+	sd_bus_error error = SD_BUS_ERROR_NULL;
+	sd_bus_message* reply = NULL;
+	sd_bus_message* user_reply = NULL;
+	char object_path[256] = { 0 };
+	char* id = NULL;
+	char* returned_user = NULL;
+	char* returned_service = NULL;
+	char* type = NULL;
+	char* session_class = NULL;
+	char* returned_display = NULL;
+	char* runtime_path = NULL;
+	char* pid_session = NULL;
+	const char* returned_path = NULL;
+	const char* user_path = NULL;
+	struct stat fifo_stat = { 0 };
+	uint32_t returned_uid = 0;
+	uint32_t leader = 0;
+	int remote = 0;
+	int rc = -1;
+
+	if (!manager || !session || !service || (service[0] == '\0') || !user ||
+	    (user[0] == '\0') || !display || (display[0] == '\0') || (pid <= 1) ||
+	    ((uint64_t)uid > UINT32_MAX) || ((uint64_t)pid > UINT32_MAX) || (fifo_fd < 0) ||
+	    (fstat(fifo_fd, &fifo_stat) != 0) || !S_ISFIFO(fifo_stat.st_mode) ||
+	    (fcntl(fifo_fd, F_SETFD, FD_CLOEXEC) != 0) ||
+	    (frdp_sesmand_logind_manager_init(manager) != 0))
+		return -1;
+	memset(session, 0, sizeof(*session));
+	session->fifo_fd = -1;
+	if ((sd_bus_call_method((sd_bus*)manager->bus, FRDP_LOGIND_DESTINATION, FRDP_LOGIND_PATH,
+	                        FRDP_LOGIND_INTERFACE, "GetSessionByPID", &error, &reply, "u",
+	                        (uint32_t)pid) < 0) ||
+	    (sd_bus_message_read(reply, "o", &returned_path) < 0) || !returned_path ||
+	    (snprintf(object_path, sizeof(object_path), "%s", returned_path) >=
+	     (int)sizeof(object_path)))
+		goto cleanup;
+	sd_bus_message_unref(reply);
+	reply = NULL;
+	sd_bus_error_free(&error);
+	if ((sd_bus_get_property_string((sd_bus*)manager->bus, FRDP_LOGIND_DESTINATION, object_path,
+	                                "org.freedesktop.login1.Session", "Id", &error, &id) < 0) ||
+	    (sd_bus_get_property_string((sd_bus*)manager->bus, FRDP_LOGIND_DESTINATION, object_path,
+	                                "org.freedesktop.login1.Session", "Name", &error,
+	                                &returned_user) < 0) ||
+	    (sd_bus_get_property_string((sd_bus*)manager->bus, FRDP_LOGIND_DESTINATION, object_path,
+	                                "org.freedesktop.login1.Session", "Service", &error,
+	                                &returned_service) < 0) ||
+	    (sd_bus_get_property_string((sd_bus*)manager->bus, FRDP_LOGIND_DESTINATION, object_path,
+	                                "org.freedesktop.login1.Session", "Type", &error, &type) < 0) ||
+	    (sd_bus_get_property_string((sd_bus*)manager->bus, FRDP_LOGIND_DESTINATION, object_path,
+	                                "org.freedesktop.login1.Session", "Class", &error,
+	                                &session_class) < 0) ||
+	    (sd_bus_get_property_string((sd_bus*)manager->bus, FRDP_LOGIND_DESTINATION, object_path,
+	                                "org.freedesktop.login1.Session", "Display", &error,
+	                                &returned_display) < 0) ||
+	    (sd_bus_get_property_trivial((sd_bus*)manager->bus, FRDP_LOGIND_DESTINATION, object_path,
+	                                 "org.freedesktop.login1.Session", "Leader", &error, 'u',
+	                                 &leader) < 0) ||
+	    (sd_bus_get_property_trivial((sd_bus*)manager->bus, FRDP_LOGIND_DESTINATION, object_path,
+	                                 "org.freedesktop.login1.Session", "Remote", &error, 'b',
+	                                 &remote) < 0) ||
+	    (sd_bus_get_property((sd_bus*)manager->bus, FRDP_LOGIND_DESTINATION, object_path,
+	                         "org.freedesktop.login1.Session", "User", &error, &user_reply,
+	                         "(uo)") < 0) ||
+	    (sd_bus_message_read(user_reply, "(uo)", &returned_uid, &user_path) < 0) || !user_path ||
+	    (sd_bus_get_property_string((sd_bus*)manager->bus, FRDP_LOGIND_DESTINATION, user_path,
+	                                "org.freedesktop.login1.User", "RuntimePath", &error,
+	                                &runtime_path) < 0) ||
+	    (sd_pid_get_session(pid, &pid_session) < 0) || !id || !returned_user ||
+	    !returned_service || !type || !session_class || !returned_display || !runtime_path ||
+	    !pid_session || (strcmp(id, pid_session) != 0) || (strcmp(returned_user, user) != 0) ||
+	    (strcmp(returned_service, service) != 0) || (strcmp(type, "x11") != 0) ||
+	    (strcmp(session_class, "user") != 0) || (strcmp(returned_display, display) != 0) ||
+	    (runtime_path[0] != '/') || (returned_uid != (uint32_t)uid) ||
+	    (leader != (uint32_t)pid) || !remote ||
+	    (copy_reply_string(session->id, sizeof(session->id), id) != 0) ||
+	    (copy_reply_string(session->runtime_path, sizeof(session->runtime_path), runtime_path) != 0))
+		goto cleanup;
+	session->fifo_fd = fifo_fd;
+	rc = 0;
+
+cleanup:
+	free(pid_session);
+	free(runtime_path);
+	free(returned_display);
+	free(session_class);
+	free(type);
+	free(returned_service);
+	free(returned_user);
+	free(id);
+	sd_bus_message_unref(user_reply);
+	sd_bus_message_unref(reply);
+	sd_bus_error_free(&error);
+	if (rc != 0)
+	{
+		frdp_sesmand_logind_session_close(session);
+		frdp_sesmand_logind_manager_uninit(manager);
+	}
+	return rc;
 }
 
 int frdp_sesmand_logind_release(frdpSesmandLogindManager* manager,
