@@ -103,7 +103,7 @@ foreach(expected
         "run_session_smoke base"
         "run_session_smoke upgrade"
         "run_session_smoke rollback"
-        "auth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback"
+        "auth_smoke=base,post-sesmand-crash,post-sesmand-stop-timeout,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback"
         "gpo_policy=not-applicable"
         "gpo_policy=base,upgrade,rollback"
         "disconnected_helper_crash=frdp-sesmand"
@@ -137,6 +137,10 @@ foreach(expected
         "systemctl kill --signal=SIGKILL --kill-who=main frdp-sesmand.service"
         "new_socket_inode"
         "run_session_smoke post-sesmand-crash"
+        "assert_sesmand_forced_stop_cleanup"
+        "TimeoutStopUSec --value frdp-sesmand.service)\" = 30s"
+        "call (void) signal(15, 1)"
+        "run_session_smoke post-sesmand-stop-timeout"
         "start_transition_session upgrade"
         "start_transition_session rollback"
         "assert_transition_session_active"
@@ -162,9 +166,9 @@ endif()
 string(REGEX MATCHALL "assert_real_services" lifecycle_assertions
              "${debian_lifecycle}")
 list(LENGTH lifecycle_assertions lifecycle_assertion_count)
-if(NOT lifecycle_assertion_count EQUAL 7)
+if(NOT lifecycle_assertion_count EQUAL 8)
   message(FATAL_ERROR
-          "Debian lifecycle test must define and invoke real-service checks at start, post-crash, post-outage, post-inflight-crash, upgrade, and rollback")
+          "Debian lifecycle test must define and invoke real-service checks at start, post-crash, post-timeout cleanup, post-outage, post-inflight-crash, upgrade, and rollback")
 endif()
 foreach(forbidden
         "ExecStart="
@@ -684,9 +688,10 @@ foreach(expected
         "frdpd|frdp-authd|frdp-sesmand) exit 1"
         "TestFreeRDPFrdpDebianLifecycle.sh \"$deb_path\""
         "tee \"$artifacts/systemd-lifecycle.txt\""
-        "auth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback"
+        "auth_smoke=base,post-sesmand-crash,post-sesmand-stop-timeout,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback"
         "disconnected_helper_crash=frdp-sesmand"
         "manager_restart_reconnect=pass"
+        "forced_stop_cleanup=pass"
         "inflight_helper_crash=frdp-authd"
         "helper_outage=frdp-authd,frdp-sesmand"
         "active_transition=upgrade,rollback"

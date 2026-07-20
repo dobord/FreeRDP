@@ -74,7 +74,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq \
     && sed -i '\|^path-exclude=/usr/share/man/|d' /etc/dpkg/dpkg.cfg.d/excludes \
     && apt-get install -qq -y --no-install-recommends \
-      adcli freerdp3-x11 krb5-user libnss-sss libpam-sss netcat-openbsd \
+      adcli freerdp3-x11 gdb krb5-user libnss-sss libpam-sss netcat-openbsd \
       openssl procps sssd sssd-ad sssd-tools systemd systemd-sysv \
       x11-apps x11-utils xvfb \
     && apt-get clean \
@@ -733,6 +733,78 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
     run_session_smoke post-sesmand-crash
   }
 
+  assert_sesmand_forced_stop_cleanup() {
+    local child i manager_children manager_pid owner_pid= pgid result stop_status=0
+
+    start_transition_session sesmand-stop-timeout
+    manager_pid=$(systemctl show --property=MainPID --value frdp-sesmand.service)
+    test "$manager_pid" -gt 1
+    test "$manager_pid" != "$transition_agent_pid"
+    pgid=$(ps -o pgid= -p "$transition_agent_pid" | tr -d "[:space:]")
+    test "$pgid" = "$transition_agent_pid"
+    manager_children=$(cat "/proc/$manager_pid/task/$manager_pid/children")
+    for child in $manager_children; do
+      if [[ "$child" != "$transition_agent_pid" ]] && kill -0 "$child" 2>/dev/null; then
+        test -z "$owner_pid"
+        owner_pid=$child
+      fi
+    done
+    test -n "$owner_pid"
+    test "$(systemctl show --property=KillMode --value frdp-sesmand.service)" = process
+    test "$(systemctl show --property=RuntimeDirectoryPreserve --value \
+      frdp-sesmand.service)" = restart
+    test "$(systemctl show --property=TimeoutStopUSec --value frdp-sesmand.service)" = 30s
+    gdb --batch --nx --pid "$manager_pid" \
+      --eval-command "call (void) signal(15, 1)" \
+      --eval-command detach > "$transition_artifacts/gdb-sigterm-ignore.txt" 2>&1
+    kill -0 "$manager_pid"
+    systemctl stop frdp-sesmand.service \
+      > "$transition_artifacts/systemctl-stop.txt" 2>&1 || stop_status=$?
+    printf "status=%s\n" "$stop_status" >> "$transition_artifacts/systemctl-stop.txt"
+    result=$(systemctl show --property=Result --value frdp-sesmand.service)
+    printf "result=%s\n" "$result" >> "$transition_artifacts/systemctl-stop.txt"
+    test "$result" = timeout
+    ! systemctl --quiet is-active frdp-sesmand.service
+    test ! -e "/proc/$manager_pid"
+
+    for i in $(seq 1 300); do
+      if ! kill -0 -- "-$pgid" 2>/dev/null && ! kill -0 "$owner_pid" 2>/dev/null; then
+        break
+      fi
+      sleep 0.1
+    done
+    ! kill -0 -- "-$pgid" 2>/dev/null
+    ! kill -0 "$owner_pid" 2>/dev/null
+    for i in $(seq 1 30); do
+      if ! loginctl show-session "$transition_login1_session_id" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+    ! loginctl show-session "$transition_login1_session_id" >/dev/null 2>&1
+    test ! -e "/run/systemd/sessions/$transition_login1_session_id"
+    for i in $(seq 1 30); do
+      if ! kill -0 "$transition_client_pid" 2>/dev/null; then
+        break
+      fi
+      sleep 1
+    done
+    ! kill -0 "$transition_client_pid" 2>/dev/null
+    wait "$transition_client_pid" || true
+    kill -TERM "$transition_xvfb_pid" 2>/dev/null || true
+    wait "$transition_xvfb_pid" || true
+    test ! -e /run/frdp-sesmand
+
+    systemctl reset-failed frdp-sesmand.service
+    systemctl start frdp-sesmand.service
+    assert_real_services
+    frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
+      > "$transition_artifacts/session-list-after.txt"
+    grep -Fxq "No active sessions" "$transition_artifacts/session-list-after.txt"
+    test -z "$(find /run/frdp-sesmand -mindepth 1 ! -name sesmand.sock -print -quit)"
+    run_session_smoke post-sesmand-stop-timeout
+  }
+
   assert_authd_inflight_recovery() {
     local auth_only_arg client_pid delay_pid help_output i journal_cursor
     local new_invocation new_pid new_socket_inode old_invocation old_pid old_socket_inode
@@ -992,6 +1064,8 @@ EOF
   fi
   echo "stage=disconnected-sesmand-crash"
   assert_sesmand_disconnected_session_recovery
+  echo "stage=sesmand-stop-timeout"
+  assert_sesmand_forced_stop_cleanup
   echo "stage=authd-outage"
   assert_helper_outage_recovery frdp-authd.service /run/frdp-authd/authd.sock authd-outage
   echo "stage=sesmand-outage"
@@ -1098,7 +1172,7 @@ EOF
     "$secret_hashes"
   rm -rf /etc/frdpd
 
-  printf "provider=%s\nbase=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback\ngpo_policy=%s\ndisconnected_helper_crash=frdp-sesmand\nmanager_restart_reconnect=pass\ninflight_helper_crash=frdp-authd\nhelper_outage=frdp-authd,frdp-sesmand\nactive_transition=upgrade,rollback\nlogin1_session=enabled\nlogin1_crash_cleanup=pass\nresult=pass\n" \
+  printf "provider=%s\nbase=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,post-sesmand-stop-timeout,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback\ngpo_policy=%s\ndisconnected_helper_crash=frdp-sesmand\nmanager_restart_reconnect=pass\nforced_stop_cleanup=pass\ninflight_helper_crash=frdp-authd\nhelper_outage=frdp-authd,frdp-sesmand\nactive_transition=upgrade,rollback\nlogin1_session=enabled\nlogin1_crash_cleanup=pass\nresult=pass\n" \
     "$FRDP_LIFECYCLE_PROVIDER" "$base_version" "$upgrade_version" "$base_version" \
     "$gpo_policy"
 '
