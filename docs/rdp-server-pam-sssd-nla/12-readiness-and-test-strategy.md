@@ -89,11 +89,13 @@ without both brokers, and replaying or modifying a session request fails.
 
 Controlled manager-crash recovery and reconnect are now implemented for plain `DISCONNECTED`
 sessions. Metadata V4 binds the exact PAM/SSSD account name and UID; startup
-imports eligible sessions before cleanup, pins process and artifact identities,
-takes over the PAM owner, reopens the same display-reservation inode, and uses
-the authenticated agent control listener for recovered heartbeat supervision.
-A prerequisite-gated PAM/Xvfb test proves stable identity through manager
-`SIGKILL`, scheduled heartbeat, explicit reconnect, and hard cleanup. Import of
+first takes over PAM owners, validates and imports eligible sessions before cleanup,
+pins process and artifact identities, reopens the same display-reservation inode,
+and uses the authenticated agent control listener for recovered heartbeat supervision.
+A prerequisite-gated PAM/Xvfb test proves two-session recovery through manager
+`SIGKILL`: one session retains stable identity, scheduled heartbeat, implicit and
+explicit reconnect, while an unsafe-reservation peer is reconciled through PAM close
+and hard cleanup. Import of
 transient-scope or explicit-login1 sessions and installed provider/Windows-client
 manager-restart evidence remain open.
 

@@ -195,6 +195,7 @@ static int test_metadata_store(void)
 
 	metadata.state = FRDP_SESMAND_SESSION_DISCONNECTED;
 	metadata.start_time = 123456;
+	metadata.logind_session = 1;
 	snprintf(metadata.user, sizeof(metadata.user), "%s", "metadata-user");
 	if (frdp_sesmand_session_metadata_save(dir, &metadata, &second_dev, &second_ino) !=
 	        FRDP_SESMAND_SESSION_METADATA_SAVE_COMMITTED ||

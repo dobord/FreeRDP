@@ -691,13 +691,18 @@ static int receive_session_response(int fd, int expected_success, const char* ex
 
 static int receive_session_success(int fd, frdpSessionResponse* response)
 {
-	if (!response || (frdp_ipc_recv_session_response(fd, response) != 0) ||
-	    (response->success != 1) ||
+	if (!response || (frdp_ipc_recv_session_response(fd, response) != 0))
+		return -1;
+	if ((response->success != 1) ||
 	    !memchr(response->session_id, '\0', sizeof(response->session_id)) ||
 	    !memchr(response->display, '\0', sizeof(response->display)) ||
 	    !memchr(response->agent_socket, '\0', sizeof(response->agent_socket)) ||
 	    !memchr(response->error, '\0', sizeof(response->error)) || (response->error[0] != '\0'))
+	{
+		if (memchr(response->error, '\0', sizeof(response->error)))
+			fprintf(stderr, "unexpected session failure: %s\n", response->error);
 		return -1;
+	}
 	return 0;
 }
 
@@ -4240,6 +4245,9 @@ static int test_sesmand_disconnected_restart_reconnect(void)
 	frdpSessionResponse reconnected = { 0 };
 	frdpSessionResponse explicit_reconnected = { 0 };
 	frdpSessionResponse closed = { 0 };
+	frdpSessionResponse invalid_opened = { 0 };
+	frdpSessionResponse invalid_detached = { 0 };
+	frdpSessionListResponse before_restart_list = { 0 };
 	frdpSessionListResponse final_list = { 0 };
 	char dir[1024] = { 0 };
 	char config_path[1024] = { 0 };
@@ -4247,14 +4255,20 @@ static int test_sesmand_disconnected_restart_reconnect(void)
 	char metadata_name[96] = { 0 };
 	char metadata_path[1024] = { 0 };
 	char reservation_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
+	char invalid_metadata_name[96] = { 0 };
+	char invalid_metadata_path[1024] = { 0 };
+	char invalid_reservation_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
 	char user[64] = { 0 };
 	uint64_t uid = 0;
 	uint64_t gid = 0;
 	uint64_t groups[FRDP_IPC_MAX_AUTH_GROUPS] = { 0 };
 	uint32_t group_count = 0;
 	int32_t agent_pid = -1;
+	int32_t invalid_agent_pid = -1;
 	int blocked_fd = -1;
 	int display_number = 0;
+	int invalid_display_number = 0;
+	int found_primary = 0;
 	struct stat socket_before = { 0 };
 	struct stat socket_after = { 0 };
 	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
@@ -4313,20 +4327,63 @@ static int test_sesmand_disconnected_restart_reconnect(void)
 	    (frdp_sesmand_display_reservation_path(reservation_path, sizeof(reservation_path),
 	                                           helper.dir, display_number) != 0))
 		goto cleanup;
+	stage = "invalid-reservation-open";
+	if ((request_live_session(helper.socket_path, user, rhost, "restart-invalid-open", NULL, uid,
+	                          gid, groups, group_count, &invalid_opened, NULL) != 0) ||
+	    (sscanf(invalid_opened.display, ":%d", &invalid_display_number) != 1) ||
+	    (frdp_sesmand_session_metadata_filename(invalid_metadata_name,
+	                                             sizeof(invalid_metadata_name),
+	                                             invalid_opened.session_id) != 0) ||
+	    (snprintf(invalid_metadata_path, sizeof(invalid_metadata_path), "%s/%s", helper.dir,
+	              invalid_metadata_name) >= (int)sizeof(invalid_metadata_path)) ||
+	    (frdp_sesmand_display_reservation_path(
+	         invalid_reservation_path, sizeof(invalid_reservation_path), helper.dir,
+	         invalid_display_number) != 0))
+		goto cleanup;
 	stage = "detach";
 	if ((request_session_control(helper.socket_path, FRDP_IPC_SESSION_DISCONNECT_REQUEST,
 	                             "restart-detach", opened.session_id, user, &detached) != 0) ||
 	    (strcmp(detached.session_id, opened.session_id) != 0) ||
-	    (list_single_session(helper.socket_path, &opened, user, "disconnected", agent_pid, NULL) !=
-	     0) ||
 	    (access(metadata_path, F_OK) != 0) || (access(reservation_path, F_OK) != 0))
+		goto cleanup;
+	stage = "invalid-reservation-detach";
+	if ((request_session_control(helper.socket_path, FRDP_IPC_SESSION_DISCONNECT_REQUEST,
+	                             "restart-invalid-detach", invalid_opened.session_id, user,
+	                             &invalid_detached) != 0) ||
+	    (strcmp(invalid_detached.session_id, invalid_opened.session_id) != 0) ||
+	    (receive_sesmand_list(helper.socket_path, &before_restart_list) != 0) ||
+	    (before_restart_list.count != 2))
+		goto cleanup;
+	for (uint32_t x = 0; x < before_restart_list.count; x++)
+	{
+		const frdpSessionListEntry* entry = &before_restart_list.entries[x];
+
+		if (strcmp(entry->session_id, opened.session_id) == 0)
+		{
+			if ((strcmp(entry->state, "disconnected") != 0) ||
+			    (entry->agent_pid != agent_pid))
+				goto cleanup;
+			found_primary = 1;
+		}
+		else if (strcmp(entry->session_id, invalid_opened.session_id) == 0)
+		{
+			if ((strcmp(entry->user, user) != 0) ||
+			    (strcmp(entry->display, invalid_opened.display) != 0) ||
+			    (strcmp(entry->state, "disconnected") != 0) || (entry->agent_pid <= 1))
+				goto cleanup;
+			invalid_agent_pid = entry->agent_pid;
+		}
+	}
+	if (!found_primary || (invalid_agent_pid <= 1) ||
+	    (access(invalid_metadata_path, F_OK) != 0) ||
+	    (chmod(invalid_reservation_path, 0640) != 0))
 		goto cleanup;
 	stage = "manager-sigkill";
 	if ((kill(helper.pid, SIGKILL) != 0) || (waitpid(helper.pid, NULL, 0) != helper.pid))
 		goto cleanup;
 	helper.pid = -1;
 	helper_started = 0;
-	if (kill((pid_t)agent_pid, 0) != 0)
+	if ((kill((pid_t)agent_pid, 0) != 0) || (kill((pid_t)invalid_agent_pid, 0) != 0))
 		goto cleanup;
 	stage = "manager-restart";
 	if (restart_helper_with_config(FRDP_SESMAND_BINARY, config_path, &helper) != 0)
@@ -4337,7 +4394,11 @@ static int test_sesmand_disconnected_restart_reconnect(void)
 	     0) ||
 	    (lstat(opened.agent_socket, &socket_after) != 0) ||
 	    (socket_after.st_dev != socket_before.st_dev) ||
-	    (socket_after.st_ino != socket_before.st_ino))
+	    (socket_after.st_ino != socket_before.st_ino) ||
+	    (wait_for_process_gone((pid_t)invalid_agent_pid) != 0) ||
+	    (access(invalid_metadata_path, F_OK) == 0) || (errno != ENOENT) ||
+	    (access(invalid_opened.agent_socket, F_OK) == 0) || (errno != ENOENT) ||
+	    (access(invalid_reservation_path, F_OK) == 0) || (errno != ENOENT))
 		goto cleanup;
 	stage = "restored-heartbeat";
 	blocked_fd = frdp_ipc_connect(opened.agent_socket);
@@ -4402,6 +4463,11 @@ cleanup:
 		kill(-(pid_t)agent_pid, SIGKILL);
 		(void)wait_for_process_gone((pid_t)agent_pid);
 	}
+	if ((invalid_agent_pid > 1) && (kill((pid_t)invalid_agent_pid, 0) == 0))
+	{
+		kill(-(pid_t)invalid_agent_pid, SIGKILL);
+		(void)wait_for_process_gone((pid_t)invalid_agent_pid);
+	}
 	if (saved_key_path)
 	{
 		(void)setenv(FRDP_AUTH_TOKEN_KEY_ENV, saved_key_path, 1);
@@ -4412,6 +4478,9 @@ cleanup:
 	unlink(metadata_path);
 	unlink(opened.agent_socket);
 	unlink(reservation_path);
+	unlink(invalid_metadata_path);
+	unlink(invalid_opened.agent_socket);
+	unlink(invalid_reservation_path);
 	unlink(helper.socket_path);
 	if (helper.dir[0] != '\0')
 		rmdir(helper.dir);
@@ -4424,6 +4493,8 @@ cleanup:
 	SecureZeroMemory(&reconnected, sizeof(reconnected));
 	SecureZeroMemory(&explicit_reconnected, sizeof(explicit_reconnected));
 	SecureZeroMemory(&closed, sizeof(closed));
+	SecureZeroMemory(&invalid_opened, sizeof(invalid_opened));
+	SecureZeroMemory(&invalid_detached, sizeof(invalid_detached));
 	return rc;
 #endif
 }
