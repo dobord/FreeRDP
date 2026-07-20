@@ -3741,6 +3741,31 @@ cleanup:
 	return rc;
 }
 
+static int wait_for_scope_missing(sd_bus* bus, const char* scope_name)
+{
+	if (!bus || !scope_name)
+		return -1;
+	for (unsigned int attempt = 0; attempt < 100U; attempt++)
+	{
+		sd_bus_error error = SD_BUS_ERROR_NULL;
+		sd_bus_message* reply = NULL;
+		const int status = sd_bus_call_method(
+		    bus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+		    "org.freedesktop.systemd1.Manager", "GetUnit", &error, &reply, "s", scope_name);
+		const int missing =
+		    (status < 0) && sd_bus_error_has_name(&error, "org.freedesktop.systemd1.NoSuchUnit");
+
+		sd_bus_message_unref(reply);
+		sd_bus_error_free(&error);
+		if (missing)
+			return 0;
+		if (status < 0)
+			return -1;
+		usleep(10000);
+	}
+	return -1;
+}
+
 static int update_session_limits(const char* socket_path, const char* session_id,
                                  uint32_t max_processes, uint32_t memory_max_mb,
                                  uint32_t cpu_quota_percent)
@@ -3772,6 +3797,8 @@ static int test_sesmand_scope_runtime_limits(void)
 #else
 	frdpTestHelper helper = { .pid = -1 };
 	frdpSessionResponse opened = { 0 };
+	frdpSessionResponse detached = { 0 };
+	frdpSessionResponse reconnected = { 0 };
 	frdpSessionResponse closed = { 0 };
 	sd_bus* bus = NULL;
 	char dir[1024] = { 0 };
@@ -3781,6 +3808,9 @@ static int test_sesmand_scope_runtime_limits(void)
 	char config_path[1024] = { 0 };
 	char config[512] = { 0 };
 	char scope_name[160] = { 0 };
+	char metadata_name[96] = { 0 };
+	char metadata_path[1024] = { 0 };
+	char reservation_path[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
 	char updated_path[4096] = { 0 };
 	char user[64] = { 0 };
 	uint64_t uid = 0;
@@ -3790,6 +3820,8 @@ static int test_sesmand_scope_runtime_limits(void)
 	uint64_t memory_max = 0;
 	uint64_t cpu_quota = 0;
 	uint32_t group_count = 0;
+	int32_t agent_pid = -1;
+	int display_number = 0;
 	char* saved_path = NULL;
 	const char* previous_key_path = getenv(FRDP_AUTH_TOKEN_KEY_ENV);
 	char* saved_key_path = previous_key_path ? strdup(previous_key_path) : NULL;
@@ -3848,8 +3880,15 @@ static int test_sesmand_scope_runtime_limits(void)
 	if (request_live_session(helper.socket_path, user, "198.51.100.80", "scope-open", NULL, uid,
 	                         gid, groups, group_count, &opened, NULL) != 0)
 		goto cleanup;
-	if (snprintf(scope_name, sizeof(scope_name), "frdp-session-%s.scope", opened.session_id) >=
-	    (int)sizeof(scope_name))
+	if ((snprintf(scope_name, sizeof(scope_name), "frdp-session-%s.scope", opened.session_id) >=
+	     (int)sizeof(scope_name)) ||
+	    (sscanf(opened.display, ":%d", &display_number) != 1) ||
+	    (frdp_sesmand_session_metadata_filename(metadata_name, sizeof(metadata_name),
+	                                             opened.session_id) != 0) ||
+	    (snprintf(metadata_path, sizeof(metadata_path), "%s/%s", helper.dir, metadata_name) >=
+	     (int)sizeof(metadata_path)) ||
+	    (frdp_sesmand_display_reservation_path(reservation_path, sizeof(reservation_path),
+	                                           helper.dir, display_number) != 0))
 		goto cleanup;
 	stage = "initial-limits";
 	if ((read_scope_limits(bus, scope_name, &tasks_max, &memory_max, &cpu_quota) != 0) ||
@@ -3861,6 +3900,41 @@ static int test_sesmand_scope_runtime_limits(void)
 	    (read_scope_limits(bus, scope_name, &tasks_max, &memory_max, &cpu_quota) != 0) ||
 	    (tasks_max != 513U) || (memory_max != 96U * 1024U * 1024U) ||
 	    (cpu_quota != 500000U))
+		goto cleanup;
+	stage = "detach-before-restart";
+	if ((list_single_session(helper.socket_path, &opened, user, "active", -1, &agent_pid) != 0) ||
+	    (request_session_control(helper.socket_path, FRDP_IPC_SESSION_DISCONNECT_REQUEST,
+	                             "scope-detach", opened.session_id, user, &detached) != 0) ||
+	    (strcmp(detached.session_id, opened.session_id) != 0) ||
+	    (list_single_session(helper.socket_path, &opened, user, "disconnected", agent_pid, NULL) !=
+	     0))
+		goto cleanup;
+	stage = "manager-sigkill";
+	if ((kill(helper.pid, SIGKILL) != 0) || (waitpid(helper.pid, NULL, 0) != helper.pid))
+		goto cleanup;
+	helper.pid = -1;
+	helper_started = 0;
+	if (kill((pid_t)agent_pid, 0) != 0)
+		goto cleanup;
+	stage = "manager-restart";
+	if (restart_helper_with_config(FRDP_SESMAND_BINARY, config_path, &helper) != 0)
+		goto cleanup;
+	helper_started = 1;
+	stage = "restored-scope";
+	if ((list_single_session(helper.socket_path, &opened, user, "disconnected", agent_pid, NULL) !=
+	     0) ||
+	    (read_scope_limits(bus, scope_name, &tasks_max, &memory_max, &cpu_quota) != 0) ||
+	    (tasks_max != 513U) || (memory_max != 96U * 1024U * 1024U) ||
+	    (cpu_quota != 500000U))
+		goto cleanup;
+	stage = "reconnect-after-restart";
+	if ((request_live_session(helper.socket_path, user, "198.51.100.80", "scope-reconnect",
+	                          opened.session_id, uid, gid, groups, group_count, &reconnected,
+	                          NULL) != 0) ||
+	    (strcmp(reconnected.session_id, opened.session_id) != 0) ||
+	    (strcmp(reconnected.display, opened.display) != 0) ||
+	    (strcmp(reconnected.agent_socket, opened.agent_socket) != 0) ||
+	    (list_single_session(helper.socket_path, &opened, user, "active", agent_pid, NULL) != 0))
 		goto cleanup;
 	stage = "unlimited-update";
 	if ((update_session_limits(helper.socket_path, opened.session_id, 0U, 0U, 0U) != 0) ||
@@ -3877,6 +3951,12 @@ static int test_sesmand_scope_runtime_limits(void)
 	if (request_session_control(helper.socket_path, FRDP_IPC_SESSION_CLOSE_REQUEST, "scope-close",
 	                            opened.session_id, user, &closed) != 0)
 		goto cleanup;
+	stage = "post-close-cleanup";
+	if ((wait_for_process_gone((pid_t)agent_pid) != 0) ||
+	    (wait_for_scope_missing(bus, scope_name) != 0) || (access(metadata_path, F_OK) == 0) ||
+	    (errno != ENOENT) || (access(opened.agent_socket, F_OK) == 0) || (errno != ENOENT) ||
+	    (access(reservation_path, F_OK) == 0) || (errno != ENOENT))
+		goto cleanup;
 	rc = 0;
 
 cleanup:
@@ -3884,6 +3964,11 @@ cleanup:
 		fprintf(stderr, "scope runtime limits failed at stage: %s\n", stage);
 	if (helper_started)
 		(void)stop_helper(&helper);
+	if ((agent_pid > 1) && (kill((pid_t)agent_pid, 0) == 0))
+	{
+		kill(-(pid_t)agent_pid, SIGKILL);
+		(void)wait_for_process_gone((pid_t)agent_pid);
+	}
 	restore_path(saved_path);
 	if (saved_key_path)
 	{
@@ -3895,12 +3980,17 @@ cleanup:
 	sd_bus_unref(bus);
 	unlink(config_path);
 	unlink(key_path);
+	unlink(metadata_path);
+	unlink(opened.agent_socket);
+	unlink(reservation_path);
 	unlink(agent_path);
 	if (agent_dir[0])
 		rmdir(agent_dir);
 	if (dir[0])
 		rmdir(dir);
 	SecureZeroMemory(groups, sizeof(groups));
+	SecureZeroMemory(&detached, sizeof(detached));
+	SecureZeroMemory(&reconnected, sizeof(reconnected));
 	return rc;
 #endif
 }

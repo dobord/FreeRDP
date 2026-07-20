@@ -446,9 +446,11 @@ static int test_session_scope(void)
 		.cpu_quota_percent = 25,
 		.systemd_scope = 1,
 	};
+	frdpSessionResourcePolicy recovered_policy = { .max_sessions = 41, .logind_session = 1 };
 	uuid_t session_uuid = { 0 };
 	char session_id[37] = { 0 };
 	char scope_name[FRDP_SESMAND_SCOPE_NAME_SIZE] = { 0 };
+	char recovered_scope_name[FRDP_SESMAND_SCOPE_NAME_SIZE] = { 0 };
 	char expected_cgroup[FRDP_SESMAND_SCOPE_NAME_SIZE + 32U] = { 0 };
 	char properties[512] = { 0 };
 	char runtime_dir[128] = "/tmp/frdp-scope-recovery-XXXXXX";
@@ -563,6 +565,20 @@ static int test_session_scope(void)
 	    !output_has_line(properties, "MemoryMax=100663296") ||
 	    !output_has_line(properties, "CPUQuotaPerSecUSec=500ms"))
 		goto cleanup;
+	stage = "finite property recovery";
+	sd_bus_close((sd_bus*)manager.bus);
+	if ((frdp_sesmand_scope_recover(&manager, session_id, child, &recovered_policy,
+	                                recovered_scope_name, sizeof(recovered_scope_name)) != 0) ||
+	    (strcmp(recovered_scope_name, scope_name) != 0) ||
+	    (recovered_policy.max_sessions != 41U) || (recovered_policy.max_processes != 19U) ||
+	    (recovered_policy.memory_max_mb != 96U) ||
+	    (recovered_policy.cpu_quota_percent != 50U) || !recovered_policy.systemd_scope ||
+	    recovered_policy.logind_session)
+		goto cleanup;
+	stage = "wrong pid recovery";
+	if (frdp_sesmand_scope_recover(&manager, session_id, getpid(), &recovered_policy,
+	                               recovered_scope_name, sizeof(recovered_scope_name)) == 0)
+		goto cleanup;
 	stage = "unlimited property update";
 	policy.max_processes = 0;
 	policy.memory_max_mb = 0;
@@ -573,6 +589,13 @@ static int test_session_scope(void)
 	    !output_has_line(properties, "TasksMax=infinity") ||
 	    !output_has_line(properties, "MemoryMax=infinity") ||
 	    !output_has_line(properties, "CPUQuotaPerSecUSec=infinity"))
+		goto cleanup;
+	stage = "unlimited property recovery";
+	if ((frdp_sesmand_scope_recover(&manager, session_id, child, &recovered_policy,
+	                                recovered_scope_name, sizeof(recovered_scope_name)) != 0) ||
+	    (recovered_policy.max_processes != 0U) || (recovered_policy.memory_max_mb != 0U) ||
+	    (recovered_policy.cpu_quota_percent != 0U) || !recovered_policy.systemd_scope ||
+	    recovered_policy.logind_session)
 		goto cleanup;
 	stage = "detached descendant";
 	if ((test_write_exact(launch_pipe[1], &launch_marker, 1U) != 0) ||
@@ -782,8 +805,6 @@ int TestFreeRDPFrdpSystemdRecovery(int argc, char* argv[])
 	char* running_argv[] = { (char*)FRDP_SYSTEMCTL_BINARY, "show", "--property=Version", "--value",
 		                     NULL };
 
-	(void)argc;
-	(void)argv;
 	if (geteuid() != 0)
 	{
 		printf("systemd helper recovery skipped: root required\n");
@@ -795,6 +816,8 @@ int TestFreeRDPFrdpSystemdRecovery(int argc, char* argv[])
 		printf("systemd helper recovery skipped: system manager unavailable\n");
 		return FRDP_SYSTEMD_SKIP;
 	}
+	if ((argc > 1) && (strcmp(argv[1], "scope-recovery") == 0))
+		return test_session_scope();
 	if (frdp_sesmand_logind_manager_init(&logind_manager) != 0)
 		printf("login1 session lifecycle skipped: login1 unavailable\n");
 	else

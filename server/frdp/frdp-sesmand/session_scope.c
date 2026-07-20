@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <systemd/sd-bus.h>
+#include <systemd/sd-login.h>
 
 #define FRDP_SYSTEMD_BUS_TIMEOUT_USEC 5000000ULL
 #define FRDP_SYSTEMD_STATE_POLL_USEC 10000U
@@ -328,6 +329,100 @@ cleanup:
 	if (rc < 0)
 		frdp_sesmand_scope_manager_uninit(manager);
 	return (rc < 0) ? -1 : 0;
+}
+
+static int scope_limit_to_u32(uint64_t value, uint64_t unit, uint32_t limit, uint32_t* result)
+{
+	if (!result || (unit == 0U))
+		return -1;
+	if (value == UINT64_MAX)
+	{
+		*result = 0;
+		return 0;
+	}
+	if ((value % unit) != 0U || ((value / unit) > limit))
+		return -1;
+	*result = (uint32_t)(value / unit);
+	return 0;
+}
+
+int frdp_sesmand_scope_recover(frdpSesmandScopeManager* manager, const char* session_id, pid_t pid,
+                               frdpSessionResourcePolicy* policy, char* name, size_t name_size)
+{
+	sd_bus_error error = SD_BUS_ERROR_NULL;
+	sd_bus_message* reply = NULL;
+	char expected_cgroup[FRDP_SESMAND_SCOPE_NAME_SIZE + 32U] = { 0 };
+	char object_path[256] = { 0 };
+	char* active_state = NULL;
+	char* control_group = NULL;
+	char* process_cgroup = NULL;
+	const char* returned_path = NULL;
+	uint64_t tasks_max = 0;
+	uint64_t memory_max = 0;
+	uint64_t cpu_quota = 0;
+	uint32_t recovered_max_processes = 0;
+	uint32_t recovered_memory_max_mb = 0;
+	uint32_t recovered_cpu_quota_percent = 0;
+	int rc = -1;
+
+	if (!manager || (pid <= 1) || !policy ||
+	    (frdp_sesmand_scope_name(session_id, name, name_size) != 0) ||
+	    (snprintf(expected_cgroup, sizeof(expected_cgroup), "/system.slice/%s", name) >=
+	     (int)sizeof(expected_cgroup)) ||
+	    (frdp_sesmand_scope_manager_init(manager) != 0))
+		return -1;
+	if ((sd_bus_call_method((sd_bus*)manager->bus, "org.freedesktop.systemd1",
+	                        "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager",
+	                        "GetUnit", &error, &reply, "s", name) < 0) ||
+	    (sd_bus_message_read(reply, "o", &returned_path) < 0) || !returned_path ||
+	    (snprintf(object_path, sizeof(object_path), "%s", returned_path) >=
+	     (int)sizeof(object_path)))
+		goto cleanup;
+	sd_bus_message_unref(reply);
+	reply = NULL;
+	sd_bus_error_free(&error);
+	if ((sd_bus_get_property_string((sd_bus*)manager->bus, "org.freedesktop.systemd1", object_path,
+	                                "org.freedesktop.systemd1.Unit", "ActiveState", &error,
+	                                &active_state) < 0) ||
+	    (sd_bus_get_property_string((sd_bus*)manager->bus, "org.freedesktop.systemd1", object_path,
+	                                "org.freedesktop.systemd1.Scope", "ControlGroup", &error,
+	                                &control_group) < 0) ||
+	    (sd_bus_get_property_trivial((sd_bus*)manager->bus, "org.freedesktop.systemd1", object_path,
+	                                 "org.freedesktop.systemd1.Scope", "TasksMax", &error,
+	                                 't', &tasks_max) < 0) ||
+	    (sd_bus_get_property_trivial((sd_bus*)manager->bus, "org.freedesktop.systemd1", object_path,
+	                                 "org.freedesktop.systemd1.Scope", "MemoryMax", &error,
+	                                 't', &memory_max) < 0) ||
+	    (sd_bus_get_property_trivial((sd_bus*)manager->bus, "org.freedesktop.systemd1", object_path,
+	                                 "org.freedesktop.systemd1.Scope", "CPUQuotaPerSecUSec", &error,
+	                                 't', &cpu_quota) < 0) ||
+	    (sd_pid_get_cgroup(pid, &process_cgroup) < 0) || !active_state || !control_group ||
+	    !process_cgroup || (strcmp(active_state, "active") != 0) ||
+	    (strcmp(control_group, expected_cgroup) != 0) ||
+	    (strcmp(process_cgroup, expected_cgroup) != 0) ||
+	    (scope_limit_to_u32(tasks_max, 1U, FRDP_SESSION_MAX_PROCESSES_LIMIT,
+	                        &recovered_max_processes) != 0) ||
+	    (scope_limit_to_u32(memory_max, 1024ULL * 1024ULL, FRDP_SESSION_MEMORY_MAX_MB_LIMIT,
+	                        &recovered_memory_max_mb) != 0) ||
+	    (scope_limit_to_u32(cpu_quota, 10000ULL, FRDP_SESSION_CPU_QUOTA_PERCENT_LIMIT,
+	                        &recovered_cpu_quota_percent) != 0))
+		goto cleanup;
+	policy->max_processes = recovered_max_processes;
+	policy->memory_max_mb = recovered_memory_max_mb;
+	policy->cpu_quota_percent = recovered_cpu_quota_percent;
+	policy->systemd_scope = 1;
+	policy->logind_session = 0;
+	rc = 0;
+
+cleanup:
+	free(process_cgroup);
+	free(control_group);
+	free(active_state);
+	sd_bus_error_free(&error);
+	sd_bus_message_unref(reply);
+	if (rc != 0)
+		frdp_sesmand_scope_manager_uninit(manager);
+	return rc;
 }
 
 int frdp_sesmand_scope_update(frdpSesmandScopeManager* manager, const char* name,

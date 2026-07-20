@@ -749,7 +749,7 @@ static int recovered_agent_identity_matches(const frdpSesmandSessionMetadata* me
 static int metadata_is_import_candidate(const frdpSesmandSessionMetadata* metadata)
 {
 	return metadata && (metadata->state == FRDP_SESMAND_SESSION_DISCONNECTED) &&
-	       !metadata->systemd_scope && !metadata->logind_session && metadata->pam_owner &&
+	       !metadata->logind_session && metadata->pam_owner &&
 	       (metadata->user[0] != '\0') &&
 	       (memchr(metadata->user, '\0', sizeof(metadata->user)) != NULL);
 }
@@ -846,8 +846,18 @@ static frdpSesmandSessionRestoreResult restore_disconnected_session(
 	restored.heartbeat_fd = -1;
 	restored.heartbeat_via_control = 1;
 	restored.resource_policy = g_session_resource_policy;
-	restored.resource_policy.systemd_scope = metadata->systemd_scope;
-	restored.resource_policy.logind_session = metadata->logind_session;
+	if (metadata->systemd_scope)
+	{
+		if (frdp_sesmand_scope_recover(&g_scope_manager, metadata->session_id,
+		                                metadata->agent_pid, &restored.resource_policy,
+		                                restored.scope_name, sizeof(restored.scope_name)) != 0)
+			goto cleanup;
+	}
+	else
+	{
+		restored.resource_policy.systemd_scope = 0;
+		restored.resource_policy.logind_session = 0;
+	}
 	restored.logind_session.fifo_fd = -1;
 	if (restored.heartbeat_next_ms == 0)
 		goto cleanup;
