@@ -100,10 +100,11 @@ same-UID replacement manager to take ownership within 10 seconds; concurrent tak
 all later commands are pinned to the selected PID. Chained takeover is forbidden, while an ambiguous
 response can be retried idempotently by that same PID. Incomplete commands are bounded to
 250 ms while the owner monitors the manager, and expiry or death of the replacement starts retrying agent
-cleanup immediately before PAM close. Restart cleanup performs this takeover before stopping a scope or
-process group, so slow teardown cannot consume the takeover window. The current startup path still
-reconciles such sessions by cleanup rather than registry restoration. The owner writes a synchronized
-close receipt before durable cleanup. The packaged helper units listen on
+cleanup immediately before PAM close. Restart recovery performs this takeover before either importing
+an eligible `DISCONNECTED` session or stopping an ineligible scope/process group, so validation and slow
+teardown cannot consume the takeover window. Imported sessions retain their session id, display,
+agent PID, PAM/SSSD state, and authenticated agent control channel. The owner writes a synchronized close
+receipt before durable cleanup. The packaged helper units listen on
 `/run/frdp-authd/authd.sock` and `/run/frdp-sesmand/sesmand.sock`. The old peer-worker direct PAM
 fallback has been removed; use `frdpd --pam-auth-test` for local PAM smoke checks without starting the
 full helper topology.
@@ -113,13 +114,16 @@ For host login1 integration, set `logind_session = true` in `[session]` and keep
 UID/GID/group vector, and acknowledges that identity. The manager then registers its PID as a remote
 X11 session, passes `XDG_SESSION_ID` and `XDG_RUNTIME_DIR` through the remaining launch barrier, and
 gives the login1 FIFO to the durable PAM owner. Startup/reload and session creation fail closed when
-login1 is unavailable. Normal close calls `ReleaseSession`; manager-crash recovery closes the
-owner-held FIFO after process termination and before PAM close. This mode requires a PAM stack
-without `pam_systemd.so`.
+login1 is unavailable. Normal close calls `ReleaseSession`; manager-crash recovery obtains a duplicate
+of the owner-held FIFO only after takeover, validates the authoritative login1 identity and properties,
+and imports an eligible disconnected session. Failed validation closes the FIFO after process
+termination and before PAM close. This mode requires a PAM stack without `pam_systemd.so`.
 
 The installed Ubuntu lifecycle gate exercises this mode with both local PAM and Samba AD/SSSD. It
-checks the exact login1 leader, UID, remote-X11 class/type/service, and runtime directory before
-killing `frdp-sesmand`, then requires the session record to disappear before recovery completes.
+checks the exact login1 leader, UID, remote-X11 class/type/service, and runtime directory, detaches the
+client, kills `frdp-sesmand`, and requires the replacement manager to import and reconnect the same
+session id, display, agent PID, and login1 id. Explicit close must then remove the login1 record,
+process group, and runtime artifacts.
 
 ## SSSD operations
 
@@ -164,6 +168,12 @@ The helper units are required for normal listener startup. The shipped `frdpd.se
 orders `frdp-authd.service` and `frdp-sesmand.service`; all three units read
 `/etc/frdpd/frdpd.toml`, the shipped config points at the helper default sockets,
 and `FRDPD_ARGS` can stay empty for the canonical helper topology.
+
+`frdp-sesmand.service` preserves `/run/frdp-sesmand` across automatic restarts and uses
+`KillMode=process`, allowing the per-session PAM owners and disconnected desktop process groups to
+survive a main-process failure long enough for the single replacement-manager takeover. On a normal
+service stop, `frdp-sesmand` still closes every tracked session itself; if replacement takeover does not
+complete within the owner deadline, the owner terminates the process group and closes PAM/login1.
 
 The Debian preview package deliberately leaves all three units disabled and stopped after installation.
 Provision the TLS certificate and key, review `/etc/pam.d/frdpd`, validate SSSD/NSS access, and configure

@@ -105,6 +105,8 @@ foreach(line
         "ExecStart=${FRDP_INSTALL_FULL_BINDIR}/frdp-sesmand --config ${FRDP_INSTALL_FULL_SYSCONFDIR}/frdpd/frdpd.toml --socket /run/frdp-sesmand/sesmand.sock"
         "RuntimeDirectory=frdp-sesmand"
         "RuntimeDirectoryMode=0755"
+        "RuntimeDirectoryPreserve=restart"
+        "KillMode=process"
         "PrivateTmp=true"
         "ProtectSystem=full"
         "ReadWritePaths=/run/frdp-sesmand /run/frdp-auth-token"

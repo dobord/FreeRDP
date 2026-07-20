@@ -471,14 +471,18 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
       > "$transition_artifacts/client.log" 2>&1 &
     transition_client_pid=$!
     transition_session_id=
+    transition_session_display=
     transition_agent_pid=
     transition_login1_session_id=
     for i in $(seq 1 30); do
       kill -0 "$transition_client_pid"
       frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
         > "$transition_artifacts/session-list.txt" 2>&1 || true
-      read -r transition_session_id transition_agent_pid < <(
-        awk -v user="$test_user" '\''NR > 1 && $2 == user && $4 == "active" { print $1, $5; exit }'\'' \
+      read -r transition_session_id transition_session_display transition_agent_pid < <(
+        awk -v user="$test_user" '\''NR > 1 && $2 == user && $4 == "active" {
+          print $1, $3, $5
+          exit
+        }'\'' \
           "$transition_artifacts/session-list.txt") || true
       if [[ -n "$transition_session_id" && -n "$transition_agent_pid" ]]; then
         if assert_transition_session_active; then
@@ -499,10 +503,11 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
     [[ -n "$state" && "$state" != Z* ]] || return 1
     frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
       > "$transition_artifacts/session-list-before-transition.txt" || return 1
-    awk -v id="$transition_session_id" -v pid="$transition_agent_pid" \
+    awk -v id="$transition_session_id" -v display="$transition_session_display" \
+      -v pid="$transition_agent_pid" \
       -v user="$test_user" '\''
       NR > 1 && $2 == user { count++ }
-      NR > 1 && $1 == id && $2 == user && $4 == "active" && $5 == pid {
+      NR > 1 && $1 == id && $2 == user && $3 == display && $4 == "active" && $5 == pid {
         matched++
       }
       END { exit (count == 1 && matched == 1) ? 0 : 1 }
@@ -552,11 +557,52 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
     wait "$transition_xvfb_pid" || true
   }
 
-  assert_sesmand_active_session_recovery() {
-    local i old_invocation old_pid old_socket_inode
-    local new_invocation new_pid new_socket_inode
+  assert_sesmand_disconnected_session_recovery() {
+    local i old_invocation old_login1_session_id old_pid old_socket_inode
+    local new_invocation new_pid new_socket_inode state
 
     start_transition_session sesmand-crash
+    old_login1_session_id=$transition_login1_session_id
+    kill -TERM "$transition_client_pid"
+    for i in $(seq 1 30); do
+      if ! kill -0 "$transition_client_pid" 2>/dev/null; then
+        break
+      fi
+      sleep 1
+    done
+    if kill -0 "$transition_client_pid" 2>/dev/null; then
+      kill -KILL "$transition_client_pid"
+    fi
+    wait "$transition_client_pid" || true
+    for i in $(seq 1 30); do
+      frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
+        > "$transition_artifacts/session-list-detached.txt" 2>&1 || true
+      if awk -v id="$transition_session_id" -v display="$transition_session_display" \
+        -v pid="$transition_agent_pid" \
+        -v user="$test_user" '\''
+        NR > 1 && $2 == user { count++ }
+        NR > 1 && $1 == id && $2 == user && $3 == display &&
+          $4 == "disconnected" && $5 == pid {
+          matched++
+        }
+        END { exit (count == 1 && matched == 1) ? 0 : 1 }
+      '\'' "$transition_artifacts/session-list-detached.txt"; then
+        break
+      fi
+      sleep 1
+    done
+    awk -v id="$transition_session_id" -v display="$transition_session_display" \
+      -v pid="$transition_agent_pid" \
+      -v user="$test_user" '\''
+      NR > 1 && $2 == user { count++ }
+      NR > 1 && $1 == id && $2 == user && $3 == display &&
+        $4 == "disconnected" && $5 == pid { matched++ }
+      END { exit (count == 1 && matched == 1) ? 0 : 1 }
+    '\'' "$transition_artifacts/session-list-detached.txt"
+    kill -0 "$transition_agent_pid"
+    assert_transition_login1_active
+    test "$transition_login1_session_id" = "$old_login1_session_id"
+
     old_pid=$(systemctl show --property=MainPID --value frdp-sesmand.service)
     old_invocation=$(systemctl show --property=InvocationID --value frdp-sesmand.service)
     old_socket_inode=$(stat -c %i /run/frdp-sesmand/sesmand.sock)
@@ -588,8 +634,101 @@ docker exec -e DEBIAN_FRONTEND=noninteractive \
     test -n "$new_invocation"
     test "$new_invocation" != "$old_invocation"
 
+    for i in $(seq 1 30); do
+      frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
+        > "$transition_artifacts/session-list-restored.txt" 2>&1 || true
+      if awk -v id="$transition_session_id" -v display="$transition_session_display" \
+        -v pid="$transition_agent_pid" \
+        -v user="$test_user" '\''
+        NR > 1 && $2 == user { count++ }
+        NR > 1 && $1 == id && $2 == user && $3 == display &&
+          $4 == "disconnected" && $5 == pid {
+          matched++
+        }
+        END { exit (count == 1 && matched == 1) ? 0 : 1 }
+      '\'' "$transition_artifacts/session-list-restored.txt"; then
+        break
+      fi
+      sleep 1
+    done
+    awk -v id="$transition_session_id" -v display="$transition_session_display" \
+      -v pid="$transition_agent_pid" \
+      -v user="$test_user" '\''
+      NR > 1 && $2 == user { count++ }
+      NR > 1 && $1 == id && $2 == user && $3 == display &&
+        $4 == "disconnected" && $5 == pid { matched++ }
+      END { exit (count == 1 && matched == 1) ? 0 : 1 }
+    '\'' "$transition_artifacts/session-list-restored.txt"
+    kill -0 "$transition_agent_pid"
+    assert_transition_login1_active
+    test "$transition_login1_session_id" = "$old_login1_session_id"
+
+    DISPLAY="$transition_display" xfreerdp3 \
+      /v:127.0.0.1:3389 "/u:$test_user" "/p:$test_password" \
+      "${client_domain_args[@]}" /cert:ignore /sec:nla \
+      /size:800x600 /bpp:24 /audio-mode:2 /network:modem \
+      -gfx -disp -dynamic-resolution -clipboard -heartbeat -multitransport \
+      -auto-reconnect /log-level:INFO \
+      > "$transition_artifacts/client-reconnect.log" 2>&1 &
+    transition_client_pid=$!
+    for i in $(seq 1 30); do
+      kill -0 "$transition_client_pid"
+      frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
+        > "$transition_artifacts/session-list-reconnected.txt" 2>&1 || true
+      state=$(awk -v id="$transition_session_id" -v display="$transition_session_display" \
+        -v pid="$transition_agent_pid" \
+        -v user="$test_user" '\''
+        NR > 1 && $2 == user { count++ }
+        NR > 1 && $1 == id && $2 == user && $3 == display && $4 == "active" && $5 == pid {
+          matched++
+        }
+        END { if (count == 1 && matched == 1) print "active" }
+      '\'' "$transition_artifacts/session-list-reconnected.txt")
+      if [[ "$state" == active ]]; then
+        break
+      fi
+      sleep 1
+    done
+    test "$state" = active
+    assert_transition_login1_active
+    test "$transition_login1_session_id" = "$old_login1_session_id"
+
+    kill -TERM "$transition_client_pid"
+    for i in $(seq 1 30); do
+      if ! kill -0 "$transition_client_pid" 2>/dev/null; then
+        break
+      fi
+      sleep 1
+    done
+    if kill -0 "$transition_client_pid" 2>/dev/null; then
+      kill -KILL "$transition_client_pid"
+    fi
+    wait "$transition_client_pid" || true
+    for i in $(seq 1 30); do
+      frdpctl list-sessions --socket /run/frdp-sesmand/sesmand.sock \
+        > "$transition_artifacts/session-list-second-detach.txt" 2>&1 || true
+      if awk -v id="$transition_session_id" -v display="$transition_session_display" \
+        -v pid="$transition_agent_pid" '\''
+        NR > 1 && $1 == id && $3 == display && $4 == "disconnected" && $5 == pid {
+          found = 1
+        }
+        END { exit found ? 0 : 1 }
+      '\'' "$transition_artifacts/session-list-second-detach.txt"; then
+        break
+      fi
+      sleep 1
+    done
+    awk -v id="$transition_session_id" -v display="$transition_session_display" \
+      -v pid="$transition_agent_pid" '\''
+      NR > 1 && $1 == id && $3 == display && $4 == "disconnected" && $5 == pid {
+        found = 1
+      }
+      END { exit found ? 0 : 1 }
+    '\'' "$transition_artifacts/session-list-second-detach.txt"
+    frdpctl kill-session "$transition_session_id" \
+      --socket /run/frdp-sesmand/sesmand.sock \
+      > "$transition_artifacts/session-kill.txt"
     assert_transition_session_closed
-    test -z "$(find /run/frdp-sesmand -mindepth 1 ! -name sesmand.sock -print -quit)"
     assert_real_services
     run_session_smoke post-sesmand-crash
   }
@@ -851,8 +990,8 @@ EOF
   if [[ "$FRDP_LIFECYCLE_PROVIDER" == samba ]]; then
     run_samba_gpo_denial base
   fi
-  echo "stage=active-sesmand-crash"
-  assert_sesmand_active_session_recovery
+  echo "stage=disconnected-sesmand-crash"
+  assert_sesmand_disconnected_session_recovery
   echo "stage=authd-outage"
   assert_helper_outage_recovery frdp-authd.service /run/frdp-authd/authd.sock authd-outage
   echo "stage=sesmand-outage"
@@ -959,7 +1098,7 @@ EOF
     "$secret_hashes"
   rm -rf /etc/frdpd
 
-  printf "provider=%s\nbase=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback\ngpo_policy=%s\nactive_helper_crash=frdp-sesmand\ninflight_helper_crash=frdp-authd\nhelper_outage=frdp-authd,frdp-sesmand\nactive_transition=upgrade,rollback\nlogin1_session=enabled\nlogin1_crash_cleanup=pass\nresult=pass\n" \
+  printf "provider=%s\nbase=%s\nupgrade=%s\nrollback=%s\nauth_smoke=base,post-sesmand-crash,post-authd-outage,post-sesmand-outage,post-authd-inflight-crash,upgrade,rollback\ngpo_policy=%s\ndisconnected_helper_crash=frdp-sesmand\nmanager_restart_reconnect=pass\ninflight_helper_crash=frdp-authd\nhelper_outage=frdp-authd,frdp-sesmand\nactive_transition=upgrade,rollback\nlogin1_session=enabled\nlogin1_crash_cleanup=pass\nresult=pass\n" \
     "$FRDP_LIFECYCLE_PROVIDER" "$base_version" "$upgrade_version" "$base_version" \
     "$gpo_policy"
 '

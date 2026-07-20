@@ -192,7 +192,9 @@ jobs:
             "$artifacts/systemd-lifecycle.txt"
           grep -Fxq "gpo_policy=not-applicable" \
             "$artifacts/systemd-lifecycle.txt"
-          grep -Fxq "active_helper_crash=frdp-sesmand" \
+          grep -Fxq "disconnected_helper_crash=frdp-sesmand" \
+            "$artifacts/systemd-lifecycle.txt"
+          grep -Fxq "manager_restart_reconnect=pass" \
             "$artifacts/systemd-lifecycle.txt"
           grep -Fxq "inflight_helper_crash=frdp-authd" \
             "$artifacts/systemd-lifecycle.txt"
@@ -213,7 +215,9 @@ jobs:
             "$artifacts/systemd-lifecycle-samba.txt"
           grep -Fxq "gpo_policy=base,upgrade,rollback" \
             "$artifacts/systemd-lifecycle-samba.txt"
-          grep -Fxq "active_helper_crash=frdp-sesmand" \
+          grep -Fxq "disconnected_helper_crash=frdp-sesmand" \
+            "$artifacts/systemd-lifecycle-samba.txt"
+          grep -Fxq "manager_restart_reconnect=pass" \
             "$artifacts/systemd-lifecycle-samba.txt"
           grep -Fxq "inflight_helper_crash=frdp-authd" \
             "$artifacts/systemd-lifecycle-samba.txt"

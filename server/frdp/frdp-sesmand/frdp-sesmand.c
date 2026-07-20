@@ -412,13 +412,16 @@ static int process_group_exists(pid_t pgid)
 static void wait_for_agent_exit(pid_t pid, pid_t pgid)
 {
     int status = 0;
-    int agent_reaped = 0;
+    int can_reap = 1;
 
     for (int x = 0; x < 20; x++) {
-        const pid_t rc = waitpid(pid, &status, WNOHANG);
-        if (rc == pid || rc < 0) {
-            agent_reaped = 1;
-            break;
+        if (can_reap) {
+            const pid_t rc = waitpid(pid, &status, WNOHANG);
+
+            if (rc == pid || (rc < 0 && errno == ECHILD))
+                can_reap = 0;
+            else if (rc < 0)
+                break;
         }
         if (!process_group_exists(pgid))
             return;
@@ -427,11 +430,16 @@ static void wait_for_agent_exit(pid_t pid, pid_t pgid)
 
     if (process_group_exists(pgid))
         kill(-pgid, SIGKILL);
-    if (agent_reaped)
-        return;
     for (int x = 0; x < 20; x++) {
-        const pid_t rc = waitpid(pid, &status, WNOHANG);
-        if (rc == pid || rc < 0)
+        if (can_reap) {
+            const pid_t rc = waitpid(pid, &status, WNOHANG);
+
+            if (rc == pid || (rc < 0 && errno == ECHILD))
+                can_reap = 0;
+            else if (rc < 0)
+                return;
+        }
+        if (!process_group_exists(pgid))
             return;
         usleep(100000);
     }
