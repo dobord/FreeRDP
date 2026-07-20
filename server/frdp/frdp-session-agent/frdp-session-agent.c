@@ -85,6 +85,7 @@ typedef enum
 static volatile int g_x11_resize_error = 0;
 static volatile int g_x11_keyboard_error = 0;
 static volatile sig_atomic_t g_stop_requested = 0;
+static uid_t g_manager_uid = 0;
 static _Atomic uint64_t g_control_progress_ms = 0;
 
 #if defined(FRDP_AGENT_TESTING)
@@ -1147,6 +1148,24 @@ static int parse_ready_fd(void)
     return parse_env_fd("FRDP_AGENT_READY_FD");
 }
 
+static int parse_manager_uid(void)
+{
+	char* end = NULL;
+	const char* env = getenv("FRDP_MANAGER_UID");
+	unsigned long long value = 0;
+	uid_t uid = 0;
+
+	if (!env || (env[0] == '\0'))
+		return 0;
+	errno = 0;
+	value = strtoull(env, &end, 10);
+	uid = (uid_t)value;
+	if ((errno != 0) || !end || (end[0] != '\0') || ((unsigned long long)uid != value))
+		return -1;
+	g_manager_uid = uid;
+	return 0;
+}
+
 static int notify_agent_ready(int *fd)
 {
     if (!fd || *fd < 0)
@@ -1236,7 +1255,7 @@ static int verify_control_peer(int fd)
     memset(&cred, 0, sizeof(cred));
     if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0)
         return -1;
-    return (cred.uid == 0) ? 0 : -1;
+    return (cred.uid == g_manager_uid) ? 0 : -1;
 #else
     (void)fd;
     return -1;
@@ -1738,6 +1757,24 @@ static void *heartbeat_thread_main(void *arg)
     return NULL;
 }
 
+static int handle_control_heartbeat(int fd, uint32_t payload_len, const char *session_id)
+{
+    frdpAgentHeartbeat heartbeat = { 0 };
+    const uint64_t now_ms = agent_monotonic_ms();
+    const uint64_t progress_ms =
+        atomic_load_explicit(&g_control_progress_ms, memory_order_acquire);
+
+    if ((frdp_ipc_recv_agent_heartbeat_request_payload(fd, &heartbeat, payload_len) != 0) ||
+        (heartbeat.nonce == 0))
+        return -1;
+    heartbeat.session_id[sizeof(heartbeat.session_id) - 1] = '\0';
+    if (!session_id || (strcmp(heartbeat.session_id, session_id) != 0) || (now_ms == 0) ||
+        (progress_ms == 0) || (now_ms < progress_ms) ||
+        ((now_ms - progress_ms) > FRDP_AGENT_CONTROL_STALL_MS))
+        return -1;
+    return frdp_ipc_send_agent_heartbeat_response(fd, &heartbeat);
+}
+
 static void init_clipboard_response(frdpAgentClipboardResponse *response,
                                     const char *correlation_id, const char *session_id)
 {
@@ -1824,6 +1861,8 @@ static int handle_control_client(int fd, frdpAgentFrameState *frame_state,
                                         header.payload_len, correlation_id, session_id);
         case FRDP_IPC_AGENT_FRAME_REQUEST:
             return handle_frame_message(fd, frame_state, header.payload_len, correlation_id, session_id);
+        case FRDP_IPC_AGENT_HEARTBEAT_REQUEST:
+            return handle_control_heartbeat(fd, header.payload_len, session_id);
         case FRDP_IPC_AGENT_RESIZE_REQUEST:
 			return handle_resize_message(fd, frame_state, header.payload_len, correlation_id,
 			                             session_id);
@@ -1991,6 +2030,12 @@ int main(int argc, char **argv)
     openlog("frdp-session-agent", LOG_PID, LOG_USER);
     XInitThreads();
 
+	if (parse_manager_uid() != 0)
+	{
+		syslog(LOG_ERR, "invalid FRDP_MANAGER_UID");
+		closelog();
+		return 1;
+	}
     if (install_signal_handlers() != 0) {
         syslog(LOG_ERR, "failed to install signal handlers");
         closelog();

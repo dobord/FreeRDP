@@ -162,6 +162,54 @@ cleanup:
     return rc;
 }
 
+static int test_reservation_open_pins_existing_inode(void)
+{
+    char dir[128] = { 0 };
+    char path[128] = { 0 };
+    char reopened_path[128] = { 0 };
+    struct stat st = { 0 };
+    int fd = -1;
+    int reopened_fd = -1;
+    int rejected_fd = -1;
+    char rejected_path[128] = { 0 };
+    int rc = -1;
+
+    if ((make_test_dir(dir, sizeof(dir)) != 0) ||
+        (frdp_sesmand_display_reservation_create(FRDP_SESMAND_DISPLAY_MIN, dir, &fd, path,
+                                                 sizeof(path)) != 0) ||
+        (fstat(fd, &st) != 0))
+        goto cleanup;
+    close(fd);
+    fd = -1;
+    if ((frdp_sesmand_display_reservation_open(
+             FRDP_SESMAND_DISPLAY_MIN, dir, (uint64_t)st.st_dev, (uint64_t)st.st_ino,
+             &reopened_fd, reopened_path, sizeof(reopened_path)) != 0) ||
+        (strcmp(path, reopened_path) != 0))
+        goto cleanup;
+    errno = 0;
+    if ((frdp_sesmand_display_reservation_open(
+             FRDP_SESMAND_DISPLAY_MIN, dir, (uint64_t)st.st_dev,
+             (uint64_t)st.st_ino + 1U, &rejected_fd, rejected_path,
+             sizeof(rejected_path)) == 0) ||
+        (rejected_fd >= 0))
+        goto cleanup;
+    frdp_sesmand_display_reservation_release(&reopened_fd, reopened_path);
+    if ((access(path, F_OK) == 0) || (errno != ENOENT))
+        goto cleanup;
+    rc = 0;
+
+cleanup:
+    if (rejected_fd >= 0)
+        close(rejected_fd);
+    frdp_sesmand_display_reservation_release(&reopened_fd, reopened_path);
+    frdp_sesmand_display_reservation_release(&fd, path);
+    if (path[0] != '\0')
+        unlink(path);
+    if (dir[0] != '\0')
+        rmdir(dir);
+    return rc;
+}
+
 static int write_pid_file(const char *path, long pid)
 {
     int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
@@ -522,6 +570,10 @@ int TestFreeRDPFrdpDisplayPolicy(int argc, char *argv[])
     }
     if (test_reservation_release_keeps_replaced_path() != 0) {
         fprintf(stderr, "display reservation release unlinked a replacement path\n");
+        return -1;
+    }
+    if (test_reservation_open_pins_existing_inode() != 0) {
+        fprintf(stderr, "display reservation existing-inode open failed\n");
         return -1;
     }
     if (test_reconcile_removes_stale_reservation() != 0) {

@@ -2,6 +2,7 @@
 #define FRDP_SESMAND_DISPLAY_POLICY_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #define FRDP_SESMAND_DISPLAY_MIN 100
 #define FRDP_SESMAND_DISPLAY_MAX 65535
@@ -12,6 +13,10 @@ int frdp_sesmand_display_reservation_path(char *dst, size_t dst_size, const char
 int frdp_sesmand_display_reservation_create(int display, const char *dir, int *reservation_fd,
                                             char *reservation_path,
                                             size_t reservation_path_size);
+int frdp_sesmand_display_reservation_open(int display, const char *dir, uint64_t expected_dev,
+                                          uint64_t expected_ino, int *reservation_fd,
+                                          char *reservation_path,
+                                          size_t reservation_path_size);
 int frdp_sesmand_display_reservation_reconcile_stale(const char *dir, int display);
 void frdp_sesmand_display_reservation_release(int *reservation_fd, const char *reservation_path);
 

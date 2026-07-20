@@ -10,6 +10,8 @@ typedef struct
 	int active;
 } frdpSesmandPamOwner;
 
+typedef int (*frdpSesmandPamOwnerKeepCallback)(const char* session_id, void* context);
+
 int frdp_sesmand_pam_owner_endpoint(char* dst, size_t dst_size, const char* runtime_dir,
                                     const char* session_id);
 int frdp_sesmand_pam_owner_start(const char* runtime_dir, const char* session_id,
@@ -21,6 +23,8 @@ int frdp_sesmand_pam_owner_bind_logind(const char* runtime_dir, const char* sess
                                        frdpSesmandPamOwner* owner, int fifo_fd);
 int frdp_sesmand_pam_owner_takeover(const char* runtime_dir, const char* session_id,
                                     frdpSesmandPamOwner* owner);
+int frdp_sesmand_pam_owner_takeover_fast(const char* runtime_dir, const char* session_id,
+                                         frdpSesmandPamOwner* owner);
 int frdp_sesmand_pam_owner_close(const char* runtime_dir, const char* session_id,
                                  frdpSesmandPamOwner* owner);
 int frdp_sesmand_pam_owner_prepare_close(const char* runtime_dir, const char* session_id,
@@ -28,5 +32,8 @@ int frdp_sesmand_pam_owner_prepare_close(const char* runtime_dir, const char* se
 int frdp_sesmand_pam_owner_recover(const char* runtime_dir, const char* session_id);
 int frdp_sesmand_pam_owner_finalize(const char* runtime_dir, const char* session_id);
 int frdp_sesmand_pam_owner_reconcile_stale(const char* runtime_dir);
+int frdp_sesmand_pam_owner_reconcile_stale_except(const char* runtime_dir,
+                                                  frdpSesmandPamOwnerKeepCallback keep,
+                                                  void* context);
 
 #endif

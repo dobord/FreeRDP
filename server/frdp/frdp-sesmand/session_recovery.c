@@ -23,6 +23,8 @@ typedef struct
 {
 	const char* dir;
 	frdpSesmandScopeManager* scope_manager;
+	frdpSesmandSessionRestoreCallback restore;
+	void* restore_context;
 } recoveryContext;
 
 static int process_group_exists(pid_t pgid)
@@ -207,6 +209,7 @@ static int reconcile_session(const frdpSesmandSessionMetadata* metadata, uint64_
 	int scope_stopped = 0;
 	frdpSesmandPamOwner pam_owner = { .pid = -1, .active = 0 };
 	int pam_owner_taken = 0;
+	frdpSesmandSessionRestoreResult restore_result = FRDP_SESMAND_SESSION_RESTORE_CLEANUP;
 
 	if (!metadata || !dir ||
 	    (snprintf(agent_socket, sizeof(agent_socket), "%s/agent-%s.sock", dir,
@@ -215,6 +218,15 @@ static int reconcile_session(const frdpSesmandSessionMetadata* metadata, uint64_
 	                                           sizeof(display_reservation), dir,
 	                                           metadata->display_number) != 0))
 		return -1;
+	if (recovery->restore)
+	{
+		restore_result = recovery->restore(metadata, file_dev, file_ino,
+		                                   recovery->restore_context);
+		if (restore_result == FRDP_SESMAND_SESSION_RESTORE_IMPORTED)
+			return 0;
+		if (restore_result != FRDP_SESMAND_SESSION_RESTORE_CLEANUP)
+			return -1;
+	}
 	if (metadata->pam_owner &&
 	    (frdp_sesmand_pam_owner_takeover(dir, metadata->session_id, &pam_owner) == 0))
 		pam_owner_taken = 1;
@@ -249,7 +261,14 @@ static int reconcile_session(const frdpSesmandSessionMetadata* metadata, uint64_
 
 int frdp_sesmand_session_reconcile_all(const char* dir, frdpSesmandScopeManager* scope_manager)
 {
-	recoveryContext context = { dir, scope_manager };
+	return frdp_sesmand_session_restore_or_reconcile_all(dir, scope_manager, NULL, NULL);
+}
+
+int frdp_sesmand_session_restore_or_reconcile_all(
+    const char* dir, frdpSesmandScopeManager* scope_manager,
+    frdpSesmandSessionRestoreCallback restore, void* restore_context)
+{
+	recoveryContext context = { dir, scope_manager, restore, restore_context };
 
 	return frdp_sesmand_session_metadata_visit(dir, reconcile_session, &context);
 }

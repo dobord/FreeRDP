@@ -609,9 +609,11 @@ static int test_session_scope(void)
 	    (lstat(reservation_path, &reservation_stat) != 0))
 		goto cleanup;
 	snprintf(metadata.session_id, sizeof(metadata.session_id), "%s", session_id);
+	snprintf(metadata.user, sizeof(metadata.user), "%s", "scope-user");
 	metadata.uid = geteuid();
 	metadata.agent_pid = child;
 	metadata.pgid = child;
+	metadata.start_time = 123456;
 	metadata.state = FRDP_SESMAND_SESSION_ACTIVE;
 	metadata.display_number = 100;
 	metadata.agent_socket_dev = (uint64_t)socket_stat.st_dev;

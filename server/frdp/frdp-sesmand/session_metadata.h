@@ -8,15 +8,18 @@
 #include <sys/types.h>
 
 #define FRDP_SESMAND_SESSION_ID_SIZE 37
-#define FRDP_SESMAND_SESSION_METADATA_WIRE_SIZE 128
+#define FRDP_SESMAND_SESSION_USER_SIZE 64
+#define FRDP_SESMAND_SESSION_METADATA_WIRE_SIZE 200
 
-typedef struct
+typedef struct frdp_sesmand_session_metadata
 {
 	char session_id[FRDP_SESMAND_SESSION_ID_SIZE];
+	char user[FRDP_SESMAND_SESSION_USER_SIZE];
 	uid_t uid;
 	pid_t agent_pid;
 	pid_t pgid;
 	unsigned long long agent_start_ticks;
+	uint64_t start_time;
 	frdpSesmandSessionState state;
 	int display_number;
 	uint64_t agent_socket_dev;
@@ -25,6 +28,7 @@ typedef struct
 	uint64_t display_reservation_ino;
 	int systemd_scope;
 	int pam_owner;
+	int logind_session;
 } frdpSesmandSessionMetadata;
 
 typedef int (*frdpSesmandSessionMetadataVisitor)(const frdpSesmandSessionMetadata* metadata,

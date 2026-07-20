@@ -354,6 +354,9 @@ int frdp_ipc_recv_agent_heartbeat_request_packet(int fd, frdpAgentHeartbeat *hea
 int frdp_ipc_send_agent_heartbeat_response_packet(int fd, const frdpAgentHeartbeat *heartbeat);
 int frdp_ipc_exchange_agent_heartbeat(int fd, const frdpAgentHeartbeat *request,
                                       frdpAgentHeartbeat *response, uint32_t timeout_ms);
+int frdp_ipc_exchange_agent_control_heartbeat(int fd, const frdpAgentHeartbeat *request,
+                                              frdpAgentHeartbeat *response,
+                                              uint32_t timeout_ms);
 
 /* Close a previously opened fd */
 int frdp_ipc_close(int fd);

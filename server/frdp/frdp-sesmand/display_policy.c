@@ -87,6 +87,48 @@ int frdp_sesmand_display_reservation_create(int display, const char *dir, int *r
     return 0;
 }
 
+int frdp_sesmand_display_reservation_open(int display, const char *dir, uint64_t expected_dev,
+                                          uint64_t expected_ino, int *reservation_fd,
+                                          char *reservation_path,
+                                          size_t reservation_path_size)
+{
+    char path[sizeof(((struct sockaddr_un *)0)->sun_path)] = { 0 };
+    struct stat opened = { 0 };
+    struct stat current = { 0 };
+    int flags = O_RDONLY;
+    int fd = -1;
+
+    if (!reservation_fd || !reservation_path || (reservation_path_size == 0) ||
+        (expected_dev == 0) || (expected_ino == 0) ||
+        (frdp_sesmand_display_reservation_path(path, sizeof(path), dir, display) != 0))
+        return -1;
+    *reservation_fd = -1;
+    reservation_path[0] = '\0';
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+#ifdef O_CLOEXEC
+    flags |= O_CLOEXEC;
+#endif
+    fd = open(path, flags);
+    if (fd < 0)
+        return -1;
+    if ((fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) || (fstat(fd, &opened) != 0) ||
+        !S_ISREG(opened.st_mode) || (opened.st_uid != geteuid()) ||
+        ((opened.st_mode & 0777) != 0600) || (opened.st_nlink != 1) ||
+        ((uint64_t)opened.st_dev != expected_dev) || ((uint64_t)opened.st_ino != expected_ino) ||
+        (lstat(path, &current) != 0) || (current.st_dev != opened.st_dev) ||
+        (current.st_ino != opened.st_ino) ||
+        (snprintf(reservation_path, reservation_path_size, "%s", path) >=
+         (int)reservation_path_size))
+    {
+        close(fd);
+        return -1;
+    }
+    *reservation_fd = fd;
+    return 0;
+}
+
 int frdp_sesmand_display_reservation_reconcile_stale(const char *dir, int display)
 {
     char path[sizeof(((struct sockaddr_un *)0)->sun_path)] = { 0 };

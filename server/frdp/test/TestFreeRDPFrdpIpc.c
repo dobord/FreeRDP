@@ -1760,6 +1760,93 @@ cleanup:
 	return rc;
 }
 
+static int test_agent_control_heartbeat_exchange(void)
+{
+	int fds[2] = { -1, -1 };
+	frdpAgentHeartbeat request = { 0 };
+	frdpAgentHeartbeat response = { 0 };
+	pid_t child = -1;
+	uint64_t started_ms = 0;
+	uint64_t elapsed_ms = 0;
+	int status = 0;
+	int rc = -1;
+
+	snprintf(request.session_id, sizeof(request.session_id), "control-session");
+	request.nonce = 1;
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		return -1;
+	child = fork();
+	if (child < 0)
+		goto cleanup;
+	if (child == 0)
+	{
+		frdpIpcHeader header = { 0 };
+		frdpAgentHeartbeat child_request = { 0 };
+
+		close(fds[0]);
+		if ((frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header)) ||
+		    (header.type != FRDP_IPC_AGENT_HEARTBEAT_REQUEST) ||
+		    (frdp_ipc_recv_agent_heartbeat_request_payload(fds[1], &child_request,
+		                                                   header.payload_len) != 0) ||
+		    (frdp_ipc_send_agent_heartbeat_response(fds[1], &child_request) != 0))
+			_exit(1);
+		_exit(0);
+	}
+	close(fds[1]);
+	fds[1] = -1;
+	if ((frdp_ipc_exchange_agent_control_heartbeat(fds[0], &request, &response, 500) != 0) ||
+	    (response.nonce != request.nonce) ||
+	    (strcmp(response.session_id, request.session_id) != 0) ||
+	    (waitpid(child, &status, 0) != child) || !WIFEXITED(status) || (WEXITSTATUS(status) != 0))
+		goto cleanup;
+	child = -1;
+	close(fds[0]);
+	fds[0] = -1;
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0)
+		goto cleanup;
+	child = fork();
+	if (child < 0)
+		goto cleanup;
+	if (child == 0)
+	{
+		frdpIpcHeader header = { 0 };
+		frdpAgentHeartbeat child_request = { 0 };
+
+		close(fds[0]);
+		if ((frdp_ipc_recv_header(fds[1], &header) != (int)sizeof(header)) ||
+		    (frdp_ipc_recv_agent_heartbeat_request_payload(fds[1], &child_request,
+		                                                   header.payload_len) != 0))
+			_exit(1);
+		usleep(500000);
+		_exit(0);
+	}
+	close(fds[1]);
+	fds[1] = -1;
+	started_ms = test_monotonic_ms();
+	if (started_ms == 0)
+		goto cleanup;
+	errno = 0;
+	if ((frdp_ipc_exchange_agent_control_heartbeat(fds[0], &request, &response, 100) != -1) ||
+	    (errno != ETIMEDOUT))
+		goto cleanup;
+	elapsed_ms = test_monotonic_ms() - started_ms;
+	if ((elapsed_ms < 80U) || (elapsed_ms > 500U))
+		goto cleanup;
+	rc = 0;
+
+cleanup:
+	if (child > 0)
+	{
+		(void)kill(child, SIGKILL);
+		(void)waitpid(child, NULL, 0);
+	}
+	if (fds[0] >= 0)
+		close(fds[0]);
+	if (fds[1] >= 0)
+		close(fds[1]);
+	return rc;
+}
+
 static int test_auth_token_binds_posix_account(void)
 {
 	char dir[1024] = { 0 };
@@ -1913,6 +2000,8 @@ int TestFreeRDPFrdpIpc(int argc, char* argv[])
 	if (test_agent_clipboard_messages_use_explicit_wire_format() != 0)
 		return -1;
 	if (test_agent_heartbeat_exchange_has_absolute_deadline() != 0)
+		return -1;
+	if (test_agent_control_heartbeat_exchange() != 0)
 		return -1;
 	if (test_auth_token_binds_posix_account() != 0)
 		return -1;

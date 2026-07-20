@@ -280,11 +280,6 @@ static int set_socket_timeout_ms(int fd, uint64_t timeout_ms)
 	           : -1;
 }
 
-static int set_socket_timeouts(int fd)
-{
-	return set_socket_timeout_ms(fd, FRDP_PAM_OWNER_COMMAND_TIMEOUT_MS);
-}
-
 static int peer_is_manager(int fd, pid_t* pid)
 {
 #if defined(__linux__) && defined(SO_PEERCRED)
@@ -1091,7 +1086,8 @@ int frdp_sesmand_pam_owner_start(const char* runtime_dir, const char* session_id
 	return 0;
 }
 
-static int connect_owner(const char* runtime_dir, const char* session_id, int* fd, pid_t* owner_pid)
+static int connect_owner_timeout(const char* runtime_dir, const char* session_id, int* fd,
+                                 pid_t* owner_pid, uint64_t timeout_ms)
 {
 	char endpoint[sizeof(((struct sockaddr_un*)0)->sun_path)] = { 0 };
 	struct sockaddr_un address = { 0 };
@@ -1109,7 +1105,7 @@ static int connect_owner(const char* runtime_dir, const char* session_id, int* f
 		return -1;
 	address.sun_family = AF_UNIX;
 	snprintf(address.sun_path, sizeof(address.sun_path), "%s", endpoint);
-	if ((set_socket_timeouts(client) != 0) ||
+	if ((set_socket_timeout_ms(client, timeout_ms) != 0) ||
 	    (connect(client, (struct sockaddr*)&address, sizeof(address)) != 0) ||
 	    !peer_is_manager(client, owner_pid))
 	{
@@ -1118,6 +1114,12 @@ static int connect_owner(const char* runtime_dir, const char* session_id, int* f
 	}
 	*fd = client;
 	return 0;
+}
+
+static int connect_owner(const char* runtime_dir, const char* session_id, int* fd, pid_t* owner_pid)
+{
+	return connect_owner_timeout(runtime_dir, session_id, fd, owner_pid,
+	                             FRDP_PAM_OWNER_COMMAND_TIMEOUT_MS);
 }
 
 static int request_owner(const char* runtime_dir, const char* session_id, uint32_t type, pid_t pid,
@@ -1145,12 +1147,13 @@ cleanup:
 	return rc;
 }
 
-int frdp_sesmand_pam_owner_takeover(const char* runtime_dir, const char* session_id,
-                                    frdpSesmandPamOwner* owner)
+static int takeover_owner(const char* runtime_dir, const char* session_id,
+                          frdpSesmandPamOwner* owner, uint64_t timeout_ms,
+                          unsigned int attempts)
 {
-	if (!owner || owner->active)
+	if (!owner || owner->active || (timeout_ms == 0) || (attempts == 0))
 		return -1;
-	for (unsigned int attempt = 0; attempt < 2U; attempt++)
+	for (unsigned int attempt = 0; attempt < attempts; attempt++)
 	{
 		uint32_t response_type = 0;
 		pid_t response_pid = -1;
@@ -1159,8 +1162,8 @@ int frdp_sesmand_pam_owner_takeover(const char* runtime_dir, const char* session
 		int response_status = -1;
 		int fd = -1;
 
-		if ((connect_owner(runtime_dir, session_id, &fd, &owner_pid) == 0) &&
-		    (set_socket_timeout_ms(fd, 1000U) == 0) &&
+		if ((connect_owner_timeout(runtime_dir, session_id, &fd, &owner_pid, timeout_ms) == 0) &&
+		    (set_socket_timeout_ms(fd, timeout_ms) == 0) &&
 		    (send_message(fd, FRDP_PAM_OWNER_TAKEOVER, 0, 0, 0) == 0) &&
 		    (receive_message(fd, &response_type, &response_pid, &response_pgid,
 		                     &response_status) == 0) &&
@@ -1176,6 +1179,18 @@ int frdp_sesmand_pam_owner_takeover(const char* runtime_dir, const char* session
 			close(fd);
 	}
 	return -1;
+}
+
+int frdp_sesmand_pam_owner_takeover(const char* runtime_dir, const char* session_id,
+                                    frdpSesmandPamOwner* owner)
+{
+	return takeover_owner(runtime_dir, session_id, owner, 1000U, 2U);
+}
+
+int frdp_sesmand_pam_owner_takeover_fast(const char* runtime_dir, const char* session_id,
+                                         frdpSesmandPamOwner* owner)
+{
+	return takeover_owner(runtime_dir, session_id, owner, 100U, 1U);
 }
 
 int frdp_sesmand_pam_owner_bind_agent(const char* runtime_dir, const char* session_id,
@@ -1356,7 +1371,9 @@ static int remove_stale_agent_socket(int dirfd, const char* runtime_dir, const c
 	return remove_matching_artifact(dirfd, name, &st);
 }
 
-int frdp_sesmand_pam_owner_reconcile_stale(const char* runtime_dir)
+int frdp_sesmand_pam_owner_reconcile_stale_except(const char* runtime_dir,
+                                                  frdpSesmandPamOwnerKeepCallback keep,
+                                                  void* context)
 {
 	struct stat directory_stat = { 0 };
 	DIR* directory = NULL;
@@ -1387,6 +1404,10 @@ int frdp_sesmand_pam_owner_reconcile_stale(const char* runtime_dir)
 		}
 		char session_id[37] = { 0 };
 		struct stat st = { 0 };
+		const int live_endpoint = artifact_session_id(entry->d_name, ".sock", session_id) == 0;
+
+		if (live_endpoint && keep && keep(session_id, context))
+			continue;
 
 		if (artifact_session_id(entry->d_name, ".sock", session_id) == 0)
 		{
@@ -1437,4 +1458,9 @@ cleanup:
 	if (dirfd >= 0)
 		close(dirfd);
 	return rc;
+}
+
+int frdp_sesmand_pam_owner_reconcile_stale(const char* runtime_dir)
+{
+	return frdp_sesmand_pam_owner_reconcile_stale_except(runtime_dir, NULL, NULL);
 }

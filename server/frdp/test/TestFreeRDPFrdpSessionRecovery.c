@@ -112,10 +112,12 @@ static int test_reused_pid_metadata_does_not_signal_current_process(void)
 	    (lstat(reservation_path, &reservation_stat) != 0))
 		goto out;
 	snprintf(metadata.session_id, sizeof(metadata.session_id), "%s", session_id);
+	snprintf(metadata.user, sizeof(metadata.user), "%s", "recovery-user");
 	metadata.uid = geteuid();
 	metadata.agent_pid = getpid();
 	metadata.pgid = getpid();
 	metadata.agent_start_ticks = ULLONG_MAX;
+	metadata.start_time = 123456;
 	metadata.state = FRDP_SESMAND_SESSION_ACTIVE;
 	metadata.display_number = 100;
 	metadata.agent_socket_dev = (uint64_t)socket_stat.st_dev;
@@ -183,10 +185,12 @@ static int test_failed_artifact_cleanup_preserves_pam_receipt(void)
 	    (lstat(reservation_path, &reservation_stat) != 0))
 		goto out;
 	snprintf(metadata.session_id, sizeof(metadata.session_id), "%s", session_id);
+	snprintf(metadata.user, sizeof(metadata.user), "%s", "recovery-user");
 	metadata.uid = geteuid();
 	metadata.agent_pid = INT32_MAX;
 	metadata.pgid = INT32_MAX;
 	metadata.agent_start_ticks = 1;
+	metadata.start_time = 123456;
 	metadata.state = FRDP_SESMAND_SESSION_STOPPING;
 	metadata.display_number = 101;
 	metadata.agent_socket_dev = (uint64_t)socket_stat.st_dev;

@@ -2169,6 +2169,51 @@ cleanup:
     return rc;
 }
 
+int frdp_ipc_exchange_agent_control_heartbeat(int fd, const frdpAgentHeartbeat *request,
+                                              frdpAgentHeartbeat *response, uint32_t timeout_ms)
+{
+    uint8_t request_wire[8U + FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE] = {0};
+    uint8_t response_wire[8U + FRDP_IPC_AGENT_HEARTBEAT_WIRE_SIZE] = {0};
+    uint64_t deadline_ms = 0;
+    int status_flags = -1;
+    int rc = -1;
+    int saved = 0;
+
+    if (!request || !response || (timeout_ms == 0) || (timeout_ms > 600000U)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (frdp_ipc_monotonic_ms(&deadline_ms) != 0)
+        return -1;
+    deadline_ms += timeout_ms;
+    status_flags = fcntl(fd, F_GETFL);
+    if ((status_flags < 0) || (fcntl(fd, F_SETFL, status_flags | O_NONBLOCK) != 0))
+        return -1;
+    frdp_ipc_encode_agent_heartbeat_packet(request_wire, FRDP_IPC_AGENT_HEARTBEAT_REQUEST,
+                                           request);
+    if ((frdp_ipc_stream_transfer_deadline(fd, request_wire, sizeof(request_wire), 1,
+                                           deadline_ms) != 0) ||
+        (frdp_ipc_stream_transfer_deadline(fd, response_wire, sizeof(response_wire), 0,
+                                           deadline_ms) != 0) ||
+        (frdp_ipc_decode_agent_heartbeat_packet(response_wire, sizeof(response_wire),
+                                                FRDP_IPC_AGENT_HEARTBEAT_RESPONSE,
+                                                response) != 0) ||
+        (response->nonce != request->nonce) ||
+        (memcmp(response->session_id, request->session_id, sizeof(response->session_id)) != 0))
+        goto cleanup;
+    rc = 0;
+
+cleanup:
+    saved = errno;
+    if (fcntl(fd, F_SETFL, status_flags) != 0) {
+        if (rc == 0)
+            saved = errno;
+        rc = -1;
+    }
+    errno = saved;
+    return rc;
+}
+
 /* Close a socket */
 int frdp_ipc_close(int fd)
 {
