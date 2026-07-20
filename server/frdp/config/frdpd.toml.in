@@ -75,6 +75,7 @@ display_backend = "xvfb"
 # max_text_bytes = 65536
 
 # [audit]
-# Structured audit sinks are not implemented yet, so only explicit disabled
-# policy is accepted. enabled = true fails closed until runtime enforcement exists.
+# Structured channel authorization, activation, and display-resize decisions are
+# emitted to journald for new peers when enabled.
 # enabled = false
+# sink = "journald"

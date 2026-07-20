@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <syslog.h>
 #include <sys/time.h>
 
 #include <winpr/winsock.h>
@@ -17,6 +18,7 @@
 
 #include "clipboard.h"
 #include "clipboard_runtime.h"
+#include "frdpd_audit.h"
 
 #define TAG SERVER_TAG("frdpd.clipboard")
 #define FRDPD_CLIPBOARD_POLL_INTERVAL_MS 500ULL
@@ -340,7 +342,11 @@ BOOL frdpd_clipboard_runtime_service(frdpdPeerContext* context)
 	{
 		context->clipboard_context = cliprdr_server_context_new(context->vcm);
 		if (!context->clipboard_context)
+		{
+			frdpd_audit_peer_event(context, LOG_WARNING, "channel.activation", "failed", "cliprdr",
+			                       "context-create");
 			return FALSE;
+		}
 		context->clipboard_context->custom = context;
 		context->clipboard_context->rdpcontext = &context->_p;
 		context->clipboard_context->streamFileClipEnabled = FALSE;
@@ -355,6 +361,8 @@ BOOL frdpd_clipboard_runtime_service(frdpdPeerContext* context)
 		    frdpd_clipboard_client_file_contents_request;
 		if (context->clipboard_context->Start(context->clipboard_context) != CHANNEL_RC_OK)
 		{
+			frdpd_audit_peer_event(context, LOG_WARNING, "channel.activation", "failed", "cliprdr",
+			                       "start");
 			cliprdr_server_context_free(context->clipboard_context);
 			context->clipboard_context = NULL;
 			context->cliprdr_joined = FALSE;
@@ -362,6 +370,8 @@ BOOL frdpd_clipboard_runtime_service(frdpdPeerContext* context)
 		}
 		context->clipboard_started = TRUE;
 		WLog_INFO(TAG, "correlation_id=%s text clipboard channel ready", context->correlation_id);
+		frdpd_audit_peer_event(context, LOG_INFO, "channel.activation", "ready", "cliprdr",
+		                       "text-clipboard");
 	}
 	if (!context->managed_session_open ||
 	    ((now - context->clipboard_last_poll_tick) < FRDPD_CLIPBOARD_POLL_INTERVAL_MS))

@@ -84,6 +84,7 @@ typedef struct
 
 typedef struct {
     int enabled;
+    char sink[16];
 } frdpAuditPolicy;
 
 /* Structure representing configuration parsed from frdpd.toml */

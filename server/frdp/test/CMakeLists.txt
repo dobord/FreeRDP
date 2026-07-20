@@ -8,6 +8,7 @@ find_program(SYSTEMCTL_EXECUTABLE systemctl)
 
 set(${MODULE_PREFIX}_DRIVER ${MODULE_NAME}.c)
 set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFreeRDPFrdpCtlIpc.c
+                         TestFreeRDPFrdpAudit.c
                          TestFreeRDPFrdpHelperStop.c TestFreeRDPFrdpServiceIpc.c
                          TestFreeRDPFrdpAuthdPam.c TestFreeRDPFrdpAuthFailureLimit.c
                          TestFreeRDPFrdpNtlmIdentity.c
@@ -66,6 +67,8 @@ set_property(TARGET frdp-session-agent-blocking PROPERTY FOLDER "Server/frdp/Tes
 
 add_executable(${MODULE_NAME}
     ${${MODULE_PREFIX}_SRCS}
+    ../audit/frdp-audit.c
+    ../audit/frdp-audit.h
     ../config/frdp-config.c
     ../config/frdp-config.h
     ../config/trusted-path.c
@@ -86,6 +89,8 @@ add_executable(${MODULE_NAME}
     ../frdpd/frdpd_pam.h
     ../frdpd/frdpd_auth.c
     ../frdpd/frdpd_auth.h
+    ../frdpd/frdpd_audit.c
+    ../frdpd/frdpd_audit.h
     ../frdp-authd/authd_pam.c
     ../frdp-authd/authd_pam.h
     ../frdp-authd/auth_failure_limit.c
@@ -142,6 +147,7 @@ if(HAVE_PAM_PAM_APPL_H)
 endif()
 frdp_apply_strict_warnings(${MODULE_NAME})
 target_compile_definitions(${MODULE_NAME} PRIVATE CMAKE_CURRENT_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+                                                   FRDP_AUDIT_TESTING
                                                    FRDP_SAMPLE_CONFIG_PATH="${FRDP_CONFIG_FILE}"
                                                    FRDPD_NTLM_ENABLED=$<BOOL:${WITH_FRDPD_NTLM}>
                                                    FRDPD_PAM_TESTING

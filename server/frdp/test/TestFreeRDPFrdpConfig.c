@@ -103,6 +103,8 @@ static int test_default_blocklist(void)
 		return -1;
 	if (config.audit.enabled != 0)
 		return -1;
+	if (strcmp(config.audit.sink, "journald") != 0)
+		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
@@ -378,6 +380,8 @@ static int test_sample_config(void)
 	if (config.clipboard.max_text_bytes != 65536)
 		return -1;
 	if (config.audit.enabled != 0)
+		return -1;
+	if (strcmp(config.audit.sink, "journald") != 0)
 		return -1;
 	return 0;
 }
@@ -690,9 +694,22 @@ static int test_audit_policy(void)
 		return -1;
 	if (config.audit.enabled != 0)
 		return -1;
+	if (strcmp(config.audit.sink, "journald") != 0)
+		return -1;
 	if (load_config_body("frdp-audit-disabled.toml", "[audit]\nenabled = false\n", &config) != 0)
 		return -1;
 	if (config.audit.enabled != 0)
+		return -1;
+	if (strcmp(config.audit.sink, "journald") != 0)
+		return -1;
+	if (load_config_body("frdp-audit-enabled.toml", "[audit]\nenabled = true\n", &config) != 0)
+		return -1;
+	if ((config.audit.enabled != 1) || (strcmp(config.audit.sink, "journald") != 0))
+		return -1;
+	if (load_config_body("frdp-audit-explicit-sink.toml",
+	                     "[audit]\nenabled = true\nsink = \"journald\"\n", &config) != 0)
+		return -1;
+	if ((config.audit.enabled != 1) || (strcmp(config.audit.sink, "journald") != 0))
 		return -1;
 	return 0;
 }
@@ -1161,8 +1178,6 @@ static int test_invalid_channel_config(void)
 	if (expect_load_failure("frdp-unknown-clipboard-key.toml", "[clipboard]\nfiles = \"true\"\n") !=
 	    0)
 		return -1;
-	if (expect_load_failure("frdp-audit-enabled.toml", "[audit]\nenabled = true\n") != 0)
-		return -1;
 	if (expect_load_failure("frdp-audit-quoted-enabled.toml", "[audit]\nenabled = \"false\"\n") !=
 	    0)
 		return -1;
@@ -1174,7 +1189,14 @@ static int test_invalid_channel_config(void)
 	if (expect_load_failure("frdp-duplicate-audit-section.toml",
 	                        "[audit]\nenabled = false\n[audit]\nenabled = false\n") != 0)
 		return -1;
-	if (expect_load_failure("frdp-unknown-audit-key.toml", "[audit]\nsink = \"journald\"\n") != 0)
+	if (expect_load_failure("frdp-audit-bare-sink.toml", "[audit]\nsink = journald\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-audit-unknown-sink.toml", "[audit]\nsink = \"syslog\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-audit-duplicate-sink.toml",
+	                        "[audit]\nsink = \"journald\"\nsink = \"journald\"\n") != 0)
+		return -1;
+	if (expect_load_failure("frdp-unknown-audit-key.toml", "[audit]\nformat = \"json\"\n") != 0)
 		return -1;
 	return 0;
 }

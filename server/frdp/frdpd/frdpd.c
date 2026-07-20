@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -57,6 +58,7 @@
 #include "frame_policy.h"
 #include "frdpd.h"
 #include "frdpd_auth.h"
+#include "frdpd_audit.h"
 
 #define TAG SERVER_TAG("frdpd")
 #define FRDPD_FRAME_TILE_SIZE 120U
@@ -1380,14 +1382,18 @@ static BOOL frdpd_dvc_authorize(void* userdata, DWORD SessionId, const char* cha
                                 DWORD flags)
 {
 	frdpdPeerContext* context = (frdpdPeerContext*)userdata;
+	BOOL allowed = FALSE;
 
 	WINPR_UNUSED(SessionId);
 	WINPR_UNUSED(flags);
 
 	if (!context)
 		return FALSE;
-	return frdp_channel_policy_dynamic_allowed_for_runtime(&context->channels, channelName) ? TRUE
-	                                                                                        : FALSE;
+	allowed = frdp_channel_policy_dynamic_allowed_for_runtime(&context->channels, channelName) ? TRUE
+	                                                                                           : FALSE;
+	frdpd_audit_peer_event(context, LOG_INFO, "channel.authorization",
+	                       allowed ? "allowed" : "denied", channelName, "dynamic");
+	return allowed;
 }
 
 static BOOL frdpd_display_control_channel_id_assigned(DispServerContext* display_control,
@@ -1448,6 +1454,8 @@ static BOOL frdpd_service_display_control(frdpdPeerContext* context)
 	{
 		WLog_WARN(TAG, "correlation_id=%s dynamic virtual channel negotiation failed",
 		          context->correlation_id);
+		frdpd_audit_peer_event(context, LOG_WARNING, "channel.activation", "failed", "drdynvc",
+		                       "negotiation");
 		context->drdynvc_joined = FALSE;
 		return TRUE;
 	}
@@ -1458,7 +1466,11 @@ static BOOL frdpd_service_display_control(frdpdPeerContext* context)
 	{
 		context->display_control = disp_server_context_new(context->vcm);
 		if (!context->display_control)
+		{
+			frdpd_audit_peer_event(context, LOG_WARNING, "channel.activation", "failed",
+			                       DISP_DVC_CHANNEL_NAME, "context-create");
 			return FALSE;
+		}
 		context->display_control->custom = context;
 		context->display_control->rdpcontext = &context->_p;
 		context->display_control->MaxNumMonitors = FRDPD_DISPLAY_MAX_MONITORS;
@@ -1470,6 +1482,8 @@ static BOOL frdpd_service_display_control(frdpdPeerContext* context)
 		{
 			WLog_WARN(TAG, "correlation_id=%s failed to open Display Control DVC",
 			          context->correlation_id);
+			frdpd_audit_peer_event(context, LOG_WARNING, "channel.activation", "failed",
+			                       DISP_DVC_CHANNEL_NAME, "open");
 			disp_server_context_free(context->display_control);
 			context->display_control = NULL;
 			context->drdynvc_joined = FALSE;
@@ -1481,15 +1495,23 @@ static BOOL frdpd_service_display_control(frdpdPeerContext* context)
 	{
 		WLog_WARN(TAG, "correlation_id=%s client rejected Display Control DVC",
 		          context->correlation_id);
+		frdpd_audit_peer_event(context, LOG_WARNING, "channel.activation", "denied",
+		                       DISP_DVC_CHANNEL_NAME, "client-rejected");
 		context->drdynvc_joined = FALSE;
 		return TRUE;
 	}
 	if (context->display_control_creation_ready && !context->display_control_caps_sent)
 	{
 		if (context->display_control->DisplayControlCaps(context->display_control) != CHANNEL_RC_OK)
+		{
+			frdpd_audit_peer_event(context, LOG_WARNING, "channel.activation", "failed",
+			                       DISP_DVC_CHANNEL_NAME, "capabilities");
 			return FALSE;
+		}
 		context->display_control_caps_sent = TRUE;
 		WLog_INFO(TAG, "correlation_id=%s Display Control DVC ready", context->correlation_id);
+		frdpd_audit_peer_event(context, LOG_INFO, "channel.activation", "ready",
+		                       DISP_DVC_CHANNEL_NAME, "display-control");
 	}
 	return TRUE;
 }
@@ -1898,6 +1920,9 @@ static BOOL frdpd_peer_client_capabilities(freerdp_peer* client)
 		else if (allowed && (strcmp(name, "cliprdr") == 0))
 			context->cliprdr_joined = TRUE;
 		frdpd_escape_log_string(log_name, sizeof(log_name), name);
+		frdpd_audit_peer_event(context, LOG_INFO, "channel.authorization",
+		                       allowed ? "allowed" : "denied",
+		                       (name[0] != '\0') ? name : "invalid", "static");
 		if (!allowed)
 		{
 			WLog_WARN(TAG, "correlation_id=%s rejected static virtual channel '%s' from client %s",
@@ -1993,6 +2018,8 @@ static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
 		    "correlation_id=%s ignored display resize to %" PRIu32 "x%" PRIu32 " for session_id=%s",
 		    frdp_context->correlation_id, width, height,
 		    frdpd_context_log_session_id(frdp_context, log_session_id, sizeof(log_session_id)));
+		frdpd_audit_peer_event(frdp_context, LOG_WARNING, "display.resize", "denied",
+		                       DISP_DVC_CHANNEL_NAME, "agent-rejected");
 		return TRUE;
 	}
 
@@ -2005,6 +2032,8 @@ static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
 	          "correlation_id=%s accepted display resize %" PRIu32 "x%" PRIu32
 	          " monitor_count=%" PRIu32,
 	          frdp_context->correlation_id, width, height, count);
+	frdpd_audit_peer_event(frdp_context, LOG_INFO, "display.resize", "allowed",
+	                       DISP_DVC_CHANNEL_NAME, "applied");
 	return TRUE;
 }
 
@@ -2180,6 +2209,7 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 	EnterCriticalSection(&g_frdpd_policy_lock);
 	context->channels = config->channels;
 	context->clipboard = config->clipboard;
+	context->audit_enabled = config->audit_enabled;
 	LeaveCriticalSection(&g_frdpd_policy_lock);
 	if (!frdpd_configure_security(client, config))
 		goto fail;
@@ -2339,13 +2369,14 @@ static void frdpd_reload_peer_policy(frdpdOptions* options)
 	EnterCriticalSection(&g_frdpd_policy_lock);
 	options->server.channels = config.channels;
 	options->server.clipboard = config.clipboard;
+	options->server.audit_enabled = config.audit.enabled ? TRUE : FALSE;
 	if (!options->max_connections_set)
 		options->server.max_connections = candidate.server.max_connections;
 	max_connections = options->server.max_connections;
 	LeaveCriticalSection(&g_frdpd_policy_lock);
 	WLog_INFO(TAG,
 	          "reloaded peer policy from %s: max_connections=%ld; the admission limit applies "
-	          "to new peers and existing peers retain their channel/clipboard snapshot",
+	          "to new peers and existing peers retain their channel/clipboard/audit snapshot",
 	          options->config_path, (long)max_connections);
 }
 
@@ -2556,6 +2587,7 @@ static BOOL frdpd_apply_file_config(frdpdOptions* options)
 	}
 	options->server.channels = config->channels;
 	options->server.clipboard = config->clipboard;
+	options->server.audit_enabled = config->audit.enabled ? TRUE : FALSE;
 
 	if (_stricmp(config->security, "nla") == 0)
 		options->server.allow_tls_fallback = FALSE;

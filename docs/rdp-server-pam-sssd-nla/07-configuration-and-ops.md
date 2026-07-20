@@ -60,8 +60,7 @@ session_socket = "/run/frdp-sesmand/sesmand.sock"
 
 # [audit]
 # enabled = false
-# Structured audit sinks are not implemented yet; enabled = true fails closed
-# until runtime enforcement exists.
+# sink = "journald"
 ```
 
 ## PAM
@@ -264,7 +263,9 @@ not loaded automatically and must be reviewed, adapted, and validated for the ta
 
 ## Logging and audit
 
-Events should be written to journald in a structured format:
+With `[audit].enabled = true`, `frdpd` writes structured channel authorization/activation and display-resize decisions to journald. Query them by fields such as `FRDP_EVENT=channel.authorization`, `FRDP_RESULT=denied`, `FRDP_CHANNEL=cliprdr`, and `FRDP_CORRELATION_ID=<id>`.
+
+The target event vocabulary also includes:
 
 - `connection.accepted`;
 - `tls.negotiated`;
@@ -275,7 +276,7 @@ Events should be written to journald in a structured format:
 - `channel.opened` / `channel.denied`.
 
 It is forbidden to log passwords, raw CredSSP blobs, Kerberos tickets, keytab paths with sensitive parameters, or clipboard contents.
-Current `frdpd` peer/channel/session logs escape client-supplied hostnames, authenticated usernames, static channel names, and IPC-supplied session ids, display names, agent socket paths, and session-manager error strings, but the structured journald schema above is still planned work.
+Current `frdpd` peer/channel/session logs escape client-supplied hostnames, authenticated usernames, static channel names, and IPC-supplied session ids, display names, agent socket paths, and session-manager error strings. Auth/session helper events remain correlated syslog records and have not yet moved to the common structured journald emitter.
 
 ## Troubleshooting checklist
 

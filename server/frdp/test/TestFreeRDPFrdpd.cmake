@@ -205,11 +205,12 @@ file(WRITE "${audit_enabled_config}"
      "[session]\n"
      "session_socket = \"/tmp/frdpd-test-session.sock\"\n"
      "[audit]\n"
-     "enabled = true\n")
+     "enabled = true\n"
+     "sink = \"journald\"\n")
 run_frdpd_case_with_result(
   "audit-enabled-config"
-  1
-  "failed to load configuration from ${audit_enabled_config}"
+  255
+  "Certificate or key file not found: cert=/missing key=/missing"
   --config "${audit_enabled_config}")
 
 set(clipboard_text_config "${test_dir}/clipboard-text.toml")

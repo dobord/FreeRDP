@@ -11,6 +11,8 @@ set(SRCS
     frdpd.h
     frdpd_auth.c
     frdpd_auth.h
+    frdpd_audit.c
+    frdpd_audit.h
     frdpd_peer.c
     frdpd_peer.h
     channel_policy.c
@@ -31,6 +33,7 @@ set(SRCS
     ../ipc/frdp-ipc.h
     ../config/frdp-config.c
     ../config/frdp-config.h)
+list(APPEND SRCS ../audit/frdp-audit.c ../audit/frdp-audit.h)
 
 addtargetwithresourcefile(${MODULE_NAME} TRUE "${FREERDP_VERSION}" SRCS)
 
@@ -41,7 +44,9 @@ endif()
 if(WITH_FRDPD_NTLM)
   target_compile_definitions(${MODULE_NAME} PRIVATE WITH_FRDPD_NTLM=1)
 endif()
-target_link_libraries(${MODULE_NAME} PRIVATE freerdp-server freerdp winpr ${PAM_LIBRARIES} ${UUID_LIBRARY})
+target_include_directories(${MODULE_NAME} SYSTEM PRIVATE ${LIBSYSTEMD_INCLUDE_DIRS})
+target_link_libraries(${MODULE_NAME} PRIVATE freerdp-server freerdp winpr ${PAM_LIBRARIES}
+                                             ${UUID_LIBRARY} ${LIBSYSTEMD_LIBRARIES})
 frdp_apply_strict_warnings(${MODULE_NAME})
 
 installwithrpath(TARGETS ${MODULE_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT server)

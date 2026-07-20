@@ -47,6 +47,7 @@ extern "C"
 		frdpdDomainMode domain_mode;
 		frdpChannelPolicy channels;
 		frdpClipboardPolicy clipboard;
+		BOOL audit_enabled;
 	} frdpdServerConfig;
 
 	typedef struct
@@ -95,6 +96,7 @@ extern "C"
 		CRITICAL_SECTION display_control_lock;
 		frdpChannelPolicy channels;
 		frdpClipboardPolicy clipboard;
+		BOOL audit_enabled;
 		char* pam_user;
 		char authorization_id[192];
 		uid_t uid;
