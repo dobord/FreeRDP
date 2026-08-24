@@ -108,6 +108,57 @@ desktop's window manager, the deterministic `FRDP Test Desktop` marker window,
 and a matching root-window type property before clipboard, resize, reconnect
 and cleanup assertions continue.
 
+## Manual desktop testing
+
+Do not use `run.sh local` for an interactive session: that command starts the
+automated RDP probe and stops the Compose application when the probe finishes.
+Instead, build and start only the local FRDP server. Select one of `openbox`,
+`xfce`, `mate`, `lxqt`, `plasma`, or `gnome`, and use a matching image tag so
+images for different desktops remain unambiguous:
+
+```bash
+FRDP_DESKTOP_TYPE=xfce \
+FRDP_E2E_IMAGE=frdpd-e2e:xfce \
+docker compose \
+  -f server/frdp/test/e2e/compose.yaml \
+  --profile local \
+  up -d --build frdpd-local
+```
+
+The desktop process is created only after a successful RDP login. On a Linux
+Docker host, connect to the local profile's default static address with the
+repository build of `xfreerdp`:
+
+```bash
+build-frdp-ntlm-default/client/X11/xfreerdp \
+  /v:172.31.56.30 \
+  /u:rdpuser \
+  /p:'RdpPassw0rd!' \
+  /cert:ignore \
+  /sec:nla
+```
+
+If another build directory or an installed client is used, replace the
+`xfreerdp` path accordingly. If `.env` overrides `FRDP_LOCAL_SERVER_IP`, pass
+that address to `/v:`. The Compose network does not publish TCP port 3389 on
+the host, so direct access to the bridge address is required.
+
+Inspect server health and follow its logs with:
+
+```bash
+docker compose -f server/frdp/test/e2e/compose.yaml ps
+docker compose -f server/frdp/test/e2e/compose.yaml logs -f frdpd-local
+```
+
+After testing, remove the containers, isolated network and session volumes:
+
+```bash
+docker compose \
+  -f server/frdp/test/e2e/compose.yaml \
+  --profile local \
+  down --volumes --remove-orphans
+```
+
 Set `FRDP_E2E_KEEP=1` to keep containers and volumes after a failure:
 
 ```bash
