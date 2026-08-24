@@ -12,6 +12,7 @@ FRDP_SSSD_DEBUG_LEVEL=${FRDP_SSSD_DEBUG_LEVEL:-3}
 FRDP_AUTH_SOCKET=${FRDP_AUTH_SOCKET:-/run/frdp-authd/authd.sock}
 FRDP_SESSION_SOCKET=${FRDP_SESSION_SOCKET:-/run/frdp-sesmand/sesmand.sock}
 FRDP_CONFIG=${FRDP_CONFIG:-/etc/frdpd/frdpd.toml}
+FRDP_DESKTOP_TYPE=${FRDP_DESKTOP_TYPE:-openbox}
 FRDP_E2E_SESMAND_CRASH_RECOVERY=${FRDP_E2E_SESMAND_CRASH_RECOVERY:-0}
 FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER=${FRDP_E2E_FREEIPA_KEYTAB_ROLLOVER:-0}
 FRDP_E2E_POLICY_RELOAD=${FRDP_E2E_POLICY_RELOAD:-0}
@@ -63,6 +64,19 @@ wait_socket()
 		sleep 0.1
 	done
 	return 1
+}
+
+start_system_bus()
+{
+	local socket=/run/dbus/system_bus_socket
+
+	[[ $FRDP_DESKTOP_TYPE == gnome ]] || return 0
+	mkdir -p /run/dbus
+	dbus-uuidgen --ensure=/etc/machine-id
+	dbus-daemon --system --nofork --nopidfile &
+	children+=("$!")
+	wait_socket "$socket" || fail "GNOME system D-Bus socket was not created"
+	log "started system D-Bus required by the GNOME session"
 }
 
 wait_replaced_socket()
@@ -689,16 +703,26 @@ run_xauthority_export_supervisor()
 
 run_test_desktop_supervisor()
 {
+	declare -A desktop_dirs=()
 	declare -A desktop_pids=()
 	local agent_pid=
 	local authority_fd=
 	local candidate=
 	local desktop_pid=
 	local display=
+	local gid=
 	local home=
+	local session_dir=
 	local target=
 	local uid=
 	local user=
+
+	remove_test_desktop_dir()
+	{
+		local directory=$1
+		[[ $directory =~ ^/run/frdp-e2e-desktops/[0-9]+-[0-9]+$ ]] || return 1
+		rm -rf -- "$directory"
+	}
 
 	cleanup_test_desktops()
 	{
@@ -708,6 +732,9 @@ run_test_desktop_supervisor()
 		done
 		for pid in "${desktop_pids[@]}"; do
 			wait "$pid" 2>/dev/null || true
+		done
+		for session_dir in "${desktop_dirs[@]}"; do
+			remove_test_desktop_dir "$session_dir" || true
 		done
 	}
 
@@ -738,17 +765,28 @@ run_test_desktop_supervisor()
 				sed -n 's/^DISPLAY=//p' | head -n 1)
 			[[ $display =~ ^:[0-9]+$ ]] || continue
 			uid=$(stat -c %u /proc/"$agent_pid")
+			gid=$(stat -c %g /proc/"$agent_pid")
 			user=$(getent passwd "$uid" | awk -F: 'NR == 1 { print $1 }')
 			home=$(getent passwd "$uid" | awk -F: 'NR == 1 { print $6 }')
 			[[ -n $user && $home == /* ]] || continue
+			session_dir=/run/frdp-e2e-desktops/"$uid"-"$agent_pid"
+			install -d -o "$uid" -g "$gid" -m 0700 \
+				"$session_dir" "$session_dir/runtime" "$session_dir/config" \
+				"$session_dir/cache" "$session_dir/state"
 
 			runuser -u "$user" -- env -i \
 				HOME="$home" USER="$user" LOGNAME="$user" \
 				PATH=/usr/local/bin:/usr/bin:/bin DISPLAY="$display" \
 				XAUTHORITY="$authority_fd" \
+				FRDP_DESKTOP_TYPE="$FRDP_DESKTOP_TYPE" \
+				XDG_RUNTIME_DIR="$session_dir/runtime" \
+				XDG_CONFIG_HOME="$session_dir/config" \
+				XDG_CACHE_HOME="$session_dir/cache" \
+				XDG_STATE_HOME="$session_dir/state" \
 				/opt/frdp-e2e/scripts/test-desktop.sh &
 			desktop_pids[$agent_pid]=$!
-			log "started test desktop for user=$user display=$display agent_pid=$agent_pid"
+			desktop_dirs[$agent_pid]=$session_dir
+			log "started $FRDP_DESKTOP_TYPE test desktop for user=$user display=$display agent_pid=$agent_pid"
 		done
 
 		for agent_pid in "${!desktop_pids[@]}"; do
@@ -756,6 +794,8 @@ run_test_desktop_supervisor()
 			if ! kill -0 "$agent_pid" 2>/dev/null || ! kill -0 "$desktop_pid" 2>/dev/null; then
 				kill -TERM "$desktop_pid" 2>/dev/null || true
 				wait "$desktop_pid" 2>/dev/null || true
+				remove_test_desktop_dir "${desktop_dirs[$agent_pid]}" || true
+				unset 'desktop_dirs[$agent_pid]'
 				unset 'desktop_pids[$agent_pid]'
 			fi
 		done
@@ -919,6 +959,7 @@ log "configuring identity provider: $FRDP_IDENTITY_PROVIDER"
 configure_identity
 generate_tls_identity
 generate_ntlm_test_sam
+start_system_bus
 
 frdp-authd --config "$FRDP_CONFIG" --socket "$FRDP_AUTH_SOCKET" &
 children+=("$!")

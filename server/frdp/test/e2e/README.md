@@ -63,6 +63,51 @@ bash server/frdp/test/e2e/run.sh all
 
 Copy `.env.example` to `.env` to override the isolated test credentials or network addresses. Change the entire static address set together when `172.31.56.0/24` conflicts with a local route.
 
+## Desktop selection
+
+The server image installs exactly one X11 desktop selected at build time with
+the `FRDP_DESKTOP_TYPE` Docker build argument. Compose forwards the environment
+variable of the same name; `openbox` remains the small, fast default used by
+ordinary CI runs.
+
+| Value | Ubuntu package set | Session launcher |
+|---|---|---|
+| `openbox` | `openbox` | `openbox --sm-disable` |
+| `xfce` | `xfce4` | `xfce4-session` |
+| `mate` | `mate-desktop-environment-core` | `mate-session` |
+| `lxqt` | `lxqt-core`, `openbox` | `startlxqt` |
+| `plasma` | `plasma-desktop`, `plasma-workspace`, `kwin-x11` | `startplasma-x11` |
+| `gnome` | `gnome-session` | `gnome-session --session=gnome` |
+
+Each session receives its own XDG runtime, configuration, cache and state
+directories. The desktop is launched under the authenticated account in a
+private D-Bus session; the GNOME image also starts the system bus required by
+`gnome-session`. The image records its installed type and rejects a
+different runtime override instead of silently starting an incomplete desktop.
+These are X11 sessions because the current managed display backend is Xorg
+dummy; Wayland desktop sessions are outside this testbed's current scope.
+
+Select a desktop and a distinct image tag when running one profile:
+
+```bash
+FRDP_DESKTOP_TYPE=xfce \
+FRDP_E2E_IMAGE=frdpd-e2e:xfce \
+  bash server/frdp/test/e2e/run.sh local
+```
+
+Run the complete real-RDP desktop matrix, or a named subset, with:
+
+```bash
+bash server/frdp/test/e2e/run-desktop-matrix.sh
+bash server/frdp/test/e2e/run-desktop-matrix.sh xfce plasma gnome
+```
+
+Matrix artifacts are retained separately under
+`desktop-matrix/<desktop>/artifacts/`. A successful run requires the selected
+desktop's window manager, the deterministic `FRDP Test Desktop` marker window,
+and a matching root-window type property before clipboard, resize, reconnect
+and cleanup assertions continue.
+
 Set `FRDP_E2E_KEEP=1` to keep containers and volumes after a failure:
 
 ```bash
@@ -105,7 +150,7 @@ HBAC rule that allows only the primary account before the FRDP client starts.
 3. `/auth-only` fails for an incorrect password and leaves no managed session or durable session runtime artifact.
 4. `/auth-only` fails for a locked, disabled, or provider-policy-denied account and leaves no managed session or durable session runtime artifact.
 5. In the local profile, two graphical clients connect concurrently under `max_sessions = 2`. The manager must expose exactly two active records with unique session ids, displays and agent PIDs; a third client must authenticate once and be rejected by the session admission limit without changing either record. Stopping both clients, detaching both sessions and explicitly cleaning them must leave no registry or runtime artifacts.
-6. A normal graphical connection under client-side Xvfb remains connected, appears as `active`, exposes the deterministic Openbox/xterm/xclock test desktop, transfers supplementary-plane Unicode clipboard text in both directions, and drives the managed Xorg dummy root through `800x600 -> 1024x768 -> 800x600` while each geometry is checked over X11.
+6. A normal graphical connection under client-side Xvfb remains connected, appears as `active`, exposes the selected desktop plus deterministic xterm/xclock marker windows, verifies the desktop-type root property, transfers supplementary-plane Unicode clipboard text in both directions, and drives the managed Xorg dummy root through `800x600 -> 1024x768 -> 800x600` while each geometry is checked over X11.
 7. In the local profile, `SIGHUP` first lowers `max_connections` to the held-peer count and rejects another client before PAM without disconnecting the held peer. A second reload restores the peer cap while publishing a deny-all static-channel policy to new peers without changing the held peer's clipboard policy snapshot. A malformed reload retains that policy, and restoring the original file makes the later reconnect possible.
 8. In the local profile, the harness gracefully stops `frdpd`, requires its peer worker to detach the held session before the daemon exits, starts a new daemon PID while `frdp-sesmand` remains alive, and then connects the second client. Other profiles terminate the first client directly.
 9. The restarted daemon uses `--max-connections=1` and supplies its TLS and helper-socket paths through CLI overrides. The second graphical client reattaches to the only matching session with the same session id, display and agent PID; reloading a sparse config that omits those static paths and raises the config-backed cap to `2` must succeed while still rejecting another peer before PAM without changing that session, proving startup-default reconstruction and CLI priority. Post-connect resynchronizes the retained `800x600` display to the new client's `1024x768` request before framebuffer pumping; its disconnect and explicit `kill-session` leave an empty registry.

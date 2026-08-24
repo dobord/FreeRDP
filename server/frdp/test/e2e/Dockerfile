@@ -43,7 +43,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxv-dev \
         netcat-openbsd \
         ninja-build \
-        openbox \
         openssl \
         pkg-config \
         procps \
@@ -125,6 +124,26 @@ RUN cmake -S /src -B /opt/freerdp-build -GNinja \
     && ldd /usr/local/bin/xfreerdp
 
 COPY server/frdp/test/e2e /opt/frdp-e2e
+
+ARG FRDP_DESKTOP_TYPE=openbox
+RUN set -eux; \
+    case "$FRDP_DESKTOP_TYPE" in \
+        openbox) desktop_packages='openbox'; desktop_launcher=openbox ;; \
+        xfce) desktop_packages='xfce4'; desktop_launcher=xfce4-session ;; \
+        mate) desktop_packages='mate-desktop-environment-core'; desktop_launcher=mate-session ;; \
+        lxqt) desktop_packages='lxqt-core openbox'; desktop_launcher=startlxqt ;; \
+        plasma) desktop_packages='plasma-desktop plasma-workspace kwin-x11'; desktop_launcher=startplasma-x11 ;; \
+        gnome) desktop_packages='gnome-session'; desktop_launcher=gnome-session ;; \
+        *) echo "unsupported FRDP_DESKTOP_TYPE: $FRDP_DESKTOP_TYPE" >&2; exit 64 ;; \
+    esac; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends $desktop_packages; \
+    rm -rf /var/lib/apt/lists/*; \
+    command -v "$desktop_launcher"; \
+    printf '%s\n' "$FRDP_DESKTOP_TYPE" > /etc/frdp-test-desktop-type
+
+ENV FRDP_DESKTOP_TYPE=${FRDP_DESKTOP_TYPE}
+
 RUN chmod 0755 /opt/frdp-e2e/scripts/*.sh \
     && mkdir -p /artifacts /etc/frdpd /run/frdp-authd /run/frdp-sesmand /var/log/sssd \
     && install -Dm0644 /src/server/frdp/config/xorg-dummy.conf \

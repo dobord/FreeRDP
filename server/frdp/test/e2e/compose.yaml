@@ -5,6 +5,8 @@ x-frdp-image: &frdp-image
   build:
     context: ../../../..
     dockerfile: server/frdp/test/e2e/Dockerfile
+    args:
+      FRDP_DESKTOP_TYPE: ${FRDP_DESKTOP_TYPE:-openbox}
 
 x-frdp-healthcheck: &frdp-healthcheck
   test: ["CMD", "bash", "/opt/frdp-e2e/scripts/frdpd-healthcheck.sh"]
@@ -141,6 +143,7 @@ services:
       context: ../../../..
       dockerfile: server/frdp/test/e2e/Dockerfile
       args:
+        FRDP_DESKTOP_TYPE: ${FRDP_DESKTOP_TYPE:-openbox}
         WITH_FREEIPA_CLIENT: ON
     hostname: frdpd.ipa.test
     dns: ["${FRDP_IPA_IP:-172.31.56.10}"]

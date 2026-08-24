@@ -27,6 +27,7 @@ endfunction()
 
 foreach(script
         run.sh
+        run-desktop-matrix.sh
         TestRunner.sh
         scripts/frdpd-entrypoint.sh
         scripts/frdpd-healthcheck.sh
@@ -235,6 +236,7 @@ foreach(expected
         "profiles: [\"local\"]"
         "profiles: [\"samba\"]"
         "profiles: [\"freeipa\"]"
+        "FRDP_DESKTOP_TYPE: \${FRDP_DESKTOP_TYPE:-openbox}"
         "FRDP_TEST_GROUP: \${FRDP_TEST_GROUP:-rdp-users}"
         "FRDP_E2E_POLICY_RELOAD: 1"
         "FRDP_E2E_FRDPD_RESTART: 1"
@@ -273,10 +275,30 @@ expect_not_contains("${freeipa_client_service}" "freeipa-keytab"
 file(READ "${FRDP_E2E_DIR}/Dockerfile" frdp_dockerfile)
 foreach(expected
         "ARG WITH_FREEIPA_CLIENT=OFF"
+        "ARG FRDP_DESKTOP_TYPE=openbox"
+        "mate-desktop-environment-core"
+        "lxqt-core openbox"
+        "plasma-desktop plasma-workspace kwin-x11"
+        "gnome-session"
+        "/etc/frdp-test-desktop-type"
         "xserver-xorg-video-dummy"
         "if [ \"$WITH_FREEIPA_CLIENT\" = ON ]; then"
         "apt-get install -y --no-install-recommends freeipa-client")
   expect_contains("${frdp_dockerfile}" "${expected}" "FRDP E2E image")
+endforeach()
+
+file(READ "${FRDP_E2E_DIR}/scripts/test-desktop.sh" test_desktop)
+foreach(expected
+        "openbox --sm-disable"
+        "xfce4-session"
+        "mate-session"
+        "startlxqt"
+        "startplasma-x11"
+        "gnome-session --session=gnome"
+        "dbus-run-session"
+        "XDG_SESSION_TYPE=x11"
+        "_FRDP_TEST_DESKTOP_TYPE")
+  expect_contains("${test_desktop}" "${expected}" "FRDP test desktop launcher")
 endforeach()
 
 file(READ "${FRDP_E2E_DIR}/scripts/samba-entrypoint.sh" samba_entrypoint)
@@ -300,6 +322,9 @@ endforeach()
 file(READ "${FRDP_E2E_DIR}/scripts/frdpd-entrypoint.sh" frdpd_entrypoint)
 foreach(expected
         "wait_supplementary_group"
+        "start_system_bus"
+        "dbus-daemon --system --nofork --nopidfile"
+        "GNOME system D-Bus socket was not created"
         "getent group \"$group\""
         "id -G \"$user\""
         "SSSD resolved supplementary group"
@@ -507,6 +532,7 @@ foreach(expected
         "managed Xorg dummy display completed 800x600 -> 1024x768 -> 800x600 resize churn"
         "request_session_xauthority"
         "export XAUTHORITY"
+        "_FRDP_TEST_DESKTOP_TYPE"
         "client-to-server Unicode clipboard transfer passed"
         "server-to-client Unicode clipboard transfer passed"
         "request_policy_reload deny"

@@ -16,6 +16,7 @@ FRDP_E2E_POLICY_RELOAD=${FRDP_E2E_POLICY_RELOAD:-0}
 FRDP_E2E_FRDPD_RESTART=${FRDP_E2E_FRDPD_RESTART:-0}
 FRDP_E2E_GRAPHICAL_LOAD_CONCURRENCY=${FRDP_E2E_GRAPHICAL_LOAD_CONCURRENCY:-0}
 FRDP_E2E_CONTROL_DIR=${FRDP_E2E_CONTROL_DIR:-/run/frdp-e2e-control}
+FRDP_DESKTOP_TYPE=${FRDP_DESKTOP_TYPE:-openbox}
 
 mkdir -p "$FRDP_ARTIFACT_DIR"
 
@@ -627,16 +628,19 @@ positive_integer "$open_pid" || fail "managed session $session_id has invalid ag
 XAUTHORITY=$(request_session_xauthority "$open_pid") ||
 	fail "failed to obtain the isolated test Xauthority for agent $open_pid"
 export XAUTHORITY
-for ((i = 0; i < 100; i++)); do
+for ((i = 0; i < 450; i++)); do
 	if DISPLAY="$open_display" xwininfo -root -tree 2>/dev/null |
-		grep -Fq 'FRDP Test Desktop'; then
+		grep -F 'FRDP Test Desktop' >/dev/null; then
 		break
 	fi
 	sleep 0.1
 done
 DISPLAY="$open_display" xwininfo -root -tree 2>/dev/null |
-	grep -Fq 'FRDP Test Desktop' || fail "managed display did not start the test desktop"
-log "managed display test desktop is visible"
+	grep -F 'FRDP Test Desktop' >/dev/null || fail "managed display did not start the test desktop"
+desktop_property=$(DISPLAY="$open_display" xprop -root _FRDP_TEST_DESKTOP_TYPE 2>/dev/null || true)
+grep -Fq "= \"$FRDP_DESKTOP_TYPE\"" <<<"$desktop_property" ||
+	fail "managed display started the wrong desktop: $desktop_property"
+log "managed display $FRDP_DESKTOP_TYPE test desktop is visible"
 
 client_clipboard_text=$'client-to-server FreeRDP clipboard UTF-8: Привет \360\237\214\215'
 printf '%s' "$client_clipboard_text" | xclip -selection clipboard -in &
