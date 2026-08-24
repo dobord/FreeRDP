@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         cmake \
         coreutils \
+        cracklib-runtime \
         curl \
         dbus \
         dnsutils \
@@ -73,6 +74,7 @@ RUN cmake -S /src -B /opt/freerdp-build -GNinja \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DBUILD_TESTING=ON \
         -DBUILD_TESTING_INTERNAL=ON \
+        -DWITH_VERBOSE_WINPR_ASSERT=OFF \
         -DWITH_SERVER=ON \
         -DWITH_CLIENT=ON \
         -DWITH_X11=ON \

@@ -679,8 +679,9 @@ static int load_map_from_xkbfile(xfContext* xfc)
 			strncpy(xkb_keyname, xkb->names->keys[i].name, XkbKeyNameLength);
 
 			WLog_Print(xfc->log, WLOG_TRACE, "KeyCode %" PRIuz " -> %s", i, xkb_keyname);
-			if (strnlen(xkb_keyname, ARRAYSIZE(xkb_keyname)) >= 1)
-				found = try_add(xfc, i, xkb_keyname);
+			if (strnlen(xkb_keyname, ARRAYSIZE(xkb_keyname)) < 1)
+				continue;
+			found = try_add(xfc, i, xkb_keyname);
 
 			if (!found)
 			{

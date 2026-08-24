@@ -282,7 +282,8 @@ BOOL set_termianl_nonblock(int ifd, BOOL nonblock)
 {
 	static int fd = -1;
 	static bool registered = false;
-	static int orig = 0;
+	static bool terminal = false;
+	static int orig = -1;
 	static struct termios termios = WINPR_C_ARRAY_INIT;
 
 	if (ifd >= 0)
@@ -293,6 +294,15 @@ BOOL set_termianl_nonblock(int ifd, BOOL nonblock)
 
 	if (nonblock)
 	{
+		orig = fcntl(fd, F_GETFL);
+		if (orig < 0)
+		{
+			char buffer[128] = WINPR_C_ARRAY_INIT;
+			WLog_ERR(TAG, "fcntl(F_GETFL) failed with %s",
+			         winpr_strerror(errno, buffer, sizeof(buffer)));
+			return FALSE;
+		}
+		terminal = isatty(fd) != 0;
 		if (!registered)
 		{
 			(void)winpr_atexit(restore_terminal);
@@ -307,12 +317,16 @@ BOOL set_termianl_nonblock(int ifd, BOOL nonblock)
 			         winpr_strerror(errno, buffer, sizeof(buffer)));
 			return FALSE;
 		}
+		if (!terminal)
+			return TRUE;
+
 		const int rc2 = tcgetattr(fd, &termios);
 		if (rc2 != 0)
 		{
 			char buffer[128] = WINPR_C_ARRAY_INIT;
 			WLog_ERR(TAG, "tcgetattr() failed with %s",
 			         winpr_strerror(errno, buffer, sizeof(buffer)));
+			(void)fcntl(fd, F_SETFL, orig);
 			return FALSE;
 		}
 
@@ -329,15 +343,14 @@ BOOL set_termianl_nonblock(int ifd, BOOL nonblock)
 	}
 	else
 	{
-		const int rc1 = tcsetattr(fd, TCSANOW, &termios);
-		if (rc1 != 0)
+		if (terminal && (tcsetattr(fd, TCSANOW, &termios) != 0))
 		{
 			char buffer[128] = WINPR_C_ARRAY_INIT;
 			WLog_ERR(TAG, "tcsetattr(TCSANOW) failed with %s",
 			         winpr_strerror(errno, buffer, sizeof(buffer)));
 			return FALSE;
 		}
-		const int rc2 = fcntl(fd, F_SETFL, orig);
+		const int rc2 = (orig >= 0) ? fcntl(fd, F_SETFL, orig) : 0;
 		if (rc2 != 0)
 		{
 			char buffer[128] = WINPR_C_ARRAY_INIT;
@@ -346,6 +359,8 @@ BOOL set_termianl_nonblock(int ifd, BOOL nonblock)
 			return FALSE;
 		}
 		fd = -1;
+		orig = -1;
+		terminal = false;
 	}
 	return TRUE;
 }

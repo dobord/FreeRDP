@@ -1449,6 +1449,9 @@ static BOOL frdpd_service_display_control(frdpdPeerContext* context)
 
 	if (!context || !context->vcm || !context->drdynvc_joined)
 		return TRUE;
+	if (!frdp_channel_policy_dynamic_allowed_for_runtime(&context->channels,
+	                                                     DISP_DVC_CHANNEL_NAME))
+		return TRUE;
 	state = WTSVirtualChannelManagerGetDrdynvcState(context->vcm);
 	if (state == DRDYNVC_STATE_FAILED)
 	{
@@ -1912,11 +1915,7 @@ static BOOL frdpd_peer_client_capabilities(freerdp_peer* client)
 		int allowed = frdp_channel_policy_static_channel_allowed_for_runtime(
 		    &context->channels, &context->clipboard, channel, name, sizeof(name));
 		if (allowed && (strcmp(name, "drdynvc") == 0))
-		{
-			allowed = frdp_channel_policy_dynamic_allowed_for_runtime(&context->channels,
-			                                                          DISP_DVC_CHANNEL_NAME);
-			context->drdynvc_joined = allowed ? TRUE : FALSE;
-		}
+			context->drdynvc_joined = TRUE;
 		else if (allowed && (strcmp(name, "cliprdr") == 0))
 			context->cliprdr_joined = TRUE;
 		frdpd_escape_log_string(log_name, sizeof(log_name), name);
@@ -2807,6 +2806,7 @@ static BOOL frdpd_validate_ntlm_config(frdpdServerConfig* config)
 static BOOL frdpd_validate_build_features(const frdpdServerConfig* config)
 {
 	WINPR_ASSERT(config);
+	WINPR_UNUSED(config);
 
 #ifndef WITH_FRDPD_NTLM
 	if (config->ntlm_fallback)

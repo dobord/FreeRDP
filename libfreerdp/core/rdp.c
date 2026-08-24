@@ -1881,8 +1881,8 @@ static state_run_t rdp_handle_sc_flags(rdpRdp* rdp, wStream* s, UINT32 flag,
 		{
 			char flag_buffer[256] = WINPR_C_ARRAY_INIT;
 			char mask_buffer[256] = WINPR_C_ARRAY_INIT;
-			WLog_Print(rdp->log, WLOG_WARN,
-			           "[%s] unexpected server message, expected flag %s [have %s]",
+			WLog_Print(rdp->log, WLOG_DEBUG,
+			           "[%s] server finalization is still waiting for flag %s [have %s]",
 			           rdp_get_state_string(rdp),
 			           rdp_finalize_flags_to_str(flag, flag_buffer, sizeof(flag_buffer)),
 			           rdp_finalize_flags_to_str(flags, mask_buffer, sizeof(mask_buffer)));

@@ -44,14 +44,13 @@ session_socket = "/run/frdp-sesmand/sesmand.sock"
 # static_deny = ""
 # dynamic_mode = "blocklist"
 # dynamic_deny = ""
-# Dynamic channel lists feed the DVC authorization callback, but remain preparatory
-# while drdynvc and useful dynamic handlers stay disabled.
+# With the empty defaults, every valid channel is permitted to negotiate.
+# Dynamic channel lists feed the DVC authorization callback.
 # Use allowlist mode to permit only exact channel names:
 # static_mode = "allowlist"
 # static_allow = "cliprdr"
-# Allowing a name only permits negotiation; runtime gates still deny handlers
-# that are not implemented yet, including arbitrary static channels, rdpsnd
-# audio output, and rdpdr device redirection.
+# Filtering controls negotiation only. A permitted channel can still have no
+# server-side feature handler; that does not reject the whole RDP connection.
 
 # [clipboard]
 # mode = "disabled"

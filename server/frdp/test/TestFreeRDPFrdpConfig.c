@@ -108,22 +108,22 @@ static int test_default_blocklist(void)
 	if (frdp_channel_policy_static_allowed(&config.channels, "cliprdr") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
-	                                                   "cliprdr") != 0)
+	                                                   "cliprdr") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "rdpsnd") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
-	                                                   "rdpsnd") != 0)
+	                                                   "rdpsnd") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "rdpdr") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
-	                                                   "rdpdr") != 0)
+	                                                   "rdpdr") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "rail") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
-	                                                   "rail") != 0)
+	                                                   "rail") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "drdynvc") == 0)
 		return -1;
@@ -137,7 +137,12 @@ static int test_default_blocklist(void)
 	if (frdp_channel_policy_dynamic_allowed_for_runtime(
 	        &config.channels, "Microsoft::Windows::RDS::DisplayControl") == 0)
 		return -1;
-	if (frdp_channel_policy_dynamic_allowed_for_runtime(&config.channels, "rdpgfx") != 0)
+	if (frdp_channel_policy_dynamic_allowed_for_runtime(&config.channels, "rdpgfx") == 0)
+		return -1;
+	if (frdp_channel_policy_dynamic_allowed_for_runtime(
+	        &config.channels, "Microsoft::Windows::RDS::Graphics") == 0)
+		return -1;
+	if (frdp_channel_policy_dynamic_allowed_for_runtime(&config.channels, "bad\nchannel") != 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(NULL, "cliprdr") != 0)
 		return -1;
@@ -153,7 +158,7 @@ static int test_default_blocklist(void)
 		return -1;
 	memcpy(channel.name, "cliprdr", sizeof("cliprdr"));
 	if (frdp_channel_policy_static_channel_allowed_for_runtime(&config.channels, &config.clipboard,
-	                                                           &channel, name, sizeof(name)) != 0)
+	                                                           &channel, name, sizeof(name)) == 0)
 		return -1;
 	if (strcmp(name, "cliprdr") != 0)
 		return -1;
@@ -466,17 +471,17 @@ static int test_static_allowlist(void)
 	if (frdp_channel_policy_static_allowed(&config.channels, "rdpsnd") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
-	                                                   "rdpsnd") != 0)
+	                                                   "rdpsnd") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "rdpdr") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
-	                                                   "rdpdr") != 0)
+	                                                   "rdpdr") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "rail") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
-	                                                   "rail") != 0)
+	                                                   "rail") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "drdynvc") == 0)
 		return -1;
@@ -549,12 +554,12 @@ static int test_static_blocklist(void)
 	if (frdp_channel_policy_static_allowed(&config.channels, "rdpdr") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
-	                                                   "rdpdr") != 0)
+	                                                   "rdpdr") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed(&config.channels, "rail") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &config.clipboard,
-	                                                   "rail") != 0)
+	                                                   "rail") == 0)
 		return -1;
 	return 0;
 }
@@ -594,7 +599,10 @@ static int test_dynamic_allowlist(void)
 	if (frdp_channel_policy_dynamic_allowed_for_runtime(
 	        &config.channels, "Microsoft::Windows::RDS::DisplayControl") == 0)
 		return -1;
-	if (frdp_channel_policy_dynamic_allowed_for_runtime(&config.channels, "rdpgfx") != 0)
+	if (frdp_channel_policy_dynamic_allowed_for_runtime(&config.channels, "rdpgfx") == 0)
+		return -1;
+	if (frdp_channel_policy_dynamic_allowed_for_runtime(
+	        &config.channels, "Microsoft::Windows::RDS::Graphics") == 0)
 		return -1;
 	memcpy(channel.name, "drdynvc", sizeof("drdynvc"));
 	if (frdp_channel_policy_static_channel_allowed(&config.channels, &channel, name,
@@ -629,6 +637,9 @@ static int test_dynamic_blocklist(void)
 	if (frdp_channel_policy_dynamic_allowed_for_runtime(
 	        &config.channels, "Microsoft::Windows::RDS::DisplayControl") != 0)
 		return -1;
+	if (frdp_channel_policy_dynamic_allowed_for_runtime(
+	        &config.channels, "Microsoft::Windows::RDS::Graphics") != 0)
+		return -1;
 	return 0;
 }
 
@@ -653,7 +664,7 @@ static int test_clipboard_policy(void)
 	                                                   "cliprdr") == 0)
 		return -1;
 	if (frdp_channel_policy_static_allowed_for_runtime(&config.channels, &invalid_clipboard,
-	                                                   "cliprdr") != 0)
+	                                                   "cliprdr") == 0)
 		return -1;
 
 	body = "[clipboard]\nmode = \"text\"\ndirection = \"server-to-client\"\n";

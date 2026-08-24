@@ -2287,12 +2287,11 @@ cleanup:
 static int request_session_control(const char* socket_path, frdpIpcMessageType type,
                                    const char* correlation_id, const char* session_id,
                                    const char* user, frdpSessionResponse* response);
-#if defined(FRDP_PAM_SESSION_TEST_MODULE) && defined(FRDP_PAM_WRAPPER_LIBRARY) && \
-    defined(FRDP_PAM_WRAPPER_MODULE_DIR)
 static int list_single_session(const char* socket_path, const frdpSessionResponse* expected,
                                const char* user, const char* state, int32_t expected_agent_pid,
                                int32_t* agent_pid);
-
+#if defined(FRDP_PAM_SESSION_TEST_MODULE) && defined(FRDP_PAM_WRAPPER_LIBRARY) && \
+    defined(FRDP_PAM_WRAPPER_MODULE_DIR)
 typedef struct
 {
 	const char* session_id;
