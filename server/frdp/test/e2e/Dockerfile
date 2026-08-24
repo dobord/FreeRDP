@@ -43,6 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxv-dev \
         netcat-openbsd \
         ninja-build \
+        openbox \
         openssl \
         pkg-config \
         procps \
@@ -58,10 +59,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         uuid-dev \
         x11-apps \
         x11-utils \
+        x11-xserver-utils \
         xauth \
         xclip \
         xdotool \
         xserver-xorg-video-dummy \
+        xterm \
         xvfb \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*

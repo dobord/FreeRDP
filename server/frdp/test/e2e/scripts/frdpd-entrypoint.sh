@@ -687,6 +687,82 @@ run_xauthority_export_supervisor()
 	fi
 }
 
+run_test_desktop_supervisor()
+{
+	declare -A desktop_pids=()
+	local agent_pid=
+	local authority_fd=
+	local candidate=
+	local desktop_pid=
+	local display=
+	local home=
+	local target=
+	local uid=
+	local user=
+
+	cleanup_test_desktops()
+	{
+		local pid=
+		for pid in "${desktop_pids[@]}"; do
+			kill -TERM "$pid" 2>/dev/null || true
+		done
+		for pid in "${desktop_pids[@]}"; do
+			wait "$pid" 2>/dev/null || true
+		done
+	}
+
+	trap 'cleanup_test_desktops; exit 0' TERM INT
+	while :; do
+		for candidate in /proc/[1-9]*/exe; do
+			[[ -L $candidate ]] || continue
+			[[ $(basename "$(readlink "$candidate" 2>/dev/null || true)") == frdp-session-agent ]] ||
+				continue
+			agent_pid=${candidate#/proc/}
+			agent_pid=${agent_pid%/exe}
+			desktop_pid=${desktop_pids[$agent_pid]:-}
+			if [[ -n $desktop_pid ]] && kill -0 "$desktop_pid" 2>/dev/null; then
+				continue
+			fi
+
+			authority_fd=
+			for candidate in /proc/"$agent_pid"/fd/*; do
+				[[ -L $candidate ]] || continue
+				target=$(readlink "$candidate" 2>/dev/null || true)
+				if [[ $target == */.frdp-xauthority-*\ \(deleted\) ]]; then
+					authority_fd=$candidate
+					break
+				fi
+			done
+			[[ -n $authority_fd ]] || continue
+			display=$(tr '\0' '\n' < /proc/"$agent_pid"/environ |
+				sed -n 's/^DISPLAY=//p' | head -n 1)
+			[[ $display =~ ^:[0-9]+$ ]] || continue
+			uid=$(stat -c %u /proc/"$agent_pid")
+			user=$(getent passwd "$uid" | awk -F: 'NR == 1 { print $1 }')
+			home=$(getent passwd "$uid" | awk -F: 'NR == 1 { print $6 }')
+			[[ -n $user && $home == /* ]] || continue
+
+			runuser -u "$user" -- env -i \
+				HOME="$home" USER="$user" LOGNAME="$user" \
+				PATH=/usr/local/bin:/usr/bin:/bin DISPLAY="$display" \
+				XAUTHORITY="$authority_fd" \
+				/opt/frdp-e2e/scripts/test-desktop.sh &
+			desktop_pids[$agent_pid]=$!
+			log "started test desktop for user=$user display=$display agent_pid=$agent_pid"
+		done
+
+		for agent_pid in "${!desktop_pids[@]}"; do
+			desktop_pid=${desktop_pids[$agent_pid]}
+			if ! kill -0 "$agent_pid" 2>/dev/null || ! kill -0 "$desktop_pid" 2>/dev/null; then
+				kill -TERM "$desktop_pid" 2>/dev/null || true
+				wait "$desktop_pid" 2>/dev/null || true
+				unset 'desktop_pids[$agent_pid]'
+			fi
+		done
+		sleep 0.5
+	done
+}
+
 inject_sesmand_crash()
 {
 	local agent_pid=
@@ -868,6 +944,9 @@ else
 fi
 
 run_xauthority_export_supervisor "$frdpd_pid" &
+children+=("$!")
+
+run_test_desktop_supervisor &
 children+=("$!")
 
 if [[ $FRDP_E2E_POLICY_RELOAD == 1 ]]; then

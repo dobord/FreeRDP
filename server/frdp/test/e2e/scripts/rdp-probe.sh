@@ -627,6 +627,16 @@ positive_integer "$open_pid" || fail "managed session $session_id has invalid ag
 XAUTHORITY=$(request_session_xauthority "$open_pid") ||
 	fail "failed to obtain the isolated test Xauthority for agent $open_pid"
 export XAUTHORITY
+for ((i = 0; i < 100; i++)); do
+	if DISPLAY="$open_display" xwininfo -root -tree 2>/dev/null |
+		grep -Fq 'FRDP Test Desktop'; then
+		break
+	fi
+	sleep 0.1
+done
+DISPLAY="$open_display" xwininfo -root -tree 2>/dev/null |
+	grep -Fq 'FRDP Test Desktop' || fail "managed display did not start the test desktop"
+log "managed display test desktop is visible"
 
 client_clipboard_text=$'client-to-server FreeRDP clipboard UTF-8: Привет \360\237\214\215'
 printf '%s' "$client_clipboard_text" | xclip -selection clipboard -in &

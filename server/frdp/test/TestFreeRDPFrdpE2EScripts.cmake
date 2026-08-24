@@ -30,6 +30,7 @@ foreach(script
         TestRunner.sh
         scripts/frdpd-entrypoint.sh
         scripts/frdpd-healthcheck.sh
+        scripts/test-desktop.sh
         scripts/freeipa-ready.sh
         scripts/rdp-load-probe.sh
         scripts/rdp-probe.sh
