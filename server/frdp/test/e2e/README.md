@@ -135,7 +135,8 @@ build-frdp-ntlm-default/client/X11/xfreerdp \
   /u:rdpuser \
   /p:'RdpPassw0rd!' \
   /cert:ignore \
-  /sec:nla
+  /sec:nla \
+  +gfx
 ```
 
 If another build directory or an installed client is used, replace the
@@ -201,7 +202,7 @@ HBAC rule that allows only the primary account before the FRDP client starts.
 3. `/auth-only` fails for an incorrect password and leaves no managed session or durable session runtime artifact.
 4. `/auth-only` fails for a locked, disabled, or provider-policy-denied account and leaves no managed session or durable session runtime artifact.
 5. In the local profile, two graphical clients connect concurrently under `max_sessions = 2`. The manager must expose exactly two active records with unique session ids, displays and agent PIDs; a third client must authenticate once and be rejected by the session admission limit without changing either record. Stopping both clients, detaching both sessions and explicitly cleaning them must leave no registry or runtime artifacts.
-6. A normal graphical connection under client-side Xvfb remains connected, appears as `active`, exposes the selected desktop plus deterministic xterm/xclock marker windows, verifies the desktop-type root property, transfers supplementary-plane Unicode clipboard text in both directions, and drives the managed Xorg dummy root through `800x600 -> 1024x768 -> 800x600` while each geometry is checked over X11.
+6. A normal graphical connection under client-side Xvfb remains connected, appears as `active`, negotiates RDPGFX, receives an uncompressed graphics-pipeline frame, exposes the selected desktop plus deterministic xterm/xclock marker windows, verifies the desktop-type root property, transfers supplementary-plane Unicode clipboard text in both directions, and drives the managed Xorg dummy root through `800x600 -> 1024x768 -> 800x600` while each geometry is checked over X11. The concurrent-load and protocol-regression probes keep GFX disabled, so the same run also exercises the legacy NSCodec/raw fallback.
 7. In the local profile, `SIGHUP` first lowers `max_connections` to the held-peer count and rejects another client before PAM without disconnecting the held peer. A second reload restores the peer cap while publishing a deny-all static-channel policy to new peers without changing the held peer's clipboard policy snapshot. A malformed reload retains that policy, and restoring the original file makes the later reconnect possible.
 8. In the local profile, the harness gracefully stops `frdpd`, requires its peer worker to detach the held session before the daemon exits, starts a new daemon PID while `frdp-sesmand` remains alive, and then connects the second client. Other profiles terminate the first client directly.
 9. The restarted daemon uses `--max-connections=1` and supplies its TLS and helper-socket paths through CLI overrides. The second graphical client reattaches to the only matching session with the same session id, display and agent PID; reloading a sparse config that omits those static paths and raises the config-backed cap to `2` must succeed while still rejecting another peer before PAM without changing that session, proving startup-default reconstruction and CLI priority. Post-connect resynchronizes the retained `800x600` display to the new client's `1024x768` request before framebuffer pumping; its disconnect and explicit `kill-session` leave an empty registry.
@@ -259,6 +260,6 @@ docker compose -f server/frdp/test/e2e/compose.yaml down --volumes --remove-orph
 
 ## Coverage still required
 
-This harness does not yet prove Kerberos-only CredSSP, ticket renewal or multi-master IPA behavior, restoration or reconnect across `frdp-sesmand` restart, installed-unit provider recovery, RDPGFX/RFX policy, clipboard interoperability beyond text with the bundled FreeRDP client, audio channels, systemd-logind registration, graphical session soak behavior, broad protocol regression coverage, or Windows `mstsc` interoperability. Per-session PAM-handle cleanup reconciliation and optional transient cgroup scopes have focused/component evidence, but still need broader installed/provider crash coverage. Those cases should be added as separate profiles or an external lab matrix rather than weakening the deterministic baseline tests.
+This harness does not yet prove Kerberos-only CredSSP, ticket renewal or multi-master IPA behavior, restoration or reconnect across `frdp-sesmand` restart, installed-unit provider recovery, RFX/H.264/progressive GFX codec policy, GFX frame-acknowledgement throttling, clipboard interoperability beyond text with the bundled FreeRDP client, audio channels, systemd-logind registration, graphical session soak behavior, broad protocol regression coverage, or Windows `mstsc` interoperability. Per-session PAM-handle cleanup reconciliation and optional transient cgroup scopes have focused/component evidence, but still need broader installed/provider crash coverage. Those cases should be added as separate profiles or an external lab matrix rather than weakening the deterministic baseline tests.
 
 All committed passwords are test-only defaults for an isolated Compose network. Do not expose provider ports or reuse these credentials outside the testbed.

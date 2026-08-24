@@ -25,6 +25,8 @@ set(SRCS
     display_control.h
     frame_policy.c
     frame_policy.h
+    gfx_policy.c
+    gfx_policy.h
     frdpd_pam.c
     frdpd_pam.h
     ../ipc/frdp-auth-token.c

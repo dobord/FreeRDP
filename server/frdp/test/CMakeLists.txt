@@ -12,7 +12,8 @@ set(${MODULE_PREFIX}_TESTS TestFreeRDPFrdpConfig.c TestFreeRDPFrdpIpc.c TestFree
                          TestFreeRDPFrdpHelperStop.c TestFreeRDPFrdpServiceIpc.c
                          TestFreeRDPFrdpAuthdPam.c TestFreeRDPFrdpAuthFailureLimit.c
                          TestFreeRDPFrdpNtlmIdentity.c
-                         TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpInputPolicy.c
+                         TestFreeRDPFrdpFramePolicy.c TestFreeRDPFrdpGfxPolicy.c
+                         TestFreeRDPFrdpInputPolicy.c
                          TestFreeRDPFrdpDisplayControl.c TestFreeRDPFrdpClipboard.c
                          TestFreeRDPFrdpDisplayPolicy.c TestFreeRDPFrdpProcessIdentity.c
                          TestFreeRDPFrdpTrustedPath.c
@@ -85,6 +86,8 @@ add_executable(${MODULE_NAME}
     ../frdpd/display_control.h
     ../frdpd/frame_policy.c
     ../frdpd/frame_policy.h
+    ../frdpd/gfx_policy.c
+    ../frdpd/gfx_policy.h
     ../frdpd/frdpd_pam.c
     ../frdpd/frdpd_pam.h
     ../frdpd/frdpd_auth.c

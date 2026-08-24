@@ -56,6 +56,7 @@
 #include "clipboard_runtime.h"
 #include "display_control.h"
 #include "frame_policy.h"
+#include "gfx_policy.h"
 #include "frdpd.h"
 #include "frdpd_auth.h"
 #include "frdpd_audit.h"
@@ -70,6 +71,7 @@
 #define FRDPD_FRAME_HASH_OFFSET 1469598103934665603ULL
 #define FRDPD_FRAME_HASH_PRIME 1099511628211ULL
 #define FRDPD_NSC_COLOR_LOSS_LEVEL 1U
+#define FRDPD_GFX_SURFACE_ID 0U
 #define FRDPD_KERBEROS_ONLY_PACKAGE_LIST "kerberos,u2u,!ntlm"
 #define FRDPD_PEER_ACTIVE_WAIT_TIMEOUT_MS 50
 #define FRDPD_PEER_IDLE_WAIT_TIMEOUT_MS 250
@@ -105,6 +107,7 @@ static CRITICAL_SECTION g_frdpd_policy_lock;
 static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
                                        const MONITOR_DEF* monitors);
 static BOOL frdpd_process_pending_display_control(frdpdPeerContext* context);
+static BOOL frdpd_service_gfx(frdpdPeerContext* context);
 static BOOL frdpd_apply_file_config(frdpdOptions* options);
 static BOOL frdpd_parse_args(int argc, char* argv[], frdpdOptions* options);
 static BOOL frdpd_validate_static_startup_config(frdpdOptions* options);
@@ -741,6 +744,74 @@ static BOOL frdpd_send_bitmap_frame(freerdp_peer* client, const frdpAgentFrameRe
 	return ok;
 }
 
+#if defined(CHANNEL_RDPGFX_SERVER)
+static BOOL frdpd_send_gfx_frame(frdpdPeerContext* context,
+                                 const frdpAgentFrameResponse* frame, const BYTE* data)
+{
+	RDPGFX_END_FRAME_PDU end = { 0 };
+	RDPGFX_START_FRAME_PDU start = { 0 };
+	RDPGFX_SURFACE_COMMAND cmd = { 0 };
+	BYTE* top_down = NULL;
+	UINT error = CHANNEL_RC_OK;
+	size_t data_length = 0;
+
+	if (!context || !context->gfx || !context->gfx_caps_ready ||
+	    !context->gfx_surface_ready || !frame || !data || (frame->width == 0) ||
+	    (frame->height == 0) || (frame->stride != frame->width * 4U) ||
+	    (frame->x > UINT16_MAX) || (frame->y > UINT16_MAX) ||
+	    (frame->width > UINT16_MAX - frame->x) ||
+	    (frame->height > UINT16_MAX - frame->y))
+		return FALSE;
+	data_length = (size_t)frame->stride * frame->height;
+	if ((data_length == 0) || (data_length != frame->data_length) ||
+	    (data_length > UINT32_MAX))
+		return FALSE;
+
+	/* Agent capture is bottom-up for legacy bitmap updates; RDPEGFX uncompressed is top-down. */
+	top_down = (BYTE*)malloc(data_length);
+	if (!top_down)
+		return FALSE;
+	if (!frdpd_gfx_copy_bgrx_bottom_up_to_top_down(top_down, data_length, data, data_length,
+	                                               frame->width, frame->height, frame->stride))
+	{
+		free(top_down);
+		return FALSE;
+	}
+
+	context->gfx_frame_id++;
+	if (context->gfx_frame_id == 0)
+		context->gfx_frame_id++;
+	start.timestamp = GetTickCount();
+	start.frameId = context->gfx_frame_id;
+	end.frameId = context->gfx_frame_id;
+	cmd.surfaceId = FRDPD_GFX_SURFACE_ID;
+	cmd.codecId = RDPGFX_CODECID_UNCOMPRESSED;
+	cmd.format = PIXEL_FORMAT_BGRX32;
+	cmd.left = frame->x;
+	cmd.top = frame->y;
+	cmd.right = frame->x + frame->width;
+	cmd.bottom = frame->y + frame->height;
+	cmd.width = frame->width;
+	cmd.height = frame->height;
+	cmd.length = (UINT32)data_length;
+	cmd.data = top_down;
+	error = context->gfx->SurfaceFrameCommand(context->gfx, &cmd, &start, &end);
+	free(top_down);
+	if (error != CHANNEL_RC_OK)
+		return FALSE;
+
+	if (!context->gfx_first_frame_logged)
+	{
+		WLog_INFO(TAG,
+		          "correlation_id=%s sent first RDPGFX frame codec=uncompressed "
+		          "surface_id=%u frame_id=%" PRIu32,
+		          context->correlation_id, FRDPD_GFX_SURFACE_ID, context->gfx_frame_id);
+		context->gfx_first_frame_logged = TRUE;
+	}
+	return TRUE;
+}
+#endif
+
 static BOOL frdpd_send_nsc_frame(freerdp_peer* client, frdpdPeerContext* context,
                                  const frdpAgentFrameResponse* frame, BYTE* data)
 {
@@ -815,6 +886,10 @@ fail:
 static BOOL frdpd_send_frame(freerdp_peer* client, frdpdPeerContext* context,
                              const frdpAgentFrameResponse* frame, BYTE* data)
 {
+#if defined(CHANNEL_RDPGFX_SERVER)
+	if (context && context->gfx_caps_ready && context->gfx_surface_ready)
+		return frdpd_send_gfx_frame(context, frame, data);
+#endif
 	if (frdpd_send_nsc_frame(client, context, frame, data))
 		return TRUE;
 	return frdpd_send_bitmap_frame(client, frame, data);
@@ -1347,6 +1422,21 @@ static void frdpd_peer_context_free(freerdp_peer* client, rdpContext* ctx)
 		return;
 
 	frdpd_clipboard_runtime_stop(context);
+#if defined(CHANNEL_RDPGFX_SERVER)
+	if (context->gfx)
+	{
+		if (context->gfx_surface_ready)
+		{
+			RDPGFX_DELETE_SURFACE_PDU delete_surface = { 0 };
+			UINT delete_error = CHANNEL_RC_OK;
+			delete_surface.surfaceId = FRDPD_GFX_SURFACE_ID;
+			delete_error = context->gfx->DeleteSurface(context->gfx, &delete_surface);
+			WINPR_UNUSED(delete_error);
+		}
+		rdpgfx_server_context_free(context->gfx);
+		context->gfx = NULL;
+	}
+#endif
 	disp_server_context_free(context->display_control);
 	context->display_control = NULL;
 	if (context->vcm && (context->vcm != INVALID_HANDLE_VALUE))
@@ -1396,6 +1486,224 @@ static BOOL frdpd_dvc_authorize(void* userdata, DWORD SessionId, const char* cha
 	return allowed;
 }
 
+#if defined(CHANNEL_RDPGFX_SERVER)
+static BOOL frdpd_gfx_channel_id_assigned(RdpgfxServerContext* gfx, UINT32 channel_id)
+{
+	frdpdPeerContext* context = NULL;
+
+	if (!gfx || !gfx->custom)
+		return FALSE;
+	context = (frdpdPeerContext*)gfx->custom;
+	context->gfx_channel_id = channel_id;
+	return TRUE;
+}
+
+static UINT frdpd_gfx_caps_advertise(RdpgfxServerContext* gfx,
+                                     const RDPGFX_CAPS_ADVERTISE_PDU* advertise)
+{
+	frdpdPeerContext* context = NULL;
+	RDPGFX_CAPSET confirmed = { 0 };
+	RDPGFX_CAPS_CONFIRM_PDU confirm = { 0 };
+	UINT error = ERROR_NOT_SUPPORTED;
+
+	if (!gfx || !gfx->custom || !advertise || !advertise->capsSets)
+		return ERROR_INVALID_DATA;
+	context = (frdpdPeerContext*)gfx->custom;
+	if (frdpd_gfx_select_capability(advertise->capsSets, advertise->capsSetCount, &confirmed) != 0)
+	{
+		WLog_WARN(TAG, "correlation_id=%s client offered no supported RDPGFX capability set",
+		          context->correlation_id);
+		return ERROR_NOT_SUPPORTED;
+	}
+
+	confirm.capsSet = &confirmed;
+	error = gfx->CapsConfirm(gfx, &confirm);
+	if (error != CHANNEL_RC_OK)
+		return error;
+
+	context->gfx_caps_version = confirmed.version;
+	context->gfx_caps_ready = TRUE;
+	context->gfx_first_frame_logged = FALSE;
+	frdpd_invalidate_framebuffer_cache(context);
+	WLog_INFO(TAG,
+	          "correlation_id=%s RDPGFX capabilities confirmed version=0x%08" PRIx32
+	          " codec=uncompressed",
+	          context->correlation_id, confirmed.version);
+	frdpd_audit_peer_event(context, LOG_INFO, "channel.activation", "ready",
+	                       RDPGFX_DVC_CHANNEL_NAME, "uncompressed");
+	return CHANNEL_RC_OK;
+}
+
+static UINT frdpd_gfx_frame_acknowledge(
+	RdpgfxServerContext* gfx, const RDPGFX_FRAME_ACKNOWLEDGE_PDU* acknowledge)
+{
+	frdpdPeerContext* context = NULL;
+
+	if (!gfx || !gfx->custom || !acknowledge)
+		return ERROR_INVALID_DATA;
+	context = (frdpdPeerContext*)gfx->custom;
+	if (acknowledge->frameId <= context->gfx_frame_id)
+		context->gfx_last_acknowledged_frame_id = acknowledge->frameId;
+	return CHANNEL_RC_OK;
+}
+
+static BOOL frdpd_gfx_release_surface(frdpdPeerContext* context)
+{
+	RDPGFX_DELETE_SURFACE_PDU delete_surface = { 0 };
+	UINT error = CHANNEL_RC_OK;
+
+	if (!context || !context->gfx_surface_ready)
+		return TRUE;
+	if (!context->gfx)
+		return FALSE;
+	delete_surface.surfaceId = FRDPD_GFX_SURFACE_ID;
+	error = context->gfx->DeleteSurface(context->gfx, &delete_surface);
+	if (error != CHANNEL_RC_OK)
+		return FALSE;
+	context->gfx_surface_ready = FALSE;
+	context->gfx_surface_width = 0;
+	context->gfx_surface_height = 0;
+	return TRUE;
+}
+
+static BOOL frdpd_gfx_create_surface(frdpdPeerContext* context)
+{
+	RDPGFX_CREATE_SURFACE_PDU create_surface = { 0 };
+	RDPGFX_MAP_SURFACE_TO_OUTPUT_PDU map_surface = { 0 };
+	RDPGFX_RESET_GRAPHICS_PDU reset = { 0 };
+	MONITOR_DEF monitor = { 0 };
+	rdpSettings* settings = NULL;
+	UINT32 width = 0;
+	UINT32 height = 0;
+	UINT error = CHANNEL_RC_OK;
+
+	if (!context || !context->gfx || !context->gfx_caps_ready)
+		return FALSE;
+	settings = context->_p.settings;
+	if (!settings)
+		return FALSE;
+	width = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
+	height = freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
+	if ((width == 0) || (height == 0) || (width > UINT16_MAX) || (height > UINT16_MAX))
+		return FALSE;
+	if (context->gfx_surface_ready && (context->gfx_surface_width == width) &&
+	    (context->gfx_surface_height == height))
+		return TRUE;
+	if (!frdpd_gfx_release_surface(context))
+		return FALSE;
+
+	monitor.left = 0;
+	monitor.top = 0;
+	monitor.right = (INT32)width - 1;
+	monitor.bottom = (INT32)height - 1;
+	monitor.flags = MONITOR_PRIMARY;
+	reset.width = width;
+	reset.height = height;
+	reset.monitorCount = 1;
+	reset.monitorDefArray = &monitor;
+	error = context->gfx->ResetGraphics(context->gfx, &reset);
+	if (error != CHANNEL_RC_OK)
+		return FALSE;
+
+	create_surface.surfaceId = FRDPD_GFX_SURFACE_ID;
+	create_surface.width = (UINT16)width;
+	create_surface.height = (UINT16)height;
+	create_surface.pixelFormat = GFX_PIXEL_FORMAT_XRGB_8888;
+	error = context->gfx->CreateSurface(context->gfx, &create_surface);
+	if (error != CHANNEL_RC_OK)
+		return FALSE;
+
+	map_surface.surfaceId = FRDPD_GFX_SURFACE_ID;
+	map_surface.outputOriginX = 0;
+	map_surface.outputOriginY = 0;
+	error = context->gfx->MapSurfaceToOutput(context->gfx, &map_surface);
+	if (error != CHANNEL_RC_OK)
+	{
+		RDPGFX_DELETE_SURFACE_PDU delete_surface = { 0 };
+		UINT delete_error = CHANNEL_RC_OK;
+		delete_surface.surfaceId = FRDPD_GFX_SURFACE_ID;
+		delete_error = context->gfx->DeleteSurface(context->gfx, &delete_surface);
+		WINPR_UNUSED(delete_error);
+		return FALSE;
+	}
+
+	context->gfx_surface_width = width;
+	context->gfx_surface_height = height;
+	context->gfx_surface_ready = TRUE;
+	context->gfx_first_frame_logged = FALSE;
+	frdpd_invalidate_framebuffer_cache(context);
+	WLog_INFO(TAG,
+	          "correlation_id=%s RDPGFX primary surface ready surface_id=%u size=%" PRIu32
+	          "x%" PRIu32,
+	          context->correlation_id, FRDPD_GFX_SURFACE_ID, width, height);
+	return TRUE;
+}
+#endif
+
+static BOOL frdpd_service_gfx(frdpdPeerContext* context)
+{
+#if defined(CHANNEL_RDPGFX_SERVER)
+	BYTE state = DRDYNVC_STATE_NONE;
+
+	if (!context || context->gfx_unavailable || !context->vcm || !context->drdynvc_joined)
+		return TRUE;
+	if (!freerdp_settings_get_bool(context->_p.settings, FreeRDP_SupportGraphicsPipeline) ||
+	    !frdp_channel_policy_dynamic_allowed_for_runtime(&context->channels,
+	                                                     RDPGFX_DVC_CHANNEL_NAME))
+		return TRUE;
+	state = WTSVirtualChannelManagerGetDrdynvcState(context->vcm);
+	if (state == DRDYNVC_STATE_FAILED)
+		return TRUE;
+	if (state != DRDYNVC_STATE_READY)
+		return TRUE;
+
+	if (!context->gfx)
+	{
+		context->gfx = rdpgfx_server_context_new(context->vcm);
+		if (!context->gfx)
+			return FALSE;
+		context->gfx->custom = context;
+		context->gfx->rdpcontext = &context->_p;
+		context->gfx->ChannelIdAssigned = frdpd_gfx_channel_id_assigned;
+		context->gfx->CapsAdvertise = frdpd_gfx_caps_advertise;
+		context->gfx->FrameAcknowledge = frdpd_gfx_frame_acknowledge;
+		if (!context->gfx->Initialize(context->gfx, TRUE) || !context->gfx->Open(context->gfx))
+		{
+			WLog_WARN(TAG, "correlation_id=%s failed to open RDPGFX DVC",
+			          context->correlation_id);
+			rdpgfx_server_context_free(context->gfx);
+			context->gfx = NULL;
+			context->gfx_unavailable = TRUE;
+			frdpd_audit_peer_event(context, LOG_WARNING, "channel.activation", "failed",
+			                       RDPGFX_DVC_CHANNEL_NAME, "open");
+			return TRUE;
+		}
+		WLog_INFO(TAG, "correlation_id=%s RDPGFX DVC opened", context->correlation_id);
+	}
+
+	if (context->gfx_creation_failed)
+	{
+		WLog_WARN(TAG, "correlation_id=%s client rejected RDPGFX DVC",
+		          context->correlation_id);
+		rdpgfx_server_context_free(context->gfx);
+		context->gfx = NULL;
+		context->gfx_unavailable = TRUE;
+		frdpd_audit_peer_event(context, LOG_WARNING, "channel.activation", "denied",
+		                       RDPGFX_DVC_CHANNEL_NAME, "client-rejected");
+		return TRUE;
+	}
+	if (context->gfx_caps_ready && !frdpd_gfx_create_surface(context))
+	{
+		WLog_ERR(TAG, "correlation_id=%s failed to initialize RDPGFX primary surface",
+		         context->correlation_id);
+		return FALSE;
+	}
+#else
+	WINPR_UNUSED(context);
+#endif
+	return TRUE;
+}
+
 static BOOL frdpd_display_control_channel_id_assigned(DispServerContext* display_control,
                                                       UINT32 channel_id)
 {
@@ -1412,7 +1720,19 @@ static BOOL frdpd_dvc_creation_status(void* userdata, UINT32 channel_id, INT32 c
 {
 	frdpdPeerContext* context = (frdpdPeerContext*)userdata;
 
-	if (!context || (channel_id != context->display_control_channel_id))
+	if (!context)
+		return TRUE;
+#if defined(CHANNEL_RDPGFX_SERVER)
+	if (channel_id == context->gfx_channel_id)
+	{
+		if (creation_status < 0)
+			context->gfx_creation_failed = TRUE;
+		else
+			context->gfx_creation_ready = TRUE;
+		return TRUE;
+	}
+#endif
+	if (channel_id != context->display_control_channel_id)
 		return TRUE;
 	if (creation_status < 0)
 		context->display_control_creation_failed = TRUE;
@@ -1524,6 +1844,8 @@ static BOOL frdpd_peer_context_new(freerdp_peer* client, rdpContext* ctx)
 	frdpdPeerContext* context = (frdpdPeerContext*)ctx;
 
 	WINPR_ASSERT(ctx);
+	context->display_control_channel_id = UINT32_MAX;
+	context->gfx_channel_id = UINT32_MAX;
 	if (!InitializeCriticalSectionAndSpinCount(&context->display_control_lock, 4000))
 		return FALSE;
 	context->display_control_lock_initialized = TRUE;
@@ -2025,6 +2347,10 @@ static BOOL frdpd_peer_remote_monitors(rdpContext* context, UINT32 count,
 	if (!freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, width) ||
 	    !freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, height))
 		return FALSE;
+#if defined(CHANNEL_RDPGFX_SERVER)
+	if (!frdpd_gfx_release_surface(frdp_context))
+		return FALSE;
+#endif
 	frdpd_invalidate_framebuffer_cache(frdp_context);
 	frdpd_reset_frame_encoder(frdp_context);
 	WLog_INFO(TAG,
@@ -2139,6 +2465,13 @@ static BOOL frdpd_configure_security(freerdp_peer* client, const frdpdServerConf
 		return FALSE;
 	if (!freerdp_settings_set_bool(settings, FreeRDP_NSCodecAllowDynamicColorFidelity, FALSE))
 		return FALSE;
+#if defined(CHANNEL_RDPGFX_SERVER)
+	if (!freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, TRUE))
+		return FALSE;
+#else
+	if (!freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, FALSE))
+		return FALSE;
+#endif
 	if (!freerdp_settings_set_uint32(settings, FreeRDP_ColorDepth, 32))
 		return FALSE;
 	if (!freerdp_settings_set_bool(settings, FreeRDP_SuppressOutput, TRUE))
@@ -2226,6 +2559,7 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 	{
 		HANDLE handles[MAXIMUM_WAIT_OBJECTS] = { 0 };
 		HANDLE channel_event = NULL;
+		HANDLE gfx_event = NULL;
 		DWORD count = 0;
 		DWORD status = 0;
 
@@ -2251,12 +2585,28 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 			}
 			handles[count++] = channel_event;
 		}
+#if defined(CHANNEL_RDPGFX_SERVER)
+		if (context->gfx)
+		{
+			gfx_event = rdpgfx_server_get_event_handle(context->gfx);
+			if (gfx_event && (gfx_event != INVALID_HANDLE_VALUE))
+			{
+				if (count >= ARRAYSIZE(handles))
+				{
+					WLog_ERR(TAG, "No wait handle slot for RDPGFX");
+					break;
+				}
+				handles[count++] = gfx_event;
+			}
+		}
+#endif
 
 		status = WaitForMultipleObjects(count, handles, FALSE, frdpd_peer_wait_timeout_ms(context));
 		if (status == WAIT_TIMEOUT)
 		{
 			if (!frdpd_service_display_control(context) ||
 			    !frdpd_process_pending_display_control(context) ||
+			    !frdpd_service_gfx(context) ||
 			    !frdpd_clipboard_runtime_service(context))
 				break;
 			if (!frdpd_pump_agent_framebuffer(client, context))
@@ -2280,8 +2630,16 @@ static DWORD WINAPI frdpd_peer_mainloop(LPVOID arg)
 			WLog_ERR(TAG, "Virtual channel manager check failed for peer %s", log_hostname);
 			break;
 		}
+#if defined(CHANNEL_RDPGFX_SERVER)
+		if (gfx_event && (WaitForSingleObject(gfx_event, 0) == WAIT_OBJECT_0) &&
+		    (rdpgfx_server_handle_messages(context->gfx) != CHANNEL_RC_OK))
+		{
+			WLog_ERR(TAG, "RDPGFX message processing failed for peer %s", log_hostname);
+			break;
+		}
+#endif
 		if (!frdpd_service_display_control(context) ||
-		    !frdpd_process_pending_display_control(context))
+		    !frdpd_process_pending_display_control(context) || !frdpd_service_gfx(context))
 			break;
 		if (!frdpd_pump_agent_framebuffer(client, context))
 			break;

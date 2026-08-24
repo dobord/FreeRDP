@@ -18,6 +18,7 @@
 #include <freerdp/peer.h>
 #include <freerdp/server/cliprdr.h>
 #include <freerdp/server/disp.h>
+#include <freerdp/server/rdpgfx.h>
 
 #include "../config/frdp-config.h"
 #include "../ipc/frdp-ipc.h"
@@ -72,6 +73,19 @@ extern "C"
 		NSC_CONTEXT* framebuffer_nsc;
 		wStream* framebuffer_nsc_stream;
 		BOOL framebuffer_nsc_warned;
+		RdpgfxServerContext* gfx;
+		UINT32 gfx_channel_id;
+		UINT32 gfx_frame_id;
+		UINT32 gfx_last_acknowledged_frame_id;
+		UINT32 gfx_surface_width;
+		UINT32 gfx_surface_height;
+		UINT32 gfx_caps_version;
+		BOOL gfx_creation_ready;
+		BOOL gfx_creation_failed;
+		BOOL gfx_caps_ready;
+		BOOL gfx_surface_ready;
+		BOOL gfx_unavailable;
+		BOOL gfx_first_frame_logged;
 		HANDLE vcm;
 		DispServerContext* display_control;
 		UINT32 display_control_channel_id;

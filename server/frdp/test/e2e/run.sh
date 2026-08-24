@@ -31,7 +31,10 @@ command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 2; }
 docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required" >&2; exit 2; }
 command -v timeout >/dev/null 2>&1 || { echo "timeout is required" >&2; exit 2; }
 
-snapshot_excluded_paths=("${root#"$repo_root/"}/artifacts")
+snapshot_excluded_paths=(
+	"${root#"$repo_root/"}/artifacts"
+	"${root#"$repo_root/"}/desktop-matrix"
+)
 if [[ $artifacts == "$repo_root/"* &&
 	${artifacts#"$repo_root/"} != "${snapshot_excluded_paths[0]}" ]]; then
 	snapshot_excluded_paths+=("${artifacts#"$repo_root/"}")
@@ -181,6 +184,7 @@ validate_rdp_auth_artifacts()
 	local policy_reload_failed policy_channel_rejected peer_limit_rejected peer_limit_reloaded
 	local keytab_rollover old_kvno new_kvno
 	local graphical_concurrency graphical_result session_limit_reached
+	local gfx_caps_confirmed gfx_first_frame
 	local expected_accepted=5
 	local provider_result=
 
@@ -230,6 +234,9 @@ validate_rdp_auth_artifacts()
 	peer_limit_reloaded=$(grep -c 'reloaded peer policy.*max_connections=1' "$server_log" || true)
 	session_limit_reached=$(grep -c 'session manager rejected login.*: session limit reached' \
 		"$server_log" || true)
+	gfx_caps_confirmed=$(grep -c 'RDPGFX capabilities confirmed.*codec=uncompressed' \
+		"$server_log" || true)
+	gfx_first_frame=$(grep -c 'sent first RDPGFX frame codec=uncompressed' "$server_log" || true)
 	rejected=$((wrong_password_rejected + denied_user_rejected))
 	total_rejected=$(grep -c 'PAM rejected RDP login.*: denied ' "$server_log" || true)
 	if [[ $profile == samba || $profile == freeipa ]]; then
@@ -261,6 +268,11 @@ validate_rdp_auth_artifacts()
 		'managed Xorg dummy display completed 800x600 -> 1024x768 -> 800x600 resize churn' \
 		"$artifacts/$profile/probe.log"; then
 		printf 'profile %s did not record a successful managed-display resize\n' "$profile" >&2
+		return 1
+	fi
+	if [[ $gfx_caps_confirmed -lt 1 || $gfx_first_frame -lt 1 ]]; then
+		printf 'profile %s did not prove negotiated RDPGFX output (caps=%s frames=%s)\n' \
+			"$profile" "$gfx_caps_confirmed" "$gfx_first_frame" >&2
 		return 1
 	fi
 	if [[ $profile == local ]] &&

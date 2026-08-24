@@ -139,7 +139,7 @@ build_args()
 		"/size:1024x768"
 		"/bpp:24"
 		"/audio-mode:none"
-		"-gfx"
+		"+gfx"
 		"+disp"
 		"+dynamic-resolution"
 		"+clipboard"
@@ -641,6 +641,13 @@ desktop_property=$(DISPLAY="$open_display" xprop -root _FRDP_TEST_DESKTOP_TYPE 2
 grep -Fq "= \"$FRDP_DESKTOP_TYPE\"" <<<"$desktop_property" ||
 	fail "managed display started the wrong desktop: $desktop_property"
 log "managed display $FRDP_DESKTOP_TYPE test desktop is visible"
+for ((i = 0; i < 100; i++)); do
+	grep -Eqi 'rdpgfx|graphics pipeline' "$FRDP_ARTIFACT_DIR/rdp-session.log" && break
+	sleep 0.1
+done
+grep -Eqi 'rdpgfx|graphics pipeline' "$FRDP_ARTIFACT_DIR/rdp-session.log" ||
+	fail "xfreerdp did not negotiate the RDPGFX channel"
+log "xfreerdp negotiated the RDPGFX channel"
 
 client_clipboard_text=$'client-to-server FreeRDP clipboard UTF-8: Привет \360\237\214\215'
 printf '%s' "$client_clipboard_text" | xclip -selection clipboard -in &

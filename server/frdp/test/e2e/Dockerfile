@@ -86,7 +86,7 @@ RUN cmake -S /src -B /opt/freerdp-build -GNinja \
         -DCHANNEL_AUDIN_CLIENT=OFF \
         -DCHANNEL_ECHO_CLIENT=OFF \
         -DCHANNEL_GEOMETRY_CLIENT=OFF \
-        -DCHANNEL_RDPGFX_CLIENT=OFF \
+        -DCHANNEL_RDPGFX_CLIENT=ON \
         -DCHANNEL_RDPSND_CLIENT=OFF \
         -DCHANNEL_VIDEO_CLIENT=OFF \
         -DWITH_SHADOW=OFF \
@@ -104,7 +104,7 @@ RUN cmake -S /src -B /opt/freerdp-build -GNinja \
         -DWITH_FUSE=OFF \
         -DWITH_OPENCL=OFF \
         -DCHANNEL_URBDRC=OFF \
-    && ! grep -Eq '^#define CHANNEL_(AINPUT|AUDIN|ECHO|GEOMETRY|RDPGFX|RDPSND|VIDEO)_CLIENT' \
+    && ! grep -Eq '^#define CHANNEL_(AINPUT|AUDIN|ECHO|GEOMETRY|RDPSND|VIDEO)_CLIENT' \
         /opt/freerdp-build/include/freerdp/config.h \
     && cmake --build /opt/freerdp-build --target \
         frdpd \
